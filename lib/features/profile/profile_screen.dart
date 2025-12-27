@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
-import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
 import '../../core/widgets/glass_card.dart';
 import 'followers_list_screen.dart';
-import 'edit/edit_profile_screen.dart';
 import '../settings/settings_screen.dart';
 
 /// Instagram-style profile screen with full-width header and tabbed content
@@ -81,23 +78,26 @@ class _ProfileScreenState extends State<ProfileScreen>
                   SliverAppBar(
                     backgroundColor: Colors.transparent,
                     elevation: 0,
-                    leading: IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      color: Colors.white, // White on image overlay
-                      onPressed: () => Navigator.pop(context),
-                    ),
+                    automaticallyImplyLeading: false, // Remove back button
                     title: Text(
                       _user.username,
-                      style: const TextStyle(
-                        color: Colors.white, // White on image overlay
+                      style: TextStyle(
+                        color: ThemeHelper.getHighContrastIconColor(context), // Theme-aware: white in dark, black in light
                         fontWeight: FontWeight.bold,
                         fontSize: 18,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black.withOpacity(0.3),
+                            offset: const Offset(0, 1),
+                            blurRadius: 4,
+                          ),
+                        ],
                       ),
                     ),
                     actions: [
                       IconButton(
-                        icon: const Icon(Icons.menu),
-                        color: Colors.white, // White on image overlay
+                        icon: Icon(Icons.menu),
+                        color: ThemeHelper.getHighContrastIconColor(context), // Theme-aware: white in dark, black in light
                         onPressed: _showMenuBottomSheet,
                       ),
                     ],
