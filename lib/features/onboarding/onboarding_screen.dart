@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_button.dart';
 import '../auth/login_screen.dart';
 
@@ -218,7 +217,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             child: Icon(
               page.icon,
               size: 80,
-              color: context.textPrimary,
+              color: Colors.white, // White for high contrast on gradient background
             ),
           ),
           const SizedBox(height: 60),

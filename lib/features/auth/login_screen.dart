@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/glass_button.dart';
 import '../main/main_screen.dart';
@@ -124,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen>
                             child: Icon(
                               Icons.play_circle_filled,
                               size: 64,
-                              color: context.textPrimary,
+                              color: Colors.white, // White for high contrast on gradient background
                             ),
                           ),
                         ),
@@ -166,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen>
                         labelText: 'Email',
                         labelStyle: TextStyle(color: context.textSecondary),
                         prefixIcon: Icon(Icons.email_outlined,
-                            color: context.textSecondary),
+                            color: ThemeHelper.getAccentColor(context)),
                         border: InputBorder.none,
                       ),
                       validator: (value) {
@@ -194,13 +193,13 @@ class _LoginScreenState extends State<LoginScreen>
                         labelStyle:
                             TextStyle(color: context.textSecondary),
                         prefixIcon: Icon(Icons.lock_outlined,
-                            color: context.textSecondary),
+                            color: ThemeHelper.getAccentColor(context)),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword
                                 ? Icons.visibility_outlined
                                 : Icons.visibility_off_outlined,
-                            color: context.textSecondary,
+                            color: ThemeHelper.getAccentColor(context),
                           ),
                           onPressed: () {
                             setState(() {

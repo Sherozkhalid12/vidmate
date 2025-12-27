@@ -146,7 +146,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                             child: Icon(
                               Icons.person_add,
                               size: 64,
-                              color: context.textPrimary,
+                              color: Colors.white, // White for high contrast on gradient background
                             ),
                           ),
                         ),
@@ -187,7 +187,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                         labelText: 'Full Name',
                         labelStyle: TextStyle(color: context.textSecondary),
                         prefixIcon: Icon(Icons.person_outline,
-                            color: context.textSecondary),
+                            color: ThemeHelper.getAccentColor(context)),
                         border: InputBorder.none,
                       ),
                       validator: (value) {
@@ -211,7 +211,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                         labelText: 'Email',
                         labelStyle: TextStyle(color: context.textSecondary),
                         prefixIcon: Icon(Icons.email_outlined,
-                            color: context.textSecondary),
+                            color: ThemeHelper.getAccentColor(context)),
                         border: InputBorder.none,
                       ),
                       validator: (value) {
@@ -239,13 +239,13 @@ class _SignUpScreenState extends State<SignUpScreen>
                         labelStyle:
                             TextStyle(color: context.textSecondary),
                         prefixIcon: Icon(Icons.lock_outlined,
-                            color: context.textSecondary),
+                            color: ThemeHelper.getAccentColor(context)),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword
                                 ? Icons.visibility_outlined
                                 : Icons.visibility_off_outlined,
-                            color: context.textSecondary,
+                            color: ThemeHelper.getAccentColor(context),
                           ),
                           onPressed: () {
                             setState(() {
@@ -280,13 +280,13 @@ class _SignUpScreenState extends State<SignUpScreen>
                         labelStyle:
                             TextStyle(color: context.textSecondary),
                         prefixIcon: Icon(Icons.lock_outlined,
-                            color: context.textSecondary),
+                            color: ThemeHelper.getAccentColor(context)),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscureConfirmPassword
                                 ? Icons.visibility_outlined
                                 : Icons.visibility_off_outlined,
-                            color: context.textSecondary,
+                            color: ThemeHelper.getAccentColor(context),
                           ),
                           onPressed: () {
                             setState(() {
