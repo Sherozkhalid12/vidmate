@@ -6,6 +6,7 @@ import '../models/post_model.dart';
 import '../theme/app_colors.dart';
 import '../utils/theme_helper.dart';
 import '../../features/feed/comments_screen.dart';
+import '../../features/profile/profile_screen.dart';
 
 
 class InstagramPostCard extends StatefulWidget {
@@ -92,61 +93,72 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                   child: Row(
                     children: [
-                      Row(
-                        children: [
-                          ClipOval(
-                            child: CachedNetworkImage(
-                              imageUrl: widget.post.author.avatarUrl,
-                              width: 40,
-                              height: 40,
-                              fit: BoxFit.cover,
-                              placeholder: (context, url) => Container(
+                      // Clickable profile section
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ProfileScreen(user: widget.post.author),
+                            ),
+                          );
+                        },
+                        child: Row(
+                          children: [
+                            ClipOval(
+                              child: CachedNetworkImage(
+                                imageUrl: widget.post.author.avatarUrl,
                                 width: 40,
                                 height: 40,
-                                color: ThemeHelper.getSurfaceColor(context),
-                              ),
-                              errorWidget: (context, url, error) => Icon(
-                                CupertinoIcons.person_crop_circle,
-                                size: 40,
-                                color: ThemeHelper.getTextSecondary(context),
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => Container(
+                                  width: 40,
+                                  height: 40,
+                                  color: ThemeHelper.getSurfaceColor(context),
+                                ),
+                                errorWidget: (context, url, error) => Icon(
+                                  CupertinoIcons.person_crop_circle,
+                                  size: 40,
+                                  color: ThemeHelper.getTextSecondary(context),
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Text(
-                                    widget.post.author.username,
-                                    style: TextStyle(
-                                      color: ThemeHelper.getTextPrimary(context),
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
+                            const SizedBox(width: 12),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      widget.post.author.username,
+                                      style: TextStyle(
+                                        color: ThemeHelper.getTextPrimary(context),
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  const Text('🇮🇳', style: TextStyle(fontSize: 14)), // Flag emoji
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _formatTimeAgo(widget.post.createdAt),
-                                    style: TextStyle(
-                                      color: ThemeHelper.getTextSecondary(context),
-                                      fontSize: 12,
+                                    const SizedBox(width: 4),
+                                    const Text('🇮🇳', style: TextStyle(fontSize: 14)), // Flag emoji
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _formatTimeAgo(widget.post.createdAt),
+                                      style: TextStyle(
+                                        color: ThemeHelper.getTextSecondary(context),
+                                        fontSize: 12,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Icon(
-                                    Icons.verified,
-                                    size: 14,
-                                    color: ThemeHelper.getAccentColor(context),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ],
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      Icons.verified,
+                                      size: 14,
+                                      color: ThemeHelper.getAccentColor(context),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                       const Spacer(),
                       // Follow button

@@ -35,6 +35,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   Map<int, Map<int, VideoPlayerController>> _videoControllers = {}; // Video controllers by user and story index
   Timer? _progressTimer; // Timer for progress animation
   Map<int, bool> _storyLoaded = {}; // Track if story is loaded
+  Map<String, bool> _videoErrors = {}; // Track video loading errors by "userHash_storyIndex"
 
   @override
   void initState() {
@@ -188,10 +189,24 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
       if (step >= totalSteps) {
         timer.cancel();
         _progressTimer = null;
+        
+        // Check if this is the last story before advancing
+        final user = _users[userIndex];
+        final userHash = user.id.hashCode;
+        final stories = _userStoriesMap[user.id] ?? [];
+        final currentStoryIdx = _currentStoryIndex[userHash] ?? 0;
+        final isLastStory = currentStoryIdx >= stories.length - 1;
+        final isLastUser = userIndex >= _users.length - 1;
+        
         // Auto-advance after animation completes
-        Future.delayed(const Duration(milliseconds: 300), () {
+        Future.delayed(const Duration(milliseconds: 200), () {
           if (mounted) {
-            _nextStory(userIndex);
+            if (isLastStory && isLastUser) {
+              // Last story of last user - close immediately
+              _closeViewer();
+            } else {
+              _nextStory(userIndex);
+            }
           }
         });
       }
@@ -199,30 +214,117 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   }
 
   void _initializeVideo(int userHash, int storyIndex, String videoUrl) {
+    final errorKey = '${userHash}_$storyIndex';
+    
+    // If this story already has an error, skip initialization
+    if (_videoErrors[errorKey] == true) {
+      return;
+    }
+    
     if (_videoControllers[userHash]?.containsKey(storyIndex) ?? false) {
       return; // Already initialized
     }
 
-    final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl))
-      ..setLooping(false);
+    try {
+      final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl))
+        ..setLooping(false);
 
-    _videoControllers[userHash] ??= {};
-    _videoControllers[userHash]![storyIndex] = controller;
+      _videoControllers[userHash] ??= {};
+      _videoControllers[userHash]![storyIndex] = controller;
 
-    controller.initialize().then((_) {
-      if (mounted) {
-        final currentUser = _users[_currentUserIndex];
-        if (userHash == currentUser.id.hashCode &&
-            _currentStoryIndex[userHash] == storyIndex) {
-          controller.play();
+      controller.initialize().then((_) {
+        if (mounted) {
+          // Clear error if initialization succeeds
+          _videoErrors.remove(errorKey);
+          
+          final currentUser = _users[_currentUserIndex];
+          if (userHash == currentUser.id.hashCode &&
+              _currentStoryIndex[userHash] == storyIndex) {
+            try {
+              controller.play();
+            } catch (e) {
+              // Silently handle play error
+              _handleVideoError(userHash, storyIndex);
+            }
+          }
+          // Mark as loaded on success
+          setState(() {
+            _storyLoaded[userHash] = true;
+          });
         }
-        setState(() {});
+      }).catchError((error) {
+        // Handle video initialization error gracefully - suppress repeated errors
+        if (mounted && _videoErrors[errorKey] != true) {
+          _handleVideoError(userHash, storyIndex);
+        }
+      });
+    } catch (e) {
+      // Handle controller creation error
+      if (mounted && _videoErrors[errorKey] != true) {
+        _handleVideoError(userHash, storyIndex);
       }
+    }
+  }
+
+  void _handleVideoError(int userHash, int storyIndex) {
+    final errorKey = '${userHash}_$storyIndex';
+    
+    // Prevent duplicate error handling
+    if (_videoErrors[errorKey] == true) {
+      return;
+    }
+    
+    // Mark video as error
+    _videoErrors[errorKey] = true;
+    
+    // Dispose the failed controller
+    final controller = _videoControllers[userHash]?[storyIndex];
+    if (controller != null) {
+      try {
+        controller.dispose();
+      } catch (e) {
+        // Silently handle disposal error
+      }
+      _videoControllers[userHash]?.remove(storyIndex);
+    }
+    
+    // Mark as loaded so progress can continue (will show error UI)
+    setState(() {
+      _storyLoaded[userHash] = true;
     });
+    
+    // Find user index
+    final userIndex = _users.indexWhere((u) => u.id.hashCode == userHash);
+    if (userIndex < 0) return;
+    
+    final stories = _userStoriesMap[_users[userIndex].id] ?? [];
+    final isLastStory = storyIndex >= stories.length - 1;
+    final isLastUser = userIndex >= _users.length - 1;
+    
+    // If it's the last story of the last user, close the viewer
+    if (isLastStory && isLastUser) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _closeViewer();
+        }
+      });
+    } else {
+      // Auto-skip to next story after a short delay
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _nextStory(userIndex);
+        }
+      });
+    }
   }
 
   void _nextStory(int userIndex) {
     if (userIndex < 0 || userIndex >= _users.length) return;
+    if (!mounted) return;
+    
+    // Cancel any progress timer
+    _progressTimer?.cancel();
+    _progressTimer = null;
     
     final user = _users[userIndex];
     final userHash = user.id.hashCode;
@@ -253,9 +355,38 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
           );
         }
       } else {
-        Navigator.pop(context);
+        // Last story of last user - close viewer immediately
+        _closeViewer();
       }
     }
+  }
+
+  void _closeViewer() {
+    if (!mounted) return;
+    
+    // Cancel any timers
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    
+    // Pause all videos
+    for (var userControllers in _videoControllers.values) {
+      for (var controller in userControllers.values) {
+        try {
+          if (controller.value.isPlaying) {
+            controller.pause();
+          }
+        } catch (e) {
+          // Silently handle pause errors
+        }
+      }
+    }
+    
+    // Use post frame callback to ensure navigation happens after current frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+    });
   }
 
   void _previousStory(int userIndex) {
@@ -279,19 +410,20 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
         );
         _startStoryProgress(userIndex, prevStoryIdx);
       }
-    } else {
-      // Move to previous user
-      if (userIndex > 0) {
-        if (_userPageController.hasClients) {
-          _userPageController.previousPage(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
-        }
       } else {
-        Navigator.pop(context);
+        // Move to previous user
+        if (userIndex > 0) {
+          if (_userPageController.hasClients) {
+            _userPageController.previousPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }
+        } else {
+          // First story of first user - close viewer
+          _closeViewer();
+        }
       }
-    }
   }
 
   void _pauseCurrentVideo(int userHash, int storyIndex) {
@@ -316,10 +448,12 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     final userHash = user.id.hashCode;
     final storyIndex = _currentStoryIndex[userHash] ?? 0;
     
-    // Reset progress and loading state
+    // Reset progress, loading state, and errors
     setState(() {
       _storyProgress[userHash] = 0.0;
       _storyLoaded[userHash] = false;
+      // Clear errors for this user's stories
+      _videoErrors.removeWhere((key, _) => key.startsWith('${userHash}_'));
     });
     
     // Wait for PageView to be built before starting progress
@@ -345,10 +479,12 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     // Update current story index
     _currentStoryIndex[userHash] = storyIndex;
     
-    // Reset progress and loading state
+    // Reset progress, loading state, and errors
     setState(() {
       _storyProgress[userHash] = 0.0;
       _storyLoaded[userHash] = false;
+      // Clear errors for this user's stories
+      _videoErrors.removeWhere((key, _) => key.startsWith('${userHash}_'));
     });
     
     // Start progress for new story
@@ -388,7 +524,20 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
           physics: const ClampingScrollPhysics(),
           itemBuilder: (context, userIndex) {
             if (userIndex < 0 || userIndex >= _users.length) {
-              return Container(color: Colors.black);
+              // If somehow we get an invalid index, close the viewer
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  _closeViewer();
+                }
+              });
+              return Container(
+                color: Colors.black,
+                child: Center(
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                  ),
+                ),
+              );
             }
             return _buildUserStories(userIndex);
           },
@@ -527,13 +676,17 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     final isCurrentStory = _currentStoryIndex[userHash] == storyIndex;
     final videoController = _videoControllers[userHash]?[storyIndex];
     final isLoaded = _storyLoaded[userHash] ?? false;
+    final errorKey = '${userHash}_$storyIndex';
+    final hasVideoError = _videoErrors[errorKey] ?? false;
 
     return Container(
       width: double.infinity,
       height: double.infinity,
       color: Colors.black,
-      child: story.isVideo && videoController != null
-          ? _buildVideoStory(videoController, isCurrentStory, isLoaded)
+      child: story.isVideo
+          ? (hasVideoError || videoController == null)
+              ? _buildVideoErrorFallback(story)
+              : _buildVideoStory(videoController, isCurrentStory, isLoaded)
           : _buildImageStory(story, isLoaded),
     );
   }
@@ -569,10 +722,21 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
       );
     }
 
+    // Safely play/pause with error handling
     if (isCurrentStory && !controller.value.isPlaying) {
-      controller.play();
+      try {
+        controller.play();
+      } catch (e) {
+        debugPrint('Error playing video: $e');
+        // If play fails, show error fallback
+        return _buildVideoErrorFallback(null);
+      }
     } else if (!isCurrentStory && controller.value.isPlaying) {
-      controller.pause();
+      try {
+        controller.pause();
+      } catch (e) {
+        debugPrint('Error pausing video: $e');
+      }
     }
 
     return Container(
@@ -581,6 +745,41 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
         child: AspectRatio(
           aspectRatio: controller.value.aspectRatio,
           child: VideoPlayer(controller),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoErrorFallback(StoryModel? story) {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.videocam_off,
+              color: Colors.white.withValues(alpha: 0.7),
+              size: 64,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Video unavailable',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Skipping to next story...',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 14,
+              ),
+            ),
+          ],
         ),
       ),
     );

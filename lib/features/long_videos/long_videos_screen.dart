@@ -157,13 +157,6 @@ class _LongVideosScreenState extends State<LongVideosScreen> {
               letterSpacing: -0.5,
             ),
           ),
-          const Spacer(),
-          // Search icon (optional, can be removed)
-          Icon(
-            Icons.search,
-            color: ThemeHelper.getTextSecondary(context),
-            size: 24,
-          ),
         ],
       ),
     );
