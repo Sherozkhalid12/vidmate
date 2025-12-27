@@ -22,6 +22,9 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
   bool _isVideo = false;
   bool _isPrivate = false;
   bool _isUploading = false;
+  String? _storyText;
+  String? _swipeUpLink;
+  List<String> _selectedStickers = [];
 
   Future<void> _pickMedia(bool isVideo) async {
     try {
@@ -223,31 +226,127 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            // Privacy toggle
-            GlassCard(
-              padding: const EdgeInsets.all(16),
-              borderRadius: BorderRadius.circular(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Private Story',
-                    style: TextStyle(
-                      color: context.textPrimary,
-                      fontSize: 16,
+            // Story features
+            if (_mediaFile != null)
+              GlassCard(
+                padding: const EdgeInsets.all(16),
+                borderRadius: BorderRadius.circular(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Story text input
+                    TextField(
+                      onChanged: (value) {
+                        setState(() {
+                          _storyText = value;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Add Text',
+                        labelStyle: TextStyle(color: context.textSecondary),
+                        hintText: 'Type your story text...',
+                        hintStyle: TextStyle(color: context.textMuted),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: context.borderColor),
+                        ),
+                      ),
+                      style: TextStyle(color: context.textPrimary),
+                      maxLines: 3,
                     ),
-                  ),
-                  Switch(
-                    value: _isPrivate,
-                    onChanged: (value) {
-                      setState(() {
-                        _isPrivate = value;
-                      });
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    // Swipe-up link
+                    TextField(
+                      onChanged: (value) {
+                        setState(() {
+                          _swipeUpLink = value;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Swipe Up Link (Optional)',
+                        labelStyle: TextStyle(color: context.textSecondary),
+                        hintText: 'https://example.com',
+                        hintStyle: TextStyle(color: context.textMuted),
+                        prefixIcon: Icon(Icons.link, color: ThemeHelper.getAccentColor(context)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: context.borderColor),
+                        ),
+                      ),
+                      style: TextStyle(color: context.textPrimary),
+                    ),
+                    const SizedBox(height: 16),
+                    // Stickers section
+                    Text(
+                      'Add Stickers',
+                      style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        '😀', '❤️', '🔥', '⭐', '🎉', '💯', '👍', '🎵'
+                      ].map((emoji) {
+                        return GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              if (_selectedStickers.contains(emoji)) {
+                                _selectedStickers.remove(emoji);
+                              } else {
+                                _selectedStickers.add(emoji);
+                              }
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _selectedStickers.contains(emoji)
+                                  ? ThemeHelper.getAccentColor(context).withOpacity(0.2)
+                                  : context.surfaceColor,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _selectedStickers.contains(emoji)
+                                    ? ThemeHelper.getAccentColor(context)
+                                    : context.borderColor,
+                              ),
+                            ),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 24),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    // Privacy toggle
+                    Row(
+                      children: [
+                        Text(
+                          'Private Story',
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const Spacer(),
+                        Switch(
+                          value: _isPrivate,
+                          onChanged: (value) {
+                            setState(() {
+                              _isPrivate = value;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
             const SizedBox(height: 20),
             // Upload button
             GlassButton(

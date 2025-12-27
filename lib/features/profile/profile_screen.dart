@@ -78,7 +78,11 @@ class _ProfileScreenState extends State<ProfileScreen>
                   SliverAppBar(
                     backgroundColor: Colors.transparent,
                     elevation: 0,
-                    automaticallyImplyLeading: false, // Remove back button
+                    leading: IconButton(
+                      icon: Icon(Icons.arrow_back),
+                      color: ThemeHelper.getHighContrastIconColor(context),
+                      onPressed: () => Navigator.pop(context),
+                    ),
                     title: Text(
                       _user.username,
                       style: TextStyle(

@@ -37,6 +37,7 @@ dependencies:
   
   # Video player for long-form videos and reels
   video_player: ^2.8.2
+  youtube_player_flutter: ^9.0.0
   
   # Animations
   animations: ^2.0.11
@@ -50,8 +51,9 @@ dependencies:
   # Smooth scrolling
   flutter_staggered_animations: ^1.1.1
   
-  # State management
-  provider: ^6.1.1
+  # State management - Riverpod for super fast performance
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
   
   # Image and video picking
   image_picker: ^1.0.7
@@ -80,6 +82,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  
+  # Riverpod code generation
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.6.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

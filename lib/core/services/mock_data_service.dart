@@ -136,7 +136,9 @@ class MockDataService {
 
   // Mock stories
   static List<StoryModel> getMockStories() {
+    // Multiple stories per user for horizontal scrolling
     return [
+      // User 0 - 3 stories
       StoryModel(
         id: '1',
         author: mockUsers[0],
@@ -145,12 +147,36 @@ class MockDataService {
         isViewed: false,
       ),
       StoryModel(
+        id: '1-2',
+        author: mockUsers[0],
+        mediaUrl: 'https://picsum.photos/400/800?random=15',
+        createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
+        isViewed: false,
+      ),
+      StoryModel(
+        id: '1-3',
+        author: mockUsers[0],
+        mediaUrl: 'https://picsum.photos/400/800?random=16',
+        isVideo: true,
+        createdAt: DateTime.now().subtract(const Duration(minutes: 15)),
+        isViewed: false,
+      ),
+      // User 1 - 2 stories
+      StoryModel(
         id: '2',
         author: mockUsers[1],
         mediaUrl: 'https://picsum.photos/400/800?random=11',
         createdAt: DateTime.now().subtract(const Duration(hours: 2)),
         isViewed: false,
       ),
+      StoryModel(
+        id: '2-2',
+        author: mockUsers[1],
+        mediaUrl: 'https://picsum.photos/400/800?random=17',
+        createdAt: DateTime.now().subtract(const Duration(hours: 1, minutes: 30)),
+        isViewed: false,
+      ),
+      // User 2 - 2 stories
       StoryModel(
         id: '3',
         author: mockUsers[2],
@@ -160,17 +186,41 @@ class MockDataService {
         isViewed: true,
       ),
       StoryModel(
+        id: '3-2',
+        author: mockUsers[2],
+        mediaUrl: 'https://picsum.photos/400/800?random=18',
+        createdAt: DateTime.now().subtract(const Duration(hours: 2, minutes: 30)),
+        isViewed: true,
+      ),
+      // User 3 - 1 story
+      StoryModel(
         id: '4',
         author: mockUsers[3],
         mediaUrl: 'https://picsum.photos/400/800?random=13',
         createdAt: DateTime.now().subtract(const Duration(hours: 4)),
         isViewed: false,
       ),
+      // User 4 - 3 stories
       StoryModel(
         id: '5',
         author: mockUsers[4],
         mediaUrl: 'https://picsum.photos/400/800?random=14',
         createdAt: DateTime.now().subtract(const Duration(hours: 5)),
+        isViewed: true,
+      ),
+      StoryModel(
+        id: '5-2',
+        author: mockUsers[4],
+        mediaUrl: 'https://picsum.photos/400/800?random=19',
+        createdAt: DateTime.now().subtract(const Duration(hours: 4, minutes: 30)),
+        isViewed: true,
+      ),
+      StoryModel(
+        id: '5-3',
+        author: mockUsers[4],
+        mediaUrl: 'https://picsum.photos/400/800?random=20',
+        isVideo: true,
+        createdAt: DateTime.now().subtract(const Duration(hours: 4)),
         isViewed: true,
       ),
     ];

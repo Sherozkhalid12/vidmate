@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/chat_conversation_model.dart';
@@ -22,45 +21,57 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void initState() {
     super.initState();
-    _loadConversations();
+    // Use WidgetsBinding to ensure the widget is fully built before calling setState
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadConversations();
+      }
+    });
   }
 
   void _loadConversations() {
+    if (!mounted) return;
+    
     // Mock conversations from recent messages
     final users = MockDataService.mockUsers;
     
-    setState(() {
-      _conversations.clear();
+    final newConversations = <ChatConversationModel>[];
+    
+    // Create conversations from mock data
+    for (var i = 0; i < users.length - 1; i++) {
+      final user = users[i + 1]; // Skip current user
+      final conversationMessages = MockDataService.getMockMessages(user.id);
+      final lastMessage = conversationMessages.isNotEmpty
+          ? conversationMessages.last
+          : MessageModel(
+              id: '1',
+              sender: user,
+              text: 'Start a conversation',
+              timestamp: DateTime.now(),
+            );
       
-      // Create conversations from mock data
-      for (var i = 0; i < users.length - 1; i++) {
-        final user = users[i + 1]; // Skip current user
-        final conversationMessages = MockDataService.getMockMessages(user.id);
-        final lastMessage = conversationMessages.isNotEmpty
-            ? conversationMessages.last
-            : MessageModel(
-                id: '1',
-                sender: user,
-                text: 'Start a conversation',
-                timestamp: DateTime.now(),
-              );
-        
-        _conversations.add(
-          ChatConversationModel(
-            id: user.id,
-            user: user,
-            lastMessage: lastMessage,
-            lastMessageTime: lastMessage.timestamp,
-            unreadCount: i < 2 ? i + 1 : 0, // First 2 have unread
-            isOnline: user.isOnline,
-          ),
-        );
-      }
-      
-      // Sort by last message time
-      _conversations.sort((a, b) =>
-          b.lastMessageTime.compareTo(a.lastMessageTime));
-    });
+      newConversations.add(
+        ChatConversationModel(
+          id: user.id,
+          user: user,
+          lastMessage: lastMessage,
+          lastMessageTime: lastMessage.timestamp,
+          unreadCount: i < 2 ? i + 1 : 0, // First 2 have unread
+          isOnline: user.isOnline,
+        ),
+      );
+    }
+    
+    // Sort by last message time
+    newConversations.sort((a, b) =>
+        b.lastMessageTime.compareTo(a.lastMessageTime));
+    
+    if (mounted) {
+      setState(() {
+        _conversations.clear();
+        _conversations.addAll(newConversations);
+      });
+    }
   }
 
   String _formatTime(DateTime time) {
@@ -100,16 +111,49 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 );
               },
             ),
-            IconButton(
+            PopupMenuButton<String>(
               icon: Icon(Icons.add_circle_outline),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('New chat feature coming soon'),
-                    backgroundColor: context.surfaceColor,
-                  ),
-                );
+              onSelected: (value) {
+                if (value == 'one_to_one') {
+                  // Navigate to user selection for one-to-one chat
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Select a user to start chatting'),
+                      backgroundColor: context.surfaceColor,
+                    ),
+                  );
+                } else if (value == 'group') {
+                  // Navigate to group chat creation
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Create group chat feature coming soon'),
+                      backgroundColor: context.surfaceColor,
+                    ),
+                  );
+                }
               },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'one_to_one',
+                  child: Row(
+                    children: [
+                      Icon(Icons.person_add),
+                      SizedBox(width: 8),
+                      Text('New Chat'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'group',
+                  child: Row(
+                    children: [
+                      Icon(Icons.group_add),
+                      SizedBox(width: 8),
+                      Text('New Group'),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),

@@ -59,58 +59,76 @@ class BottomNavBar extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isSelected = currentIndex == index;
 
-    // Icons – matched to page order: Home, Explore, Create, Reels, Profile
+    // Icons and labels – matched to image: Home, Reels, Story, Long Videos, Notifications
     final icons = [
-      Icons.home_outlined,          // Index 0: Home Feed
-      Icons.explore_outlined,       // Index 1: Explore / Discover
-      Icons.add_circle_outline,     // Index 2: Create / Upload
-      Icons.play_circle_outline,    // Index 3: Reels / Videos
-      Icons.person_outline,         // Index 4: Profile
+      Icons.home_outlined,          // Index 0: Home
+      Icons.movie_outlined,         // Index 1: Reels
+      Icons.access_time_outlined,   // Index 2: Story
+      Icons.play_circle_outline,    // Index 3: Long Videos
+      Icons.notifications_outlined, // Index 4: Notifications
     ];
 
     final selectedIcons = [
       Icons.home_rounded,
-      Icons.explore_rounded,
-      Icons.add_circle_rounded,
+      Icons.movie_rounded,
+      Icons.access_time_rounded,
       Icons.play_circle_rounded,
-      Icons.person_rounded,
+      Icons.notifications_rounded,
+    ];
+
+    final labels = [
+      'Home',
+      'Reels',
+      'Story',
+      'Long Videos',
+      'Notifications',
     ];
 
     final icon = isSelected ? selectedIcons[index] : icons[index];
 
-    // White circle only on selected item
     return GestureDetector(
       onTap: () => onTap(index),
       behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-        width: 56,
-        height: 56,
-        decoration: isSelected
-            ? BoxDecoration(
-                color: isDark ? Colors.white : Colors.black, // white circle in dark mode, black in light mode
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: (isDark ? Colors.black : Colors.white).withOpacity(0.35),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              )
-            : null,
-        child: Center(
-          child: Icon(
-            icon,
-            color: isSelected
-                ? (isDark ? Colors.black : Colors.white) // black icon in white circle (dark), white in black circle (light)
-                : (isDark 
-                    ? Colors.white.withOpacity(0.70) 
-                    : Colors.black.withOpacity(0.60)), // inactive subtle color
-            size: isSelected ? 28 : 26,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            width: 40,
+            height: 40,
+            decoration: isSelected
+                ? BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    shape: BoxShape.circle,
+                  )
+                : null,
+            child: Center(
+              child: Icon(
+                icon,
+                color: isSelected
+                    ? Theme.of(context).colorScheme.onPrimary
+                    : (isDark 
+                        ? Colors.white.withOpacity(0.70) 
+                        : Colors.black.withOpacity(0.60)),
+                size: 24,
+              ),
+            ),
           ),
-        ),
+          const SizedBox(height: 4),
+          Text(
+            labels[index],
+            style: TextStyle(
+              color: isSelected
+                  ? Theme.of(context).colorScheme.primary
+                  : (isDark 
+                      ? Colors.white.withOpacity(0.70) 
+                      : Colors.black.withOpacity(0.60)),
+              fontSize: 11,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ],
       ),
     );
   }

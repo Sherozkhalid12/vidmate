@@ -33,6 +33,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   bool _copyrightCheckPassed = false;
   bool _isCheckingCopyright = false;
   String? _copyrightError;
+  String? _selectedMusic; // For reels music library
 
   @override
   void dispose() {
@@ -393,6 +394,76 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
               ),
             ),
             const SizedBox(height: 20),
+            // Music library for reels
+            if (widget.type == 'reel')
+              GlassCard(
+                padding: const EdgeInsets.all(16),
+                borderRadius: BorderRadius.circular(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.music_note,
+                          color: ThemeHelper.getAccentColor(context),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Add Music',
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: () {
+                        _showMusicLibrary();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: context.surfaceColor,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: context.borderColor,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.library_music,
+                              color: ThemeHelper.getAccentColor(context),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _selectedMusic ?? 'Select music from library',
+                                style: TextStyle(
+                                  color: _selectedMusic != null
+                                      ? context.textPrimary
+                                      : context.textMuted,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_ios,
+                              size: 16,
+                              color: context.textMuted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (widget.type == 'reel') const SizedBox(height: 16),
             // Caption
             GlassCard(
               padding: EdgeInsets.zero,
@@ -442,6 +513,73 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                   : null,
               isLoading: _isUploading,
               width: double.infinity,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMusicLibrary() {
+    final musicTracks = [
+      'Trending Beat 1',
+      'Viral Sound 2024',
+      'Epic Background',
+      'Chill Vibes',
+      'Upbeat Energy',
+      'Relaxing Melody',
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: context.secondaryBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Music Library',
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: musicTracks.length,
+                itemBuilder: (context, index) {
+                  final track = musicTracks[index];
+                  return ListTile(
+                    leading: Icon(
+                      Icons.music_note,
+                      color: ThemeHelper.getAccentColor(context),
+                    ),
+                    title: Text(
+                      track,
+                      style: TextStyle(color: context.textPrimary),
+                    ),
+                    trailing: _selectedMusic == track
+                        ? Icon(
+                            Icons.check_circle,
+                            color: ThemeHelper.getAccentColor(context),
+                          )
+                        : null,
+                    onTap: () {
+                      setState(() {
+                        _selectedMusic = track;
+                      });
+                      Navigator.pop(context);
+                    },
+                  );
+                },
+              ),
             ),
           ],
         ),

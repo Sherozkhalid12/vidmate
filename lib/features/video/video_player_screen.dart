@@ -38,6 +38,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _isLiked = false;
   int _likeCount = 0;
   int _commentCount = 0;
+  String _selectedQuality = '1080p'; // Default quality
+  bool _isMiniPlayer = false;
 
   @override
   void initState() {
@@ -178,21 +180,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                               ),
                               onPressed: _togglePlayPause,
                             ),
+                            // Quality selector
+                            PopupMenuButton<String>(
+                              icon: Icon(
+                                Icons.high_quality,
+                                color: context.textPrimary,
+                              ),
+                              onSelected: (quality) {
+                                setState(() {
+                                  _selectedQuality = quality;
+                                });
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Quality changed to $quality'),
+                                    backgroundColor: Theme.of(context).colorScheme.primary,
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
+                              },
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: '1080p',
+                                  child: Text('1080p HD'),
+                                ),
+                                const PopupMenuItem(
+                                  value: '720p',
+                                  child: Text('720p HD'),
+                                ),
+                                const PopupMenuItem(
+                                  value: '480p',
+                                  child: Text('480p SD'),
+                                ),
+                              ],
+                            ),
                             IconButton(
                               icon: Icon(
-                                Icons.fullscreen,
+                                _isMiniPlayer ? Icons.fullscreen : Icons.fullscreen_exit,
                                 color: context.textPrimary,
                               ),
                               onPressed: () {
                                 setState(() {
-                                  // Toggle fullscreen mode
+                                  _isMiniPlayer = !_isMiniPlayer;
                                 });
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Fullscreen mode toggled'),
-                                    backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
-                                  ),
-                                );
                               },
                             ),
                             const SizedBox(width: 8),

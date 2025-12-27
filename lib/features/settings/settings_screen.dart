@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/utils/theme_helper.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/widgets/glass_card.dart';
-import '../../core/providers/theme_provider.dart';
+import '../../core/providers/theme_provider_riverpod.dart';
 import '../profile/edit/edit_profile_screen.dart';
 import '../../core/services/mock_data_service.dart';
 import 'privacy_security_screen.dart';
@@ -14,14 +14,14 @@ import '../analytics/analytics_screen.dart';
 import '../copyright/copyright_screen.dart';
 
 /// Settings screen with grouped sections
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _notificationsEnabled = true;
   bool _autoPlayEnabled = true;
   bool _downloadEnabled = false;
@@ -132,14 +132,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     },
                   ),
                   Divider(color: ThemeHelper.getBorderColor(context)),
-                  Consumer<ThemeProvider>(
-                    builder: (context, themeProvider, child) {
+                  // Dark mode toggle using Riverpod for super fast updates
+                  Builder(
+                    builder: (context) {
+                      final isDarkMode = ref.watch(isDarkModeProvider);
+                      final themeNotifier = ref.read(themeProvider.notifier);
                       return _buildSwitchTile(
                         icon: Icons.dark_mode_outlined,
                         title: 'Dark Mode',
-                        value: themeProvider.isDarkMode,
+                        value: isDarkMode,
                         onChanged: (value) {
-                          themeProvider.toggleTheme(); // This is now async and saves to SharedPreferences
+                          themeNotifier.toggleTheme(); // Super fast async toggle
                         },
                       );
                     },

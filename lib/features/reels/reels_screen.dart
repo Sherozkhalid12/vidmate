@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
-import '../../core/utils/theme_helper.dart';
 import 'package:video_player/video_player.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mock_data_service.dart';
@@ -91,7 +90,9 @@ class _ReelsScreenState extends State<ReelsScreen> {
   }
 
   void _onPageChanged(int index) {
-    // Pause previous video
+    if (index < 0 || index >= _reels.length) return;
+    
+    // Pause previous video smoothly
     if (_controllers.containsKey(_currentIndex)) {
       _controllers[_currentIndex]!.pause();
     }
@@ -100,22 +101,35 @@ class _ReelsScreenState extends State<ReelsScreen> {
       _currentIndex = index;
     });
     
-    // Play current video
+    // Play current video with smooth transition
     _initializeVideo(index);
-    if (_controllers.containsKey(index) && _controllers[index]!.value.isInitialized) {
-      _controllers[index]!.play();
-    }
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted && _controllers.containsKey(index)) {
+        final controller = _controllers[index]!;
+        if (controller.value.isInitialized && !controller.value.isPlaying) {
+          controller.play();
+        }
+      }
+    });
     
-    // Preload next 2 videos for smooth scrolling
+    // Preload next 3 videos for ultra-smooth scrolling
     if (index + 1 < _reels.length) {
       _initializeVideo(index + 1);
     }
     if (index + 2 < _reels.length) {
       _initializeVideo(index + 2);
     }
+    if (index + 3 < _reels.length) {
+      _initializeVideo(index + 3);
+    }
     
-    // Dispose videos that are far away to save memory (keep only 3 videos in memory)
-    final disposeThreshold = 3;
+    // Preload previous video for backward scrolling
+    if (index - 1 >= 0) {
+      _initializeVideo(index - 1);
+    }
+    
+    // Dispose videos that are far away to save memory (keep only 5 videos in memory)
+    final disposeThreshold = 5;
     final keysToRemove = <int>[];
     _controllers.forEach((key, controller) {
       if ((key - index).abs() > disposeThreshold) {
@@ -130,10 +144,14 @@ class _ReelsScreenState extends State<ReelsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root, so no need to duplicate here
     if (_reels.isEmpty) {
-      return const Center(
-        child: CircularProgressIndicator(),
+      return Container(
+        color: Colors.black,
+        child: const Center(
+          child: CircularProgressIndicator(
+            color: Colors.white,
+          ),
+        ),
       );
     }
 
@@ -142,7 +160,11 @@ class _ReelsScreenState extends State<ReelsScreen> {
       scrollDirection: Axis.vertical,
       onPageChanged: _onPageChanged,
       itemCount: _reels.length,
+      physics: const ClampingScrollPhysics(),
       itemBuilder: (context, index) {
+        if (index < 0 || index >= _reels.length) {
+          return Container(color: Colors.black);
+        }
         return _buildReelItem(_reels[index], index);
       },
     );
@@ -156,32 +178,61 @@ class _ReelsScreenState extends State<ReelsScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Video player
+        // Video player with smooth loading
         if (controller != null && isInitialized)
-          Center(
-            child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio,
-              child: VideoPlayer(controller),
+          Container(
+            color: Colors.black,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: controller.value.aspectRatio,
+                child: VideoPlayer(controller),
+              ),
             ),
           )
         else
           Container(
-            color: context.backgroundColor,
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: context.buttonColor),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Loading video...',
-                    style: TextStyle(
-                      color: context.textSecondary,
-                      fontSize: 14,
+            color: Colors.black,
+            child: Stack(
+              children: [
+                // Show thumbnail if available
+                if (reel.thumbnailUrl != null)
+                  Center(
+                    child: CachedNetworkImage(
+                      imageUrl: reel.thumbnailUrl!,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
                     ),
                   ),
-                ],
-              ),
+                // Loading overlay
+                Container(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Loading...',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         // Overlay UI
@@ -195,7 +246,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
                 begin: Alignment.bottomCenter,
                 end: Alignment.topCenter,
                 colors: [
-                  Colors.black.withOpacity(0.8),
+                  Colors.black.withValues(alpha: 0.8),
                   Colors.transparent,
                 ],
               ),
@@ -204,73 +255,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Left side - Author info and caption
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          ClipOval(
-                            child: CachedNetworkImage(
-                              imageUrl: reel.author.avatarUrl,
-                              width: 40,
-                              height: 40,
-                              fit: BoxFit.cover,
-                              placeholder: (context, url) => Container(
-                                width: 40,
-                                height: 40,
-                                color: context.surfaceColor,
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: context.buttonColor,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              errorWidget: (context, url, error) => Container(
-                                width: 40,
-                                height: 40,
-                                color: context.surfaceColor,
-                                child: Icon(
-                                  Icons.person,
-                                  color: context.textSecondary,
-                                  size: 16,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            reel.author.username,
-                            style: TextStyle(
-                              color: context.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        reel.caption,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: context.textPrimary,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 20),
-                // Right side - Action buttons
+                // Left side - Action buttons
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -334,13 +319,81 @@ class _ReelsScreenState extends State<ReelsScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(width: 20),
+                // Right side - Author info and caption
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          ClipOval(
+                            child: CachedNetworkImage(
+                              imageUrl: reel.author.avatarUrl,
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                width: 40,
+                                height: 40,
+                                color: context.surfaceColor,
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: context.buttonColor,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => Container(
+                                width: 40,
+                                height: 40,
+                                color: context.surfaceColor,
+                                child: Icon(
+                                  Icons.person,
+                                  color: context.textSecondary,
+                                  size: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            reel.author.username,
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        reel.caption,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
         ),
-        // Progress indicator on right edge
+        // Progress indicator on left edge
         Positioned(
-          right: 8,
+          left: 8,
           top: 0,
           bottom: 0,
           child: _buildProgressIndicator(),
@@ -401,7 +454,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
           decoration: BoxDecoration(
             color: index == _currentIndex
                 ? context.buttonColor
-                : context.textMuted.withOpacity(0.3),
+                : context.textMuted.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(2),
           ),
         );

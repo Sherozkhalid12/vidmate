@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/theme/app_colors.dart';
-import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
 import '../profile/profile_screen.dart';
@@ -71,9 +70,12 @@ class _SearchScreenState extends State<SearchScreen> {
     return Column(
       children: [
         AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          automaticallyImplyLeading: false,
           leading: IconButton(
             icon: Icon(Icons.arrow_back),
-            color: context.textPrimary,
+            color: ThemeHelper.getTextPrimary(context),
             onPressed: () {
               if (widget.onBackToHome != null) {
                 widget.onBackToHome!();
@@ -85,22 +87,28 @@ class _SearchScreenState extends State<SearchScreen> {
           title: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: context.surfaceColor,
+              color: ThemeHelper.getSurfaceColor(context),
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
-                color: context.borderColor,
-                width: 1,
+                color: ThemeHelper.getBorderColor(context),
+                width: 1.5,
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: TextField(
               controller: _searchController,
               autofocus: false,
-              style: TextStyle(color: context.textPrimary),
+              style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
               decoration: InputDecoration(
                 hintText: 'Search users, hashtags...',
-                hintStyle: TextStyle(color: context.textMuted),
+                hintStyle: TextStyle(color: ThemeHelper.getTextMuted(context)),
                 border: InputBorder.none,
-                icon: Icon(Icons.search, color: context.textMuted),
               ),
             ),
           ),
@@ -130,7 +138,7 @@ class _SearchScreenState extends State<SearchScreen> {
               Text(
                 'Trending',
                 style: TextStyle(
-                  color: context.textPrimary,
+                  color: ThemeHelper.getTextPrimary(context),
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
                 ),
@@ -140,7 +148,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 height: 3,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
-                  color: context.buttonColor.withOpacity(0.5),
+                  color: ThemeHelper.getAccentColor(context),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -154,7 +162,7 @@ class _SearchScreenState extends State<SearchScreen> {
               Text(
                 'Hashtags',
                 style: TextStyle(
-                  color: context.textSecondary,
+                  color: ThemeHelper.getTextSecondary(context),
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -164,7 +172,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 height: 2,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
-                  color: context.buttonColor.withOpacity(0.5),
+                  color: ThemeHelper.getAccentColor(context),
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
@@ -192,20 +200,42 @@ class _SearchScreenState extends State<SearchScreen> {
                           vertical: 12,
                         ),
                         decoration: BoxDecoration(
-                          color: context.surfaceColor,
+                          color: ThemeHelper.getSurfaceColor(context),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: context.borderColor,
-                            width: 1,
+                            color: ThemeHelper.getBorderColor(context),
+                            width: 1.5,
                           ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 4,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
                         ),
-                        child: Text(
-                          tag,
-                          style: TextStyle(
-                            color: context.textPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              tag,
+                              style: TextStyle(
+                                color: ThemeHelper.getTextPrimary(context),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Container(
+                              width: tag.length * 7.0,
+                              height: 1.5,
+                              margin: const EdgeInsets.only(top: 2),
+                              decoration: BoxDecoration(
+                                color: ThemeHelper.getAccentColor(context),
+                                borderRadius: BorderRadius.circular(1),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -222,7 +252,7 @@ class _SearchScreenState extends State<SearchScreen> {
               Text(
                 'Suggested',
                 style: TextStyle(
-                  color: context.textSecondary,
+                  color: ThemeHelper.getTextSecondary(context),
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -232,7 +262,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 height: 2,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
-                  color: context.buttonColor.withOpacity(0.5),
+                  color: ThemeHelper.getAccentColor(context),
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
@@ -265,13 +295,13 @@ class _SearchScreenState extends State<SearchScreen> {
             Icon(
               Icons.search_off,
               size: 64,
-              color: context.textMuted,
+              color: ThemeHelper.getTextMuted(context),
             ),
             const SizedBox(height: 16),
             Text(
               'No results found',
               style: TextStyle(
-                color: context.textMuted,
+                color: ThemeHelper.getTextMuted(context),
                 fontSize: 16,
               ),
             ),
@@ -306,8 +336,6 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildUserCard(UserModel user) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -321,12 +349,19 @@ class _SearchScreenState extends State<SearchScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: context.surfaceColor,
+          color: ThemeHelper.getSurfaceColor(context),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: context.borderColor,
-            width: 1,
+            color: ThemeHelper.getBorderColor(context),
+            width: 1.5,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Row(
           children: [
@@ -342,10 +377,10 @@ class _SearchScreenState extends State<SearchScreen> {
                     return Container(
                       width: 60,
                       height: 60,
-                      color: context.surfaceColor,
+                      color: ThemeHelper.getSurfaceColor(context),
                       child: Icon(
                         Icons.person,
-                        color: context.textSecondary,
+                        color: ThemeHelper.getTextSecondary(context),
                         size: 30,
                       ),
                     );
@@ -360,15 +395,15 @@ class _SearchScreenState extends State<SearchScreen> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: context.buttonColor,
+                      color: ThemeHelper.getAccentColor(context),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: context.backgroundGradient.colors.first,
+                        color: ThemeHelper.getBackgroundColor(context),
                         width: 2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: context.buttonColor.withOpacity(0.3),
+                          color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
                           blurRadius: 4,
                           spreadRadius: 1,
                         ),
@@ -386,29 +421,57 @@ class _SearchScreenState extends State<SearchScreen> {
                 Text(
                   user.displayName,
                   style: TextStyle(
-                    color: context.textPrimary,
+                    color: ThemeHelper.getTextPrimary(context),
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  '@${user.username}',
-                  style: TextStyle(
-                    color: context.textSecondary,
-                    fontSize: 14,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '@${user.username}',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextSecondary(context),
+                        fontSize: 14,
+                      ),
+                    ),
+                    Container(
+                      width: 60,
+                      height: 1.5,
+                      margin: const EdgeInsets.only(top: 2),
+                      decoration: BoxDecoration(
+                        color: ThemeHelper.getAccentColor(context),
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                  ],
                 ),
                 if (user.bio != null) ...[
                   const SizedBox(height: 4),
-                  Text(
-                    user.bio!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: context.textMuted,
-                      fontSize: 12,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user.bio!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: ThemeHelper.getTextMuted(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                      Container(
+                        width: 80,
+                        height: 1.5,
+                        margin: const EdgeInsets.only(top: 2),
+                        decoration: BoxDecoration(
+                          color: ThemeHelper.getAccentColor(context),
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],
@@ -421,16 +484,38 @@ class _SearchScreenState extends State<SearchScreen> {
                 vertical: 8,
               ),
               decoration: BoxDecoration(
-                color: context.buttonColor,
+                color: ThemeHelper.getAccentColor(context),
                 borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
-              child: Text(
-                'Follow',
-                style: TextStyle(
-                  color: context.buttonTextColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    'Follow',
+                    style: TextStyle(
+                      color: ThemeHelper.getOnAccentColor(context),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Container(
+                    width: 40,
+                    height: 1.5,
+                    margin: const EdgeInsets.only(top: 2),
+                    decoration: BoxDecoration(
+                      color: ThemeHelper.getOnAccentColor(context),
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                ],
               ),
             ),
         ],

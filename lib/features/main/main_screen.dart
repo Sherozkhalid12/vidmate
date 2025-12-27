@@ -3,22 +3,19 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/bottom_nav_bar.dart';
-import '../../core/widgets/story_avatar.dart';
 import '../../core/widgets/video_tile.dart';
 import '../../core/widgets/instagram_post_card.dart';
+import '../../core/widgets/ad_banner.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/post_model.dart';
 import '../search/search_screen.dart';
 import '../reels/reels_screen.dart';
 import '../video/video_player_screen.dart';
 import '../stories/stories_viewer_screen.dart';
-import '../notifications/notifications_screen.dart';
-import '../settings/settings_screen.dart';
-import '../feed/create_post_screen.dart';
-import '../upload/story_upload_screen.dart';
 import '../profile/profile_screen.dart';
-import '../chat/chat_screen.dart';
-import '../../core/theme/app_colors.dart';
+import '../notifications/notifications_screen.dart';
+import '../long_videos/long_videos_screen.dart';
+import '../chat/chat_list_screen.dart';
 /// Root screen with persistent glassmorphic bottom navigation
 /// Uses Stack architecture: PageView for content, BottomNavBar as overlay
 class MainScreen extends StatefulWidget {
@@ -26,42 +23,69 @@ class MainScreen extends StatefulWidget {
 
   @override
   State<MainScreen> createState() => _MainScreenState();
+  
+  // Static reference to access MainScreen state from anywhere
+  static _MainScreenState? _instance;
+  
+  static _MainScreenState? get instance => _instance;
 }
 
 class _MainScreenState extends State<MainScreen> {
   late PageController _pageController;
   int _currentIndex = 0;
-
+  
   @override
   void initState() {
     super.initState();
+    // Set the static instance reference
+    MainScreen._instance = this;
     _pageController = PageController(initialPage: 0);
   }
-
+  
   @override
   void dispose() {
+    // Clear the static instance when disposed
+    if (MainScreen._instance == this) {
+      MainScreen._instance = null;
+    }
     _pageController.dispose();
     super.dispose();
   }
 
+
   void _onNavItemTapped(int index) {
     if (_currentIndex != index) {
+      // Update index immediately to prevent blinking
       setState(() {
         _currentIndex = index;
       });
-      _pageController.animateToPage(
-        index,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
+      // Use jumpToPage for instant switching without animating through intermediate pages
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(index);
+      }
     }
   }
 
   void _onPageChanged(int index) {
+    // Only update if different to prevent unnecessary rebuilds
     if (_currentIndex != index) {
       setState(() {
         _currentIndex = index;
       });
+    }
+  }
+
+  // Method to navigate to a specific index (can be called from anywhere)
+  void navigateToIndex(int index) {
+    if (_currentIndex != index) {
+      // Update index immediately
+      setState(() {
+        _currentIndex = index;
+      });
+      // Use jumpToPage for instant switching
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(index);
+      }
     }
   }
 
@@ -117,16 +141,16 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildPage(int index, double bottomPadding) {
     switch (index) {
-      case 0: // Home Feed
+      case 0: // Home
         return HomeFeedPage(bottomPadding: bottomPadding);
-      case 1: // Explore / Search
-        return ExplorePage(bottomPadding: bottomPadding);
-      case 2: // Create
-        return CreatePage(bottomPadding: bottomPadding);
-      case 3: // Reels
+      case 1: // Reels
         return ReelsPage(bottomPadding: bottomPadding);
-      case 4: // Profile
-        return ProfilePage(bottomPadding: bottomPadding);
+      case 2: // Story
+        return StoryPage(bottomPadding: bottomPadding);
+      case 3: // Long Videos
+        return LongVideosPage(bottomPadding: bottomPadding);
+      case 4: // Notifications
+        return NotificationsPage(bottomPadding: bottomPadding);
       default:
         return const SizedBox.shrink();
     }
@@ -217,10 +241,6 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
               child: CustomScrollView(
                 controller: _scrollController,
                 slivers: [
-                  // Stories bar
-                  SliverToBoxAdapter(
-                    child: _buildStoriesBar(),
-                  ),
                   // Posts feed
                   if (_isLoading && _posts.isEmpty)
                     SliverFillRemaining(
@@ -236,14 +256,25 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                       sliver: SliverList(
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
-                            if (index < _posts.length) {
+                            // Show ad every 5 posts
+                            if (index > 0 && index % 5 == 0 && index < _posts.length) {
+                              return const AdBanner(
+                                height: 60,
+                                adType: 'banner',
+                              );
+                            }
+                            
+                            // Adjust post index for ads
+                            final postIndex = index - (index ~/ 5);
+                            
+                            if (postIndex < _posts.length) {
                               return AnimationConfiguration.staggeredList(
-                                position: index,
+                                position: postIndex,
                                 duration: const Duration(milliseconds: 375),
                                 child: SlideAnimation(
                                   verticalOffset: 50.0,
                                   child: FadeInAnimation(
-                                    child: _buildPostCard(_posts[index]),
+                                    child: _buildPostCard(_posts[postIndex]),
                                   ),
                                 ),
                               );
@@ -259,7 +290,7 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                             }
                             return const SizedBox.shrink();
                           },
-                          childCount: _posts.length + (_isLoading ? 1 : 0),
+                          childCount: _posts.length + (_posts.length ~/ 5) + (_isLoading ? 1 : 0),
                         ),
                       ),
                     ),
@@ -277,154 +308,119 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
+          // App logo
           Text(
-            'SocialVideo',
+            'VidConnect',
             style: TextStyle(
-              color: context.textPrimary,
-              fontSize: 20,
+              color: ThemeHelper.getAccentColor(context),
+              fontSize: 22,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(width: 4),
-          Icon(
-            Icons.keyboard_arrow_down,
-            size: 20,
-            color: context.textSecondary,
-          ),
           const Spacer(),
-          IconButton(
-            icon: Icon(Icons.search),
-            color: context.textPrimary,
-            onPressed: () {
+          // Chat icon (Instagram-style paper plane pointing upward)
+          GestureDetector(
+            onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const SearchScreen(),
+                  builder: (context) => const ChatListScreen(),
                 ),
               );
             },
-          ),
-          IconButton(
-            icon: Icon(Icons.favorite_border),
-            color: context.textPrimary,
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const NotificationsScreen(),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              child: Transform.rotate(
+                angle: -0.785398, // -45 degrees in radians (pointing upward-right like Instagram)
+                child: Icon(
+                  Icons.send,
+                  color: ThemeHelper.getTextPrimary(context),
+                  size: 24,
                 ),
-              );
-            },
+              ),
+            ),
           ),
-          PopupMenuButton<String>(
-            icon: Icon(Icons.sort, color: context.textPrimary),
-            onSelected: (value) {
-              setState(() {
-                _sortBy = value;
-                _posts.clear();
-              });
-              _loadPosts();
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 'latest',
+          const SizedBox(width: 8),
+          // Search bar
+          Flexible(
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SearchScreen(),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: ThemeHelper.getSurfaceColor(context),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: ThemeHelper.getBorderColor(context),
+                    width: 1,
+                  ),
+                ),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      _sortBy == 'latest' ? Icons.check : null,
-                      color: context.buttonColor,
-                      size: 20,
+                      Icons.search,
+                      size: 18,
+                      color: ThemeHelper.getTextMuted(context),
                     ),
                     const SizedBox(width: 8),
-                    Text('Latest'),
+                    Flexible(
+                      child: Text(
+                        'Search',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextMuted(context),
+                          fontSize: 14,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              PopupMenuItem(
-                value: 'popular',
-                child: Row(
-                  children: [
-                    Icon(
-                      _sortBy == 'popular' ? Icons.check : null,
-                      color: context.buttonColor,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text('Popular'),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
-          IconButton(
-            icon: Icon(Icons.chat_bubble_outline),
-            color: context.textPrimary,
-            tooltip: 'Messages',
-            onPressed: () {
+          const SizedBox(width: 12),
+          // Profile icon
+          GestureDetector(
+            onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ChatScreen(),
+                  builder: (context) => const ProfileScreen(),
                 ),
               );
             },
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    ThemeHelper.getAccentColor(context),
+                    ThemeHelper.getAccentColor(context).withValues(alpha: 0.7),
+                  ],
+                ),
+              ),
+              child: Icon(
+                Icons.person,
+                size: 18,
+                color: ThemeHelper.getOnAccentColor(context),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStoriesBar() {
-    final stories = MockDataService.getMockStories();
-    return Container(
-      height: 110,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: stories.length + 1,
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: StoryAvatar(
-                imageUrl: 'https://i.pravatar.cc/150?img=10',
-                username: 'Your Story',
-                isOwnStory: true,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const StoryUploadScreen(),
-                    ),
-                  );
-                },
-              ),
-            );
-          }
-          final story = stories[index - 1];
-          return Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: StoryAvatar(
-              imageUrl: story.author.avatarUrl,
-              username: story.author.username,
-              isViewed: story.isViewed,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => StoriesViewerScreen(
-                      initialIndex: index - 1,
-                    ),
-                  ),
-                );
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
 
   Widget _buildPostCard(PostModel post) {
     if (!post.isVideo || post.imageUrl != null) {
@@ -462,44 +458,17 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
   }
 }
 
-/// Explore Page
-class ExplorePage extends StatelessWidget {
+/// Story Page
+class StoryPage extends StatelessWidget {
   final double bottomPadding;
 
-  const ExplorePage({super.key, required this.bottomPadding});
+  const StoryPage({super.key, required this.bottomPadding});
 
   @override
   Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root
     return SafeArea(
       bottom: false,
-      child: Column(
-        children: [
-          // App Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Text(
-                  'Explore',
-                  style: TextStyle(
-                    color: context.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Content
-          Expanded(
-            child: SearchScreen(
-              onBackToHome: null, // No back button needed in main nav
-              bottomPadding: bottomPadding, // Pass bottom padding for nav bar
-            ),
-          ),
-        ],
-      ),
+      child: const StoriesViewerScreen(),
     );
   }
 }
@@ -512,7 +481,6 @@ class ReelsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root
     return SafeArea(
       bottom: false,
       child: const ReelsScreen(),
@@ -520,37 +488,31 @@ class ReelsPage extends StatelessWidget {
   }
 }
 
-/// Create Page
-class CreatePage extends StatelessWidget {
+/// Long Videos Page
+class LongVideosPage extends StatelessWidget {
   final double bottomPadding;
 
-  const CreatePage({super.key, required this.bottomPadding});
+  const LongVideosPage({super.key, required this.bottomPadding});
 
   @override
   Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root
+    return const LongVideosScreen();
+  }
+}
+
+/// Notifications Page
+class NotificationsPage extends StatelessWidget {
+  final double bottomPadding;
+
+  const NotificationsPage({super.key, required this.bottomPadding});
+
+  @override
+  Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,
-      child: CreatePostScreen(
-        bottomNavigationBar: null, // No nav bar needed, handled by main screen
-      ),
+      child: const NotificationsScreen(),
     );
   }
 }
 
-/// Profile Page
-class ProfilePage extends StatelessWidget {
-  final double bottomPadding;
-
-  const ProfilePage({super.key, required this.bottomPadding});
-
-  @override
-  Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root
-    return SafeArea(
-      bottom: false,
-      child: const ProfileScreen(),
-    );
-  }
-}
 

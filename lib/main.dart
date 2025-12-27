@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
-import 'core/providers/theme_provider.dart';
+import 'core/providers/theme_provider_riverpod.dart';
 import 'features/splash/splash_screen.dart';
 
 void main() async {
@@ -12,11 +12,11 @@ void main() async {
   // Configure logging to suppress verbose logs
   _configureLogging();
   
-  // Initialize theme provider and load saved preference
-  final themeProvider = ThemeProvider();
-  await themeProvider.loadTheme();
-  
-  runApp(MyApp(themeProvider: themeProvider));
+  runApp(
+    const ProviderScope(
+      child: MyApp(),
+    ),
+  );
 }
 
 /// Configure logging to only show important errors and debug prints
@@ -34,43 +34,36 @@ void _configureLogging() {
   // To filter prints, use AppLogger instead of print()
 }
 
-class MyApp extends StatelessWidget {
-  final ThemeProvider themeProvider;
-  
-  const MyApp({super.key, required this.themeProvider});
+class MyApp extends ConsumerWidget {
+  const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: themeProvider,
-      child: Consumer<ThemeProvider>(
-        builder: (context, themeProvider, child) {
-          // Update system UI overlay style based on theme
-          SystemChrome.setSystemUIOverlayStyle(
-            SystemUiOverlayStyle(
-              statusBarColor: Colors.transparent,
-              statusBarIconBrightness: themeProvider.isDarkMode 
-                  ? Brightness.light 
-                  : Brightness.dark,
-              systemNavigationBarColor: Colors.transparent,
-              systemNavigationBarIconBrightness: themeProvider.isDarkMode 
-                  ? Brightness.light 
-                  : Brightness.dark,
-            ),
-          );
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Watch theme state for super fast updates
+    final isDarkMode = ref.watch(isDarkModeProvider);
+    final currentTheme = ref.watch(currentThemeProvider);
 
-          return MaterialApp(
-            title: 'VidConnect',
-            debugShowCheckedModeBanner: false,
-            theme: AppTheme.lightTheme,
-            darkTheme: AppTheme.darkTheme,
-            themeMode: themeProvider.isDarkMode 
-                ? ThemeMode.dark 
-                : ThemeMode.light,
-            home: const SplashScreen(),
-          );
-        },
+    // Update system UI overlay style based on theme
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: isDarkMode 
+            ? Brightness.light 
+            : Brightness.dark,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: isDarkMode 
+            ? Brightness.light 
+            : Brightness.dark,
       ),
+    );
+
+    return MaterialApp(
+      title: 'VidConnect',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: isDarkMode ? ThemeMode.dark : ThemeMode.light,
+      home: const SplashScreen(),
     );
   }
 }
