@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 
@@ -144,7 +145,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text('Blocked users list'),
-                      backgroundColor: AppColors.cyanGlow,
+                      backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                     ),
                   );
                 },
@@ -180,7 +181,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text('Two-factor authentication setup'),
-                          backgroundColor: AppColors.cyanGlow,
+                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                         ),
                       );
                     },
@@ -193,7 +194,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text('Data download requested'),
-                          backgroundColor: AppColors.cyanGlow,
+                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                         ),
                       );
                     },
@@ -379,7 +380,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Password changed successfully'),
-                  backgroundColor: AppColors.cyanGlow,
+                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 ),
               );
             },

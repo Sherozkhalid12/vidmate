@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 
@@ -61,7 +62,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     'Daily Active Users',
                     '12.5K',
                     Icons.people,
-                    AppColors.neonPurple,
+                    ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -70,7 +71,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     'Total Views',
                     '1.2M',
                     Icons.visibility,
-                    AppColors.cyanGlow,
+                    ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                 ),
               ],
@@ -83,7 +84,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     'Watch Time',
                     '45.2K hrs',
                     Icons.play_circle,
-                    AppColors.softBlue,
+                    ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -219,7 +220,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Text(
             value,
             style: TextStyle(
-              color: AppColors.neonPurple,
+              color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
               fontSize: 14,
               fontWeight: FontWeight.w600,
             ),

@@ -30,7 +30,7 @@ class ThemeHelper {
 
   static Color getSurfaceColor(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return isDark ? AppColors.glassSurface : AppColors.lightSurface;
+    return isDark ? AppColors.glassSurface : AppColors.lightGlassSurfaceMedium;
   }
 
   static Color getBorderColor(BuildContext context) {
@@ -40,13 +40,50 @@ class ThemeHelper {
 
   static LinearGradient getBackgroundGradient(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return isDark 
+    return isDark
         ? AppColors.backgroundGradient
-        : const LinearGradient(
-            colors: [Color(0xFFF8F9FA), Color(0xFFFFFFFF)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          );
+        : AppColors.lightBackgroundGradient;
+  }
+
+  /// Get theme-aware icon color (uses Theme.iconTheme.color or falls back to textSecondary)
+  static Color getIconColor(BuildContext context) {
+    final iconTheme = Theme.of(context).iconTheme;
+    if (iconTheme.color != null) {
+      return iconTheme.color!;
+    }
+    return getTextSecondary(context);
+  }
+
+  /// Get high-contrast icon color for overlays (white in dark, black in light)
+  static Color getHighContrastIconColor(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return isDark ? Colors.white : Colors.black;
+  }
+
+  /// Get theme-aware accent color (primary color from colorScheme)
+  /// Use for buttons, icons, highlights, and interactive elements
+  static Color getAccentColor(BuildContext context) {
+    return Theme.of(context).colorScheme.primary;
+  }
+
+  /// Get theme-aware accent gradient for buttons and decorative elements
+  /// Returns a gradient from primary to slightly transparent primary
+  static LinearGradient getAccentGradient(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return LinearGradient(
+      colors: [
+        primary,
+        primary.withOpacity(0.8),
+      ],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    );
+  }
+
+  /// Get theme-aware color for text/icons on accent backgrounds
+  /// Returns onPrimary color from colorScheme
+  static Color getOnAccentColor(BuildContext context) {
+    return Theme.of(context).colorScheme.onPrimary;
   }
 }
 

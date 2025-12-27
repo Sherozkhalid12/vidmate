@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../theme/app_colors.dart';
+import '../utils/theme_helper.dart';
 
 /// Story avatar with animated gradient ring
 class StoryAvatar extends StatefulWidget {
@@ -68,13 +69,14 @@ class _StoryAvatarState extends State<StoryAvatar>
                       height: widget.size + 4,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
+                        // Use theme-aware accent colors for story ring gradient
                         gradient: widget.isViewed
                             ? null
                             : LinearGradient(
                                 colors: [
-                                  AppColors.neonPurple,
-                                  AppColors.cyanGlow,
-                                  AppColors.softBlue,
+                                  Theme.of(context).colorScheme.primary,
+                                  Theme.of(context).colorScheme.primary.withOpacity(0.7),
+                                  Theme.of(context).colorScheme.primary.withOpacity(0.5),
                                 ],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
@@ -87,7 +89,7 @@ class _StoryAvatarState extends State<StoryAvatar>
                       child: Container(
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: AppColors.primaryBackground,
+                          color: ThemeHelper.getBackgroundColor(context), // Theme-aware background
                         ),
                         child: ClipOval(
                           child: Image.network(
@@ -99,10 +101,10 @@ class _StoryAvatarState extends State<StoryAvatar>
                               return Container(
                                 width: widget.size,
                                 height: widget.size,
-                                color: AppColors.glassSurface,
+                                color: ThemeHelper.getSurfaceColor(context), // Theme-aware surface
                                 child: Icon(
                                   Icons.person,
-                                  color: AppColors.textSecondary,
+                                  color: ThemeHelper.getTextSecondary(context), // Theme-aware icon color
                                   size: widget.size * 0.5,
                                 ),
                               );
@@ -122,8 +124,8 @@ class _StoryAvatarState extends State<StoryAvatar>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      style: TextStyle(
+                        color: ThemeHelper.getTextSecondary(context), // Theme-aware text color
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                       ),

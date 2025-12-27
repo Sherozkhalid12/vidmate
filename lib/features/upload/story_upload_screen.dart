@@ -1,5 +1,6 @@
 import 'dart:io';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme/app_colors.dart';
@@ -37,7 +38,10 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: Icon(Icons.photo_library, color: AppColors.neonPurple),
+                leading: Icon(
+                  Icons.photo_library,
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                ),
                 title: Text(
                   'Choose from Gallery',
                   style: TextStyle(color: context.textPrimary),
@@ -45,7 +49,10 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
               ListTile(
-                leading: Icon(Icons.camera_alt, color: AppColors.neonPurple),
+                leading: Icon(
+                  Icons.camera_alt,
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                ),
                 title: Text(
                   'Take Photo/Video',
                   style: TextStyle(color: context.textPrimary),
@@ -82,7 +89,7 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            backgroundColor: AppColors.softBlue.withOpacity(0.9),
+            backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
             duration: const Duration(seconds: 5),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -134,7 +141,7 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Story uploaded successfully!'),
-          backgroundColor: AppColors.cyanGlow,
+          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
         ),
       );
       Navigator.pop(context, true);
@@ -273,7 +280,11 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
         ),
         child: Column(
           children: [
-            Icon(icon, size: 48, color: AppColors.neonPurple),
+            Icon(
+              icon,
+              size: 48,
+              color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+            ),
             const SizedBox(height: 8),
             Text(
               label,

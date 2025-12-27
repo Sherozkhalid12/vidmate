@@ -1,5 +1,6 @@
 import 'dart:io';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_compress/video_compress.dart';
@@ -54,7 +55,10 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: Icon(Icons.video_library, color: AppColors.neonPurple),
+                leading: Icon(
+                  Icons.video_library,
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                ),
                 title: Text(
                   'Choose from Gallery',
                   style: TextStyle(color: context.textPrimary),
@@ -62,7 +66,10 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
               ListTile(
-                leading: Icon(Icons.videocam, color: AppColors.neonPurple),
+                leading: Icon(
+                  Icons.videocam,
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                ),
                 title: Text(
                   'Record Video',
                   style: TextStyle(color: context.textPrimary),
@@ -102,7 +109,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            backgroundColor: AppColors.softBlue.withOpacity(0.9),
+            backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
             duration: const Duration(seconds: 5),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -222,7 +229,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Video uploaded successfully!'),
-            backgroundColor: AppColors.cyanGlow,
+            backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
           ),
         );
         Navigator.pop(context, true);
@@ -239,7 +246,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            backgroundColor: AppColors.softBlue.withOpacity(0.9),
+            backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
@@ -357,7 +364,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                         ? 'Copyright OK'
                                         : 'Check Copyright',
                                 backgroundColor: _copyrightCheckPassed
-                                    ? AppColors.cyanGlow.withOpacity(0.2)
+                                    ? ThemeHelper.getAccentColor(context).withOpacity(0.2) // Theme-aware accent with opacity
                                     : null,
                                 onPressed: _checkCopyright,
                                 padding: const EdgeInsets.symmetric(
@@ -410,8 +417,8 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                   LinearProgressIndicator(
                     value: _uploadProgress,
                     backgroundColor: context.surfaceColor,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.neonPurple,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      ThemeHelper.getAccentColor(context), // Theme-aware accent color
                     ),
                   ),
                   const SizedBox(height: 8),

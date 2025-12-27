@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
@@ -179,8 +180,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 ),
                 const SizedBox(width: 8),
                 IconButton(
-                  icon: Icon(Icons.send),
-                  color: AppColors.neonPurple,
+                  icon: const Icon(Icons.send),
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   onPressed: _addComment,
                 ),
               ],
@@ -258,9 +259,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         });
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Liked comment'),
-                            backgroundColor: AppColors.cyanGlow,
-                            duration: Duration(seconds: 1),
+                            content: const Text('Liked comment'),
+                            backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                            duration: const Duration(seconds: 1),
                           ),
                         );
                       },

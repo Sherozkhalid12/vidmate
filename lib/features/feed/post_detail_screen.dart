@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_button.dart';
 import '../../core/models/post_model.dart';
@@ -34,14 +35,17 @@ class PostDetailScreen extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       ListTile(
-                        leading: Icon(Icons.share, color: AppColors.neonPurple),
+                        leading: Icon(
+                          Icons.share,
+                          color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                        ),
                         title: Text('Share', style: TextStyle(color: context.textPrimary)),
                         onTap: () {
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Share feature coming soon'),
-                              backgroundColor: AppColors.cyanGlow,
+                              content: const Text('Share feature coming soon'),
+                              backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                             ),
                           );
                         },
@@ -53,8 +57,8 @@ class PostDetailScreen extends StatelessWidget {
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Report feature coming soon'),
-                              backgroundColor: AppColors.cyanGlow,
+                              content: const Text('Report feature coming soon'),
+                              backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                             ),
                           );
                         },
@@ -153,8 +157,8 @@ class PostDetailScreen extends StatelessWidget {
                         onPressed: () {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Follow feature coming soon'),
-                              backgroundColor: AppColors.cyanGlow,
+                              content: const Text('Follow feature coming soon'),
+                              backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                             ),
                           );
                         },

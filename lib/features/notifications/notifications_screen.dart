@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
@@ -44,15 +45,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Color _getNotificationColor(String type) {
+    // Use semantic colors where appropriate, theme-aware accent for others
     switch (type) {
       case 'like':
-        return AppColors.warning;
+        return AppColors.warning; // Keep semantic color for likes
       case 'comment':
-        return AppColors.cyanGlow;
+        return ThemeHelper.getAccentColor(context); // Theme-aware accent color
       case 'follow':
-        return AppColors.neonPurple;
+        return ThemeHelper.getAccentColor(context); // Theme-aware accent color
       default:
-        return AppColors.softBlue;
+        return ThemeHelper.getAccentColor(context); // Theme-aware accent color
     }
   }
 
@@ -73,7 +75,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             },
             child: Text(
               'Mark all as read',
-              style: TextStyle(color: AppColors.neonPurple),
+              style: TextStyle(
+                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+              ),
             ),
           ),
         ],
@@ -133,7 +137,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       borderRadius: BorderRadius.circular(16),
       backgroundColor: isRead
           ? context.surfaceColor
-          : AppColors.neonPurple.withOpacity(0.1),
+          : ThemeHelper.getAccentColor(context).withOpacity(0.1), // Theme-aware accent with opacity
       onTap: () {
         Navigator.push(
           context,
@@ -221,11 +225,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               width: 8,
               height: 8,
               decoration: BoxDecoration(
-                color: AppColors.neonPurple,
+                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.neonPurple.withOpacity(0.5),
+                    color: ThemeHelper.getAccentColor(context).withOpacity(0.5), // Theme-aware shadow
                     blurRadius: 4,
                     spreadRadius: 1,
                   ),

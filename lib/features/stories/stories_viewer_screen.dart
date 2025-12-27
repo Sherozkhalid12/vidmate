@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/story_model.dart';
@@ -218,8 +219,8 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                                           Navigator.pop(context);
                                           ScaffoldMessenger.of(context).showSnackBar(
                                             SnackBar(
-                                              content: Text('Mute feature coming soon'),
-                                              backgroundColor: AppColors.cyanGlow,
+                                              content: const Text('Mute feature coming soon'),
+                                              backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                                             ),
                                           );
                                         },
@@ -231,8 +232,8 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                                           Navigator.pop(context);
                                           ScaffoldMessenger.of(context).showSnackBar(
                                             SnackBar(
-                                              content: Text('Block feature coming soon'),
-                                              backgroundColor: AppColors.cyanGlow,
+                                              content: const Text('Block feature coming soon'),
+                                              backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                                             ),
                                           );
                                         },
@@ -290,7 +291,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          gradient: AppColors.purpleGradient,
+                          gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
                           shape: BoxShape.circle,
                         ),
                         child: Icon(

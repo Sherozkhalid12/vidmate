@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_extensions.dart';
+import '../../../core/utils/theme_helper.dart';
 import '../../../core/widgets/glass_card.dart';
 import '../../../core/widgets/glass_button.dart';
 import '../../../core/models/user_model.dart';
@@ -57,7 +58,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: Icon(Icons.photo_library, color: AppColors.neonPurple),
+                leading: Icon(
+                  Icons.photo_library,
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                ),
                 title: Text(
                   'Choose from Gallery',
                   style: TextStyle(color: context.textPrimary),
@@ -65,7 +69,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
               ListTile(
-                leading: Icon(Icons.camera_alt, color: AppColors.neonPurple),
+                leading: Icon(
+                  Icons.camera_alt,
+                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                ),
                 title: Text(
                   'Take Photo',
                   style: TextStyle(color: context.textPrimary),
@@ -103,7 +110,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            backgroundColor: AppColors.softBlue.withOpacity(0.9),
+            backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
             duration: const Duration(seconds: 5),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -133,7 +140,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Profile updated successfully!'),
-          backgroundColor: AppColors.cyanGlow,
+          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
         ),
       );
       Navigator.pop(context, true);
@@ -167,10 +174,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       height: 120,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: AppColors.storyRingGradient,
+                        gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.neonPurple.withOpacity(0.3),
+                            color: ThemeHelper.getAccentColor(context).withOpacity(0.3), // Theme-aware accent with opacity
                             blurRadius: 20,
                             spreadRadius: 5,
                           ),
@@ -205,7 +212,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: AppColors.neonPurple,
+                          color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                           shape: BoxShape.circle,
                         ),
                         child: Icon(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_button.dart';
@@ -17,30 +18,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
 
-  final List<OnboardingPage> _pages = [
-    OnboardingPage(
-      icon: Icons.play_circle_filled,
-      title: 'Watch Unlimited',
-      description: 'Stream long-form videos, binge-watch reels, and discover content from creators around the globe.',
-      gradient: AppColors.purpleGradient,
-    ),
-    OnboardingPage(
-      icon: Icons.camera_alt,
-      title: 'Create & Share',
-      description: 'Record videos, upload photos, share stories, and express yourself with creative content.',
-      gradient: AppColors.cyanGradient,
-    ),
-    OnboardingPage(
-      icon: Icons.chat_bubble,
-      title: 'Connect Instantly',
-      description: 'Message friends, join conversations, and stay connected with real-time chat and notifications.',
-      gradient: LinearGradient(
-        colors: [AppColors.neonPurple, AppColors.softBlue],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
+  List<OnboardingPage> _getPages(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final secondary = Theme.of(context).colorScheme.secondary;
+    return [
+      OnboardingPage(
+        icon: Icons.play_circle_filled,
+        title: 'Watch Unlimited',
+        description: 'Stream long-form videos, binge-watch reels, and discover content from creators around the globe.',
+        gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
       ),
-    ),
-  ];
+      OnboardingPage(
+        icon: Icons.camera_alt,
+        title: 'Create & Share',
+        description: 'Record videos, upload photos, share stories, and express yourself with creative content.',
+        gradient: LinearGradient(
+          colors: [primary, secondary],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ), // Theme-aware gradient using primary and secondary
+      ),
+      OnboardingPage(
+        icon: Icons.chat_bubble,
+        title: 'Connect Instantly',
+        description: 'Message friends, join conversations, and stay connected with real-time chat and notifications.',
+        gradient: LinearGradient(
+          colors: [primary, primary.withOpacity(0.7)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ), // Theme-aware gradient using primary
+      ),
+    ];
+  }
 
   @override
   void dispose() {
@@ -48,8 +57,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     super.dispose();
   }
 
-  void _nextPage() {
-    if (_currentPage < _pages.length - 1) {
+  void _nextPage(BuildContext context) {
+    final pages = _getPages(context);
+    if (_currentPage < pages.length - 1) {
       _pageController.nextPage(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
@@ -119,48 +129,63 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
               ),
               // Page view
-              Expanded(
-                child: PageView.builder(
-                  controller: _pageController,
-                  onPageChanged: (index) {
-                    setState(() {
-                      _currentPage = index;
-                    });
-                  },
-                  itemCount: _pages.length,
-                  itemBuilder: (context, index) {
-                    return AnimationConfiguration.staggeredList(
-                      position: index,
-                      duration: const Duration(milliseconds: 375),
-                      child: SlideAnimation(
-                        verticalOffset: 50.0,
-                        child: FadeInAnimation(
-                          child: _buildPage(_pages[index]),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              Builder(
+                builder: (context) {
+                  final pages = _getPages(context);
+                  return Expanded(
+                    child: PageView.builder(
+                      controller: _pageController,
+                      onPageChanged: (index) {
+                        setState(() {
+                          _currentPage = index;
+                        });
+                      },
+                      itemCount: pages.length,
+                      itemBuilder: (context, index) {
+                        return AnimationConfiguration.staggeredList(
+                          position: index,
+                          duration: const Duration(milliseconds: 375),
+                          child: SlideAnimation(
+                            verticalOffset: 50.0,
+                            child: FadeInAnimation(
+                              child: _buildPage(pages[index]),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
               ),
               // Page indicators
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _pages.length,
-                  (index) => _buildIndicator(index == _currentPage),
-                ),
+              Builder(
+                builder: (context) {
+                  final pages = _getPages(context);
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(
+                      pages.length,
+                      (index) => _buildIndicator(context, index == _currentPage),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 40),
               // Next button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: GlassButton(
-                  text: _currentPage == _pages.length - 1
-                      ? 'Get Started'
-                      : 'Next',
-                  onPressed: _nextPage,
-                  width: double.infinity,
-                ),
+              Builder(
+                builder: (context) {
+                  final pages = _getPages(context);
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 40),
+                    child: GlassButton(
+                      text: _currentPage == pages.length - 1
+                          ? 'Get Started'
+                          : 'Next',
+                      onPressed: () => _nextPage(context),
+                      width: double.infinity,
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 40),
             ],
@@ -184,7 +209,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.neonPurple.withOpacity(0.3),
+                  color: ThemeHelper.getAccentColor(context).withOpacity(0.3), // Theme-aware accent color with opacity
                   blurRadius: 40,
                   spreadRadius: 10,
                 ),
@@ -225,14 +250,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _buildIndicator(bool isActive) {
+  Widget _buildIndicator(BuildContext context, bool isActive) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       margin: const EdgeInsets.symmetric(horizontal: 4),
       width: isActive ? 24 : 8,
       height: 8,
       decoration: BoxDecoration(
-        color: isActive ? AppColors.neonPurple : context.textMuted,
+        color: isActive ? ThemeHelper.getAccentColor(context) : context.textMuted, // Theme-aware accent color
         borderRadius: BorderRadius.circular(4),
       ),
     );

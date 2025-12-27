@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:provider/provider.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/providers/theme_provider.dart';
 import '../profile/edit/edit_profile_screen.dart';
@@ -29,19 +28,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark 
-        ? context.backgroundColor 
-        : AppColors.lightBackground;
-    
     return Scaffold(
-      backgroundColor: backgroundColor,
-      appBar: AppBar(
-        title: Text('Settings'),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
+        ),
         child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Settings',
+                style: TextStyle(
+                  color: ThemeHelper.getTextPrimary(context),
+                ),
+              ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(
+                color: ThemeHelper.getTextPrimary(context),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Account section
@@ -66,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.lock_outline,
                     title: 'Privacy & Security',
@@ -79,14 +90,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.language,
                     title: 'Language',
                     trailing: Text(
                       'English',
                       style: TextStyle(
-                        color: context.textSecondary,
+                        color: ThemeHelper.getTextSecondary(context),
                         fontSize: 14,
                       ),
                     ),
@@ -120,7 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       });
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   Consumer<ThemeProvider>(
                     builder: (context, themeProvider, child) {
                       return _buildSwitchTile(
@@ -133,7 +144,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.play_circle_outline,
                     title: 'Auto-play Videos',
@@ -144,7 +155,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       });
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.download_outlined,
                     title: 'Download Over Wi-Fi Only',
@@ -178,7 +189,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.copyright,
                     title: 'Copyright Management',
@@ -214,14 +225,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.info_outline,
                     title: 'About',
                     trailing: Text(
                       'v1.0.0',
                       style: TextStyle(
-                        color: context.textSecondary,
+                        color: ThemeHelper.getTextSecondary(context),
                         fontSize: 14,
                       ),
                     ),
@@ -229,26 +240,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       showDialog(
                         context: context,
                         builder: (context) => AlertDialog(
-                          backgroundColor: context.secondaryBackgroundColor,
+                          backgroundColor: ThemeHelper.getSecondaryBackgroundColor(context),
                           title: Text(
                             'About',
-                            style: TextStyle(color: context.textPrimary),
+                            style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
                           ),
                           content: Text(
                             'SocialVideo v1.0.0\n\nA next-generation social video platform combining the best of Instagram, YouTube, and Messenger.',
-                            style: TextStyle(color: context.textSecondary),
+                            style: TextStyle(color: ThemeHelper.getTextSecondary(context)),
                           ),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context),
-                              child: Text('OK'),
+                              child: Text(
+                                'OK',
+                                style: TextStyle(
+                                  color: ThemeHelper.getAccentColor(context),
+                                ),
+                              ),
                             ),
                           ],
                         ),
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.description_outlined,
                     title: 'Terms of Service',
@@ -261,7 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.privacy_tip_outlined,
                     title: 'Privacy Policy',
@@ -281,43 +297,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
             GlassCard(
               padding: const EdgeInsets.all(16),
               borderRadius: BorderRadius.circular(16),
-              backgroundColor: AppColors.warning.withOpacity(0.1),
+              backgroundColor: Theme.of(context).colorScheme.error.withOpacity(0.1),
               child: _buildSettingTile(
                 icon: Icons.logout,
                 title: 'Log Out',
-                titleColor: AppColors.warning,
+                titleColor: Theme.of(context).colorScheme.error,
                 onTap: () {
                   showDialog(
                     context: context,
                     builder: (context) => AlertDialog(
-                      backgroundColor: context.secondaryBackgroundColor,
+                      backgroundColor: ThemeHelper.getSecondaryBackgroundColor(context),
                       title: Text(
                         'Log Out',
-                        style: TextStyle(color: context.textPrimary),
+                        style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
                       ),
                       content: Text(
                         'Are you sure you want to log out?',
-                        style: TextStyle(color: context.textSecondary),
+                        style: TextStyle(color: ThemeHelper.getTextSecondary(context)),
                       ),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.pop(context),
-                          child: Text('Cancel'),
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: ThemeHelper.getTextSecondary(context),
+                            ),
+                          ),
                         ),
                         TextButton(
                           onPressed: () {
                             Navigator.pop(context);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('Logged out successfully'),
-                                backgroundColor: AppColors.cyanGlow,
+                                content: Text(
+                                  'Logged out successfully',
+                                  style: TextStyle(
+                                    color: ThemeHelper.getOnAccentColor(context),
+                                  ),
+                                ),
+                                backgroundColor: ThemeHelper.getAccentColor(context),
                               ),
                             );
                             // Navigate to login screen
                           },
                           child: Text(
                             'Log Out',
-                            style: TextStyle(color: AppColors.warning),
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
                           ),
                         ),
                       ],
@@ -327,6 +355,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 40),
+                ],
+              ),
+            ),
+            )
           ],
         ),
       ),
@@ -339,7 +371,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Text(
         title,
         style: TextStyle(
-          color: context.textSecondary,
+          color: ThemeHelper.getTextSecondary(context),
           fontSize: 14,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.5,
@@ -364,7 +396,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Icon(
               icon,
-              color: titleColor ?? context.textSecondary,
+              color: titleColor ?? ThemeHelper.getTextSecondary(context),
               size: 24,
             ),
             const SizedBox(width: 16),
@@ -372,7 +404,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text(
                 title,
                 style: TextStyle(
-                  color: titleColor ?? context.textPrimary,
+                  color: titleColor ?? ThemeHelper.getTextPrimary(context),
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
@@ -382,7 +414,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (trailing == null)
               Icon(
                 Icons.chevron_right,
-                color: context.textMuted,
+                color: ThemeHelper.getTextMuted(context),
                 size: 20,
               ),
           ],
@@ -403,7 +435,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Icon(
             icon,
-            color: context.textSecondary,
+            color: ThemeHelper.getTextSecondary(context),
             size: 24,
           ),
           const SizedBox(width: 16),
@@ -411,7 +443,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Text(
               title,
               style: TextStyle(
-                color: context.textPrimary,
+                color: ThemeHelper.getTextPrimary(context),
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
@@ -420,6 +452,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Switch(
             value: value,
             onChanged: onChanged,
+            activeColor: ThemeHelper.getAccentColor(context),
           ),
         ],
       ),

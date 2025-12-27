@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/glass_button.dart';
-import '../home/home_screen.dart';
+import '../main/main_screen.dart';
 
 /// Auth screen with glassmorphism design
 class AuthScreen extends StatefulWidget {
@@ -40,7 +41,7 @@ class _AuthScreenState extends State<AuthScreen>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            const HomeScreen(),
+            const MainScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(
             opacity: animation,
@@ -86,7 +87,7 @@ class _AuthScreenState extends State<AuthScreen>
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: AppColors.neonPurple
+                              color: ThemeHelper.getAccentColor(context) // Theme-aware accent color
                                   .withOpacity(_glowAnimation.value * 0.5),
                               blurRadius: 40,
                               spreadRadius: 10,
@@ -97,7 +98,7 @@ class _AuthScreenState extends State<AuthScreen>
                           padding: const EdgeInsets.all(24),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            gradient: AppColors.purpleGradient,
+                            gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
                           ),
                           child: Icon(
                             Icons.play_circle_filled,
@@ -154,7 +155,7 @@ class _AuthScreenState extends State<AuthScreen>
                         GlassButton(
                           text: 'Continue with Facebook',
                           icon: Icons.facebook,
-                          backgroundColor: AppColors.softBlue,
+                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                           onPressed: _handleLogin,
                           width: double.infinity,
                         ),

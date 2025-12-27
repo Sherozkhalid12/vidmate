@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 
@@ -92,7 +93,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Search help articles'),
-                  backgroundColor: AppColors.cyanGlow,
+                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 ),
               );
             },
@@ -114,7 +115,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                   Icon(
                     Icons.support_agent,
                     size: 48,
-                    color: AppColors.neonPurple,
+                    color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -139,14 +140,14 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text('Opening support chat...'),
-                          backgroundColor: AppColors.cyanGlow,
+                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                         ),
                       );
                     },
                     icon: Icon(Icons.chat),
                     label: Text('Contact Support'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.neonPurple,
+                      backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                       foregroundColor: context.textPrimary,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 24,
@@ -185,7 +186,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
       child: ExpansionTile(
         leading: Icon(
           category['icon'] as IconData,
-          color: AppColors.neonPurple,
+          color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
         ),
         title: Text(
           category['title'] as String,
@@ -212,7 +213,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Opening: $item'),
-                  backgroundColor: AppColors.cyanGlow,
+                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 ),
               );
             },

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -8,11 +9,29 @@ import 'features/splash/splash_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Configure logging to suppress verbose logs
+  _configureLogging();
+  
   // Initialize theme provider and load saved preference
   final themeProvider = ThemeProvider();
   await themeProvider.loadTheme();
   
   runApp(MyApp(themeProvider: themeProvider));
+}
+
+/// Configure logging to only show important errors and debug prints
+void _configureLogging() {
+  // Suppress verbose print statements
+  // Note: This affects debugPrint, but direct print() calls may still appear
+  // Use AppLogger from core/utils/logger.dart for better control
+  if (kReleaseMode) {
+    // In release mode, suppress all debug prints
+    debugPrint = (String? message, {int? wrapWidth}) {
+      // Suppress all prints in release mode
+    };
+  }
+  // In debug mode, debugPrint will work normally
+  // To filter prints, use AppLogger instead of print()
 }
 
 class MyApp extends StatelessWidget {

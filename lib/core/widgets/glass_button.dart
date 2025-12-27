@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../utils/theme_helper.dart';
 
 /// Glassmorphism button with glow effect
 class GlassButton extends StatefulWidget {
@@ -82,15 +83,23 @@ class _GlassButtonState extends State<GlassButton>
               padding: widget.padding ??
                   const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               decoration: BoxDecoration(
+                // Use theme-aware button color instead of purple gradient
                 gradient: widget.backgroundColor == null
-                    ? AppColors.purpleGradient
+                    ? LinearGradient(
+                        colors: [
+                          Theme.of(context).colorScheme.primary,
+                          Theme.of(context).colorScheme.primary.withOpacity(0.8),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
                     : null,
                 color: widget.backgroundColor,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: widget.onPressed != null && !widget.isLoading
                     ? [
                         BoxShadow(
-                          color: AppColors.neonPurple.withOpacity(0.3),
+                          color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
                           blurRadius: 20,
                           spreadRadius: 0,
                         ),
@@ -102,20 +111,20 @@ class _GlassButtonState extends State<GlassButton>
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   if (widget.isLoading)
-                    const SizedBox(
+                    SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          AppColors.textPrimary,
+                          widget.textColor ?? ThemeHelper.getTextPrimary(context),
                         ),
                       ),
                     )
                   else if (widget.icon != null) ...[
                     Icon(
                       widget.icon,
-                      color: widget.textColor ?? AppColors.textPrimary,
+                      color: widget.textColor ?? Theme.of(context).colorScheme.onPrimary, // Theme-aware icon color
                       size: 20,
                     ),
                     const SizedBox(width: 8),
@@ -123,7 +132,7 @@ class _GlassButtonState extends State<GlassButton>
                   Text(
                     widget.text,
                     style: TextStyle(
-                      color: widget.textColor ?? AppColors.textPrimary,
+                      color: widget.textColor ?? Theme.of(context).colorScheme.onPrimary, // Theme-aware text color
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.5,

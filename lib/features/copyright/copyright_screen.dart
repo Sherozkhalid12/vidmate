@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/glass_button.dart';
@@ -60,7 +61,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                   Icon(
                     Icons.copyright,
                     size: 48,
-                    color: AppColors.neonPurple,
+                    color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -90,8 +91,8 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Select content to check for copyright'),
-                    backgroundColor: AppColors.cyanGlow,
+                    content: const Text('Select content to check for copyright'),
+                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                 );
               },
@@ -117,7 +118,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     Icon(
                       Icons.check_circle_outline,
                       size: 64,
-                      color: AppColors.cyanGlow,
+                      color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                     ),
                     const SizedBox(height: 16),
                     Text(
@@ -164,7 +165,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
             children: [
               Icon(
                 isPending ? Icons.warning : Icons.check_circle,
-                color: isPending ? AppColors.warning : AppColors.cyanGlow,
+                color: isPending ? AppColors.warning : ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 size: 24,
               ),
               const SizedBox(width: 12),
@@ -195,13 +196,13 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                 decoration: BoxDecoration(
                   color: isPending
                       ? AppColors.warning.withOpacity(0.2)
-                      : AppColors.cyanGlow.withOpacity(0.2),
+                      : ThemeHelper.getAccentColor(context).withOpacity(0.2), // Theme-aware accent with opacity
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   status,
                   style: TextStyle(
-                    color: isPending ? AppColors.warning : AppColors.cyanGlow,
+                    color: isPending ? AppColors.warning : ThemeHelper.getAccentColor(context), // Theme-aware accent color
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -229,8 +230,8 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     onPressed: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Dispute submitted'),
-                          backgroundColor: AppColors.cyanGlow,
+                          content: const Text('Dispute submitted'),
+                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                         ),
                       );
                     },
@@ -246,7 +247,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                       });
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.neonPurple,
+                      backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                     ),
                     child: Text('Accept'),
                   ),

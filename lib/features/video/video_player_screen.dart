@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:video_player/video_player.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
@@ -121,9 +122,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         aspectRatio: _controller.value.aspectRatio,
                         child: VideoPlayer(_controller),
                       )
-                    : const Center(
+                    : Center(
                         child: CircularProgressIndicator(
-                          color: AppColors.neonPurple,
+                          color: Theme.of(context).colorScheme.primary, // Theme-aware loading indicator
                         ),
                       ),
               ),
@@ -153,7 +154,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                           _controller,
                           allowScrubbing: true,
                           colors: VideoProgressColors(
-                            playedColor: AppColors.neonPurple,
+                            playedColor: Theme.of(context).colorScheme.primary, // Theme-aware progress color
                             bufferedColor: context.textMuted,
                             backgroundColor: context.surfaceColor,
                           ),
@@ -189,7 +190,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('Fullscreen mode toggled'),
-                                    backgroundColor: AppColors.cyanGlow,
+                                    backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
                                   ),
                                 );
                               },
@@ -234,27 +235,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   ListTile(
-                                    leading: Icon(Icons.share, color: AppColors.neonPurple),
+                                    leading: Icon(
+                                      Icons.share,
+                                      color: Theme.of(context).colorScheme.primary, // Theme-aware icon color
+                                    ),
                                     title: Text('Share', style: TextStyle(color: context.textPrimary)),
                                     onTap: () {
                                       Navigator.pop(context);
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         SnackBar(
                                           content: Text('Share feature coming soon'),
-                                          backgroundColor: AppColors.cyanGlow,
+                                          backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
                                         ),
                                       );
                                     },
                                   ),
                                   ListTile(
-                                    leading: Icon(Icons.download, color: AppColors.neonPurple),
+                                    leading: Icon(
+                                      Icons.download,
+                                      color: Theme.of(context).colorScheme.primary, // Theme-aware icon color
+                                    ),
                                     title: Text('Download', style: TextStyle(color: context.textPrimary)),
                                     onTap: () {
                                       Navigator.pop(context);
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         SnackBar(
                                           content: Text('Download feature coming soon'),
-                                          backgroundColor: AppColors.cyanGlow,
+                                          backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
                                         ),
                                       );
                                     },
@@ -267,7 +274,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         SnackBar(
                                           content: Text('Report feature coming soon'),
-                                          backgroundColor: AppColors.cyanGlow,
+                                          backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
                                         ),
                                       );
                                     },
@@ -316,13 +323,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                     width: 40,
                                     height: 40,
                                     color: context.surfaceColor,
-                                    child: const Center(
+                                    child: Center(
                                       child: SizedBox(
                                         width: 16,
                                         height: 16,
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2,
-                                          color: AppColors.neonPurple,
+                                          color: Theme.of(context).colorScheme.primary, // Theme-aware loading indicator
                                         ),
                                       ),
                                     ),
@@ -367,7 +374,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                   vertical: 8,
                                 ),
                                 decoration: BoxDecoration(
-                                  gradient: AppColors.purpleGradient,
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Theme.of(context).colorScheme.primary,
+                                      Theme.of(context).colorScheme.primary.withOpacity(0.8),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Text(
@@ -420,7 +434,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: const Text('Share feature coming soon'),
-                                        backgroundColor: AppColors.cyanGlow,
+                                        backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
                                         behavior: SnackBarBehavior.floating,
                                         margin: const EdgeInsets.all(16),
                                         shape: RoundedRectangleBorder(

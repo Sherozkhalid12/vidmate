@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:video_player/video_player.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mock_data_service.dart';
@@ -129,39 +130,21 @@ class _ReelsScreenState extends State<ReelsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Gradient is applied at MainScreen root, so no need to duplicate here
     if (_reels.isEmpty) {
-      return Scaffold(
-        backgroundColor: context.backgroundColor,
-        body: const Center(
-          child: CircularProgressIndicator(color: AppColors.neonPurple),
-        ),
+      return const Center(
+        child: CircularProgressIndicator(),
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          color: context.textPrimary,
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          'Reels',
-          style: TextStyle(color: context.textPrimary),
-        ),
-      ),
-      body: PageView.builder(
-        controller: _pageController,
-        scrollDirection: Axis.vertical,
-        onPageChanged: _onPageChanged,
-        itemCount: _reels.length,
-        itemBuilder: (context, index) {
-          return _buildReelItem(_reels[index], index);
-        },
-      ),
+    return PageView.builder(
+      controller: _pageController,
+      scrollDirection: Axis.vertical,
+      onPageChanged: _onPageChanged,
+      itemCount: _reels.length,
+      itemBuilder: (context, index) {
+        return _buildReelItem(_reels[index], index);
+      },
     );
   }
 
@@ -188,7 +171,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const CircularProgressIndicator(color: AppColors.neonPurple),
+                  CircularProgressIndicator(color: context.buttonColor),
                   const SizedBox(height: 16),
                   Text(
                     'Loading video...',
@@ -239,13 +222,13 @@ class _ReelsScreenState extends State<ReelsScreen> {
                                 width: 40,
                                 height: 40,
                                 color: context.surfaceColor,
-                                child: const Center(
+                                child: Center(
                                   child: SizedBox(
                                     width: 16,
                                     height: 16,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: AppColors.neonPurple,
+                                      color: context.buttonColor,
                                     ),
                                   ),
                                 ),
@@ -315,9 +298,9 @@ class _ReelsScreenState extends State<ReelsScreen> {
                         // Navigate to comments
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Opening comments...'),
-                            backgroundColor: AppColors.cyanGlow,
-                            duration: Duration(seconds: 1),
+                            content: const Text('Opening comments...'),
+                            backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
+                            duration: const Duration(seconds: 1),
                           ),
                         );
                       },
@@ -329,8 +312,8 @@ class _ReelsScreenState extends State<ReelsScreen> {
                       onTap: () {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Share feature coming soon'),
-                            backgroundColor: AppColors.cyanGlow,
+                            content: const Text('Share feature coming soon'),
+                            backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
                           ),
                         );
                       },
@@ -417,7 +400,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
           height: 40,
           decoration: BoxDecoration(
             color: index == _currentIndex
-                ? AppColors.neonPurple
+                ? context.buttonColor
                 : context.textMuted.withOpacity(0.3),
             borderRadius: BorderRadius.circular(2),
           ),

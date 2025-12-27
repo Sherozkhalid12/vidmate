@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 
@@ -84,7 +85,7 @@ class TermsScreen extends StatelessWidget {
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.neonPurple,
+                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   foregroundColor: context.textPrimary,
                   minimumSize: const Size(double.infinity, 50),
                 ),

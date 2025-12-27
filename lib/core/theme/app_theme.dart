@@ -7,25 +7,27 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: AppColors.primaryBackground,
+      // Transparent scaffold - background gradient applied in screens
+      scaffoldBackgroundColor: Colors.transparent,
       
-      // Color scheme
+      // Color scheme - neutral colors for glassmorphic design
       colorScheme: const ColorScheme.dark(
-        primary: AppColors.neonPurple,
-        secondary: AppColors.cyanGlow,
-        tertiary: AppColors.softBlue,
-        error: AppColors.warning,
-        surface: AppColors.glassSurface,
-        onPrimary: AppColors.textPrimary,
-        onSecondary: AppColors.textPrimary,
+        primary: Colors.white,  // White for buttons in dark theme
+        secondary: Colors.white,
+        tertiary: Colors.white,
+        error: AppColors.error,
+        surface: AppColors.glassSurfaceMedium,
+        onPrimary: Colors.black,  // Black text on white buttons
+        onSecondary: Colors.black,
         onSurface: AppColors.textPrimary,
         onBackground: AppColors.textPrimary,
       ),
       
-      // App bar theme
+      // App bar theme - fully transparent with glass effect
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         systemOverlayStyle: SystemUiOverlayStyle.light,
         iconTheme: IconThemeData(color: AppColors.textPrimary),
         titleTextStyle: TextStyle(
@@ -119,10 +121,10 @@ class AppTheme {
         size: 24,
       ),
       
-      // Input decoration theme
+      // Input decoration theme - glass style
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.glassSurface,
+        fillColor: AppColors.glassSurfaceMedium,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: const BorderSide(
@@ -140,8 +142,8 @@ class AppTheme {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: const BorderSide(
-            color: AppColors.neonPurple,
-            width: 2,
+            color: AppColors.glassBorderBright,
+            width: 1.5,
           ),
         ),
         hintStyle: const TextStyle(
@@ -154,11 +156,11 @@ class AppTheme {
         ),
       ),
       
-      // Button themes
+      // Button themes - white buttons in dark theme (no purple)
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.neonPurple,
-          foregroundColor: AppColors.textPrimary,
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
           shape: RoundedRectangleBorder(
@@ -172,17 +174,46 @@ class AppTheme {
         ),
       ),
       
-      // Switch theme
+      // Text button theme - white text
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: Colors.white,
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+      
+      // Outlined button theme - white border
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Colors.white, width: 1.5),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+      
+      // Switch theme - white for selected
       switchTheme: SwitchThemeData(
         thumbColor: MaterialStateProperty.resolveWith((states) {
           if (states.contains(MaterialState.selected)) {
-            return AppColors.neonPurple;
+            return Colors.white;
           }
           return AppColors.textMuted;
         }),
         trackColor: MaterialStateProperty.resolveWith((states) {
           if (states.contains(MaterialState.selected)) {
-            return AppColors.neonPurple.withOpacity(0.5);
+            return Colors.white.withOpacity(0.5);
           }
           return AppColors.glassSurface;
         }),
@@ -194,28 +225,30 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
-      scaffoldBackgroundColor: AppColors.lightBackground,
+      // Transparent scaffold - background gradient applied in screens
+      scaffoldBackgroundColor: Colors.transparent,
       
-      // Color scheme
+      // Color scheme - neutral colors for glassmorphic design
       colorScheme: const ColorScheme.light(
-        primary: AppColors.neonPurple,
-        secondary: AppColors.cyanGlow,
-        tertiary: AppColors.softBlue,
-        error: AppColors.warning,
-        surface: AppColors.lightSurface,
-        onPrimary: Colors.white,
+        primary: Colors.black,  // Black for buttons in light theme
+        secondary: Colors.black,
+        tertiary: Colors.black,
+        error: AppColors.error,
+        surface: AppColors.lightGlassSurfaceMedium,
+        onPrimary: Colors.white,  // White text on black buttons
         onSecondary: Colors.white,
         onSurface: AppColors.lightTextPrimary,
         onBackground: AppColors.lightTextPrimary,
       ),
       
-      // App bar theme
-      appBarTheme: AppBarTheme(
+      // App bar theme - fully transparent with glass effect
+      appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         systemOverlayStyle: SystemUiOverlayStyle.dark,
-        iconTheme: const IconThemeData(color: AppColors.lightTextPrimary),
-        titleTextStyle: const TextStyle(
+        iconTheme: IconThemeData(color: AppColors.lightTextPrimary),
+        titleTextStyle: TextStyle(
           color: AppColors.lightTextPrimary,
           fontSize: 20,
           fontWeight: FontWeight.w600,
@@ -287,14 +320,14 @@ class AppTheme {
         ),
       ),
       
-      // Card theme
+      // Card theme - glass style
       cardTheme: CardThemeData(
-        color: AppColors.lightSurface,
-        elevation: 2,
+        color: AppColors.lightGlassSurfaceMedium,
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: Colors.grey.shade200,
+          side: const BorderSide(
+            color: AppColors.lightGlassBorder,
             width: 1,
           ),
         ),
@@ -306,33 +339,33 @@ class AppTheme {
         size: 24,
       ),
       
-      // Input decoration theme
+      // Input decoration theme - glass style
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.lightSurface,
+        fillColor: AppColors.lightGlassSurfaceMedium,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(
-            color: Colors.grey.shade300,
+          borderSide: const BorderSide(
+            color: AppColors.lightGlassBorder,
             width: 1,
           ),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(
-            color: Colors.grey.shade300,
+          borderSide: const BorderSide(
+            color: AppColors.lightGlassBorder,
             width: 1,
           ),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: const BorderSide(
-            color: AppColors.neonPurple,
-            width: 2,
+            color: AppColors.lightGlassBorderBright,
+            width: 1.5,
           ),
         ),
         hintStyle: const TextStyle(
-          color: AppColors.lightTextSecondary,
+          color: AppColors.lightTextMuted,
           fontSize: 14,
         ),
         contentPadding: const EdgeInsets.symmetric(
@@ -341,12 +374,12 @@ class AppTheme {
         ),
       ),
       
-      // Button themes
+      // Button themes - black buttons in light theme (no purple)
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.neonPurple,
+          backgroundColor: Colors.black,
           foregroundColor: Colors.white,
-          elevation: 2,
+          elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -359,19 +392,48 @@ class AppTheme {
         ),
       ),
       
-      // Switch theme
+      // Text button theme - black text
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: Colors.black,
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+      
+      // Outlined button theme - black border
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.black,
+          side: const BorderSide(color: Colors.black, width: 1.5),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+      
+      // Switch theme - black for selected
       switchTheme: SwitchThemeData(
         thumbColor: MaterialStateProperty.resolveWith((states) {
           if (states.contains(MaterialState.selected)) {
-            return AppColors.neonPurple;
+            return Colors.black;
           }
-          return Colors.grey.shade400;
+          return AppColors.lightTextMuted;
         }),
         trackColor: MaterialStateProperty.resolveWith((states) {
           if (states.contains(MaterialState.selected)) {
-            return AppColors.neonPurple.withOpacity(0.5);
+            return Colors.black.withOpacity(0.5);
           }
-          return Colors.grey.shade300;
+          return AppColors.lightGlassSurface;
         }),
       ),
     );

@@ -1,7 +1,9 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../utils/theme_helper.dart';
 
-/// Reusable glassmorphism card widget
+/// Reusable glassmorphism card widget with blur effect
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -31,27 +33,40 @@ class GlassCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final defaultBgColor = isDark 
-        ? AppColors.glassSurface 
-        : AppColors.lightSurface;
-    final defaultBorderColor = isDark 
-        ? AppColors.glassBorder 
-        : AppColors.lightGlassBorder;
+    // Use original dark mode transparency (glassSurface = 8% white) for dark mode
+    // Keep beautiful light mode transparency (lightGlassSurfaceMedium = 85% white) for light mode
+    final defaultBgColor = backgroundColor ?? (isDark 
+        ? AppColors.glassSurface  // Original dark mode: 8% white (more transparent)
+        : AppColors.lightGlassSurfaceMedium); // Light mode: 85% white (beautiful)
+    final blur = blurRadius ?? AppColors.blurMedium;
+    final buttonColor = Theme.of(context).colorScheme.primary; // Theme-aware button color
     
-    final card = Container(
-      width: width,
-      height: height,
-      margin: margin ?? EdgeInsets.zero,
-      padding: padding ?? const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: backgroundColor ?? defaultBgColor,
-        borderRadius: borderRadius ?? BorderRadius.circular(20),
-        border: Border.all(
-          color: borderColor ?? defaultBorderColor,
-          width: 1,
+    final card = ClipRRect(
+      borderRadius: borderRadius ?? BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+        child: Container(
+          width: width,
+          height: height,
+          margin: margin ?? EdgeInsets.zero,
+          padding: padding ?? const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: defaultBgColor,
+            borderRadius: borderRadius ?? BorderRadius.circular(20),
+            // No border in both modes
+            boxShadow: [
+              BoxShadow(
+                color: isDark 
+                    ? AppColors.glassShadow 
+                    : AppColors.lightGlassShadow,
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: child,
         ),
       ),
-      child: child,
     );
 
     if (onTap != null) {
@@ -60,8 +75,8 @@ class GlassCard extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: borderRadius ?? BorderRadius.circular(20),
-          splashColor: AppColors.neonPurple.withOpacity(0.2),
-          highlightColor: AppColors.neonPurple.withOpacity(0.1),
+          splashColor: buttonColor.withOpacity(0.1),
+          highlightColor: buttonColor.withOpacity(0.05),
           child: card,
         ),
       );

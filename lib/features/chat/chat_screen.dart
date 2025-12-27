@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
@@ -140,7 +140,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       width: 12,
                       height: 12,
                       decoration: BoxDecoration(
-                        color: AppColors.cyanGlow,
+                        color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                         shape: BoxShape.circle,
                         border: Border.all(
                           color: context.backgroundColor,
@@ -148,7 +148,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.cyanGlow.withOpacity(0.5),
+                            color: ThemeHelper.getAccentColor(context).withOpacity(0.5), // Theme-aware shadow
                             blurRadius: 4,
                             spreadRadius: 1,
                           ),
@@ -175,7 +175,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: TextStyle(
                       fontSize: 12,
                       color: _chatUser.isOnline
-                          ? AppColors.cyanGlow
+                          ? ThemeHelper.getAccentColor(context) // Theme-aware accent color
                           : context.textMuted,
                     ),
                   ),
@@ -191,7 +191,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Video call feature coming soon'),
-                  backgroundColor: AppColors.cyanGlow,
+                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 ),
               );
             },
@@ -202,7 +202,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Voice call feature coming soon'),
-                  backgroundColor: AppColors.cyanGlow,
+                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                 ),
               );
             },
@@ -262,40 +262,49 @@ class _ChatScreenState extends State<ChatScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             ListTile(
-                              leading: Icon(Icons.photo, color: AppColors.neonPurple),
+                              leading: Icon(
+                                Icons.photo,
+                                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                              ),
                               title: Text('Photo', style: TextStyle(color: context.textPrimary)),
                               onTap: () {
                                 Navigator.pop(context);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('Photo sharing coming soon'),
-                                    backgroundColor: AppColors.cyanGlow,
+                                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                                   ),
                                 );
                               },
                             ),
                             ListTile(
-                              leading: Icon(Icons.videocam, color: AppColors.neonPurple),
+                              leading: Icon(
+                                Icons.videocam,
+                                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                              ),
                               title: Text('Video', style: TextStyle(color: context.textPrimary)),
                               onTap: () {
                                 Navigator.pop(context);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('Video sharing coming soon'),
-                                    backgroundColor: AppColors.cyanGlow,
+                                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                                   ),
                                 );
                               },
                             ),
                             ListTile(
-                              leading: Icon(Icons.location_on, color: AppColors.neonPurple),
+                              leading: Icon(
+                                Icons.location_on,
+                                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                              ),
                               title: Text('Location', style: TextStyle(color: context.textPrimary)),
                               onTap: () {
                                 Navigator.pop(context);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('Location sharing coming soon'),
-                                    backgroundColor: AppColors.cyanGlow,
+                                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                                   ),
                                 );
                               },
@@ -328,7 +337,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      gradient: AppColors.purpleGradient,
+                      gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -389,7 +398,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 bottomRight: Radius.circular(isMe ? 4 : 16),
               ),
               backgroundColor: isMe
-                  ? AppColors.neonPurple.withOpacity(0.2)
+                  ? ThemeHelper.getAccentColor(context).withOpacity(0.2) // Theme-aware accent with opacity
                   : context.surfaceColor,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -442,7 +451,7 @@ class _ChatScreenState extends State<ChatScreen> {
               message.isRead ? Icons.done_all : Icons.done,
               size: 16,
               color: message.isRead
-                  ? AppColors.cyanGlow
+                  ? ThemeHelper.getAccentColor(context) // Theme-aware accent color
                   : context.textMuted,
             ),
           ],

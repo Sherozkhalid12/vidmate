@@ -1,4 +1,6 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_application_1/features/chat/chat_list_screen.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_extensions.dart';
@@ -12,7 +14,6 @@ import '../reels/reels_screen.dart';
 import '../video/video_player_screen.dart';
 import '../stories/stories_viewer_screen.dart';
 import '../search/search_screen.dart';
-import '../chat/chat_list_screen.dart';
 import '../profile/profile_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../settings/settings_screen.dart';
@@ -95,13 +96,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      backgroundColor: context.backgroundColor,
+      // Transparent background - gradient applied in body
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
         title: Row(
           children: [
             Text(
               'SocialVideo',
               style: TextStyle(
+                color: context.textPrimary,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -115,19 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.video_library),
-            tooltip: 'Reels',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ReelsScreen(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.search),
+            icon: Icon(Icons.search, color: context.textPrimary),
             tooltip: 'Search',
             onPressed: () {
               Navigator.push(
@@ -139,7 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           IconButton(
-            icon: Icon(Icons.favorite_border),
+            icon: Icon(Icons.favorite_border, color: context.textPrimary),
             tooltip: 'Notifications',
             onPressed: () {
               Navigator.push(
@@ -151,7 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           PopupMenuButton<String>(
-            icon: Icon(Icons.sort),
+            icon: Icon(Icons.sort, color: context.textPrimary),
             tooltip: 'Sort Feed',
             onSelected: (value) {
               setState(() {
@@ -167,7 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Icon(
                       _sortBy == 'latest' ? Icons.check : null,
-                      color: AppColors.neonPurple,
+                      color: context.buttonColor,
                       size: 20,
                     ),
                     const SizedBox(width: 8),
@@ -181,7 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Icon(
                       _sortBy == 'popular' ? Icons.check : null,
-                      color: AppColors.neonPurple,
+                      color: context.buttonColor,
                       size: 20,
                     ),
                     const SizedBox(width: 8),
@@ -192,74 +187,79 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           IconButton(
-            icon: Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
+            icon: Icon(CupertinoIcons.chat_bubble_2, color: context.textPrimary),
+            tooltip: 'Chat',
             onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const SettingsScreen(),
+                  builder: (context) => const ChatListScreen(),
                 ),
               );
             },
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          setState(() {
-            _posts.clear();
-          });
-          _loadPosts();
-        },
-        color: AppColors.neonPurple,
-        child: CustomScrollView(
-          controller: _scrollController,
-          slivers: [
-            // Stories bar
-            SliverToBoxAdapter(
-              child: _buildStoriesBar(),
-            ),
-            // Posts feed
-            if (_isLoading && _posts.isEmpty)
-              const SliverFillRemaining(
-                child: Center(
-                  child: CircularProgressIndicator(
-                    color: AppColors.neonPurple,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: AppColors.backgroundGradient,
+        ),
+        child: RefreshIndicator(
+          onRefresh: () async {
+            setState(() {
+              _posts.clear();
+            });
+            _loadPosts();
+          },
+          color: context.buttonColor,
+          child: CustomScrollView(
+            controller: _scrollController,
+            slivers: [
+              // Stories bar
+              SliverToBoxAdapter(
+                child: _buildStoriesBar(),
+              ),
+              // Posts feed
+              if (_isLoading && _posts.isEmpty)
+                SliverFillRemaining(
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: context.buttonColor,
+                    ),
+                  ),
+                )
+              else
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      if (index < _posts.length) {
+                        return AnimationConfiguration.staggeredList(
+                          position: index,
+                          duration: const Duration(milliseconds: 375),
+                          child: SlideAnimation(
+                            verticalOffset: 50.0,
+                            child: FadeInAnimation(
+                              child: _buildPostCard(_posts[index]),
+                            ),
+                          ),
+                        );
+                      } else if (_isLoading) {
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: context.buttonColor,
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                    childCount: _posts.length + (_isLoading ? 1 : 0),
                   ),
                 ),
-              )
-            else
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    if (index < _posts.length) {
-                      return AnimationConfiguration.staggeredList(
-                        position: index,
-                        duration: const Duration(milliseconds: 375),
-                        child: SlideAnimation(
-                          verticalOffset: 50.0,
-                          child: FadeInAnimation(
-                            child: _buildPostCard(_posts[index]),
-                          ),
-                        ),
-                      );
-                    } else if (_isLoading) {
-                      return const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: AppColors.neonPurple,
-                          ),
-                        ),
-                      );
-                    }
-                    return const SizedBox.shrink();
-                  },
-                  childCount: _posts.length + (_isLoading ? 1 : 0),
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: BottomNavBar(
@@ -321,80 +321,102 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildPostCard(PostModel post) {
-    // Use Instagram-style post card for image posts
-    if (!post.isVideo || post.imageUrl != null) {
-      return InstagramPostCard(post: post);
-    }
-    
-    // Use video tile for video posts
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: VideoTile(
-        thumbnailUrl: post.thumbnailUrl ?? post.imageUrl ?? '',
-        title: post.caption,
-        channelName: post.author.displayName,
-        channelAvatar: post.author.avatarUrl,
-        views: post.likes * 10, // Mock views
-        likes: post.likes,
-        comments: post.comments,
-        duration: post.videoDuration,
-        onTap: () {
-          if (post.isVideo) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => VideoPlayerScreen(
-                  videoUrl: post.videoUrl!,
-                  title: post.caption,
-                  author: post.author,
-                  post: post, // Pass the post for like/comment/share
-                ),
-              ),
-            );
-          }
-        },
-      ),
-    );
+Widget _buildPostCard(PostModel post) {
+  // Use Instagram-style post card for image posts
+  if (!post.isVideo || post.imageUrl != null) {
+    return InstagramPostCard(post: post);
   }
+  
+  // Use video tile for video posts with proper padding
+  return Container(
+    margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(20),   // Matches typical premium card radius
+      color: Colors.black.withOpacity(0.2),      // Subtle dark fallback if thumbnail fails
+    ),
+    child: VideoTile(
+    thumbnailUrl: post.thumbnailUrl ?? post.imageUrl ?? '',
+    title: post.caption,
+    channelName: post.author.displayName,
+    channelAvatar: post.author.avatarUrl,
+    views: post.likes * 10, // Mock views
+    likes: post.likes,
+    comments: post.comments,
+    duration: post.videoDuration,
+    onTap: () {
+      if (post.isVideo) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VideoPlayerScreen(
+              videoUrl: post.videoUrl!,
+              title: post.caption,
+              author: post.author,
+              post: post, // Pass the post for like/comment/share
+            ),
+          ),
+        );
+      }
+    },
+  ),
+  );
+}
 
   Widget _buildOtherScreens() {
     switch (_currentIndex) {
-      case 1:
+      case 1: // Explore/Search
         return Scaffold(
-          backgroundColor: context.backgroundColor,
-          body: SearchScreen(
-            onBackToHome: () {
-              setState(() {
-                _currentIndex = 0;
-              });
-            },
+          backgroundColor: Colors.transparent,
+          extendBodyBehindAppBar: true,
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: context.backgroundGradient,
+            ),
+            child: SearchScreen(
+              onBackToHome: () {
+                setState(() {
+                  _currentIndex = 0;
+                });
+              },
+            ),
           ),
           bottomNavigationBar: BottomNavBar(
             currentIndex: _currentIndex,
             onTap: _navigateToScreen,
           ),
         );
-      case 2:
+      case 2: // Reels
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          extendBodyBehindAppBar: true,
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: context.backgroundGradient,
+            ),
+            child: const ReelsScreen(),
+          ),
+          bottomNavigationBar: BottomNavBar(
+            currentIndex: _currentIndex,
+            onTap: _navigateToScreen,
+          ),
+        );
+      case 3: // Create
         return CreatePostScreen(
           bottomNavigationBar: BottomNavBar(
             currentIndex: _currentIndex,
             onTap: _navigateToScreen,
           ),
         );
-      case 3:
+      case 4: // Profile
         return Scaffold(
-          backgroundColor: context.backgroundColor,
-          body: const ChatListScreen(),
-          bottomNavigationBar: BottomNavBar(
-            currentIndex: _currentIndex,
-            onTap: _navigateToScreen,
+          backgroundColor: Colors.transparent,
+          extendBodyBehindAppBar: true,
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: context.backgroundGradient,
+            ),
+            child: const ProfileScreen(),
           ),
-        );
-      case 4:
-        return Scaffold(
-          backgroundColor: context.backgroundColor,
-          body: const ProfileScreen(),
           bottomNavigationBar: BottomNavBar(
             currentIndex: _currentIndex,
             onTap: _navigateToScreen,

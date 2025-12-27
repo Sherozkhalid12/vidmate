@@ -9,8 +9,9 @@ import '../profile/profile_screen.dart';
 /// Search screen with glass search bar and animated results
 class SearchScreen extends StatefulWidget {
   final VoidCallback? onBackToHome;
+  final double? bottomPadding; // Optional bottom padding for navigation bar
   
-  const SearchScreen({super.key, this.onBackToHome});
+  const SearchScreen({super.key, this.onBackToHome, this.bottomPadding});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -66,6 +67,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Gradient is applied at MainScreen root, so no need to duplicate here
     return Column(
       children: [
         AppBar(
@@ -83,14 +85,10 @@ class _SearchScreenState extends State<SearchScreen> {
           title: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: Theme.of(context).brightness == Brightness.dark
-                  ? Colors.white.withOpacity(0.1)
-                  : Colors.white,
+              color: context.surfaceColor,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white.withOpacity(0.2)
-                    : Colors.grey.shade300,
+                color: context.borderColor,
                 width: 1,
               ),
             ),
@@ -116,7 +114,12 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildTrending() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: (widget.bottomPadding ?? 0) + 20, // Add bottom padding for nav bar
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -137,7 +140,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 height: 3,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
-                  color: Colors.yellow,
+                  color: context.buttonColor.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -161,7 +164,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 height: 2,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
-                  color: Colors.yellow,
+                  color: context.buttonColor.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
@@ -183,27 +186,23 @@ class _SearchScreenState extends State<SearchScreen> {
                         _searchController.text = tag;
                         // _onSearchChanged will be called automatically by the listener
                       },
-                      child: Container(
+                        child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 12,
                         ),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? Colors.white.withOpacity(0.1)
-                              : Colors.white,
+                          color: context.surfaceColor,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: Theme.of(context).brightness == Brightness.dark
-                                ? Colors.white.withOpacity(0.2)
-                                : Colors.grey.shade200,
+                            color: context.borderColor,
                             width: 1,
                           ),
                         ),
                         child: Text(
                           tag,
                           style: TextStyle(
-                            color: AppColors.neonPurple,
+                            color: context.textPrimary,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
@@ -233,7 +232,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 height: 2,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
-                  color: Colors.yellow,
+                  color: context.buttonColor.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),
@@ -283,7 +282,12 @@ class _SearchScreenState extends State<SearchScreen> {
 
     return AnimationLimiter(
       child: ListView.builder(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: (widget.bottomPadding ?? 0) + 20, // Add bottom padding for nav bar
+        ),
         itemCount: _users.length,
         itemBuilder: (context, index) {
           return AnimationConfiguration.staggeredList(
@@ -317,14 +321,10 @@ class _SearchScreenState extends State<SearchScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isDark 
-              ? Colors.white.withOpacity(0.1)
-              : Colors.white,
+          color: context.surfaceColor,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isDark
-                ? Colors.white.withOpacity(0.2)
-                : Colors.grey.shade200,
+            color: context.borderColor,
             width: 1,
           ),
         ),
@@ -360,15 +360,15 @@ class _SearchScreenState extends State<SearchScreen> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: AppColors.cyanGlow,
+                      color: context.buttonColor,
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: context.backgroundColor,
+                        color: context.backgroundGradient.colors.first,
                         width: 2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.cyanGlow.withOpacity(0.5),
+                          color: context.buttonColor.withOpacity(0.3),
                           blurRadius: 4,
                           spreadRadius: 1,
                         ),
@@ -421,13 +421,13 @@ class _SearchScreenState extends State<SearchScreen> {
                 vertical: 8,
               ),
               decoration: BoxDecoration(
-                gradient: AppColors.purpleGradient,
+                color: context.buttonColor,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
                 'Follow',
                 style: TextStyle(
-                  color: context.textPrimary,
+                  color: context.buttonTextColor,
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),

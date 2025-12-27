@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
@@ -99,7 +100,7 @@ class FollowersListScreen extends StatelessWidget {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: AppColors.cyanGlow,
+                      color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: context.backgroundColor,
@@ -153,7 +154,7 @@ class FollowersListScreen extends StatelessWidget {
                 vertical: 8,
               ),
               decoration: BoxDecoration(
-                gradient: AppColors.purpleGradient,
+                gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(

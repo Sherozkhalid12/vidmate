@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
 
@@ -29,7 +30,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       // Show source selection dialog
       final ImageSource? source = await showModalBottomSheet<ImageSource>(
         context: context,
-        backgroundColor: context.secondaryBackgroundColor,
+        backgroundColor: context.surfaceColor,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
@@ -39,7 +40,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: Icon(Icons.photo_library, color: AppColors.neonPurple),
+                leading: Icon(Icons.photo_library, color: context.buttonColor),
                 title: Text(
                   'Choose from Gallery',
                   style: TextStyle(color: context.textPrimary),
@@ -47,7 +48,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
               ListTile(
-                leading: Icon(Icons.camera_alt, color: AppColors.neonPurple),
+                leading: Icon(Icons.camera_alt, color: context.buttonColor),
                 title: Text(
                   'Take Photo/Video',
                   style: TextStyle(color: context.textPrimary),
@@ -84,7 +85,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            backgroundColor: AppColors.softBlue.withOpacity(0.9),
+            backgroundColor: context.surfaceColor,
             duration: const Duration(seconds: 5),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -114,7 +115,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               fontWeight: FontWeight.w500,
             ),
           ),
-          backgroundColor: AppColors.softBlue.withOpacity(0.9),
+          backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -140,7 +141,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Post created successfully!'),
-          backgroundColor: AppColors.cyanGlow,
+          backgroundColor: context.surfaceColor,
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -167,10 +168,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
+      backgroundColor: Colors.transparent,
       bottomNavigationBar: widget.bottomNavigationBar,
       appBar: AppBar(
-        backgroundColor: context.backgroundColor,
+        backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
           'Create Post',
@@ -192,15 +193,19 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               style: TextStyle(
                 color: _isUploading
                     ? context.textMuted
-                    : AppColors.neonPurple,
+                    : context.buttonColor,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: context.backgroundGradient,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Author info
@@ -360,12 +365,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               const SizedBox(height: 20),
               LinearProgressIndicator(
                 backgroundColor: context.surfaceColor,
-                valueColor: const AlwaysStoppedAnimation<Color>(AppColors.neonPurple),
+                valueColor: AlwaysStoppedAnimation<Color>(context.buttonColor),
               ),
             ],
           ],
         ),
       ),
+      )
     );
   }
 
@@ -384,8 +390,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           border: Border.all(color: context.borderColor),
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 48, color: AppColors.neonPurple),
+            Icon(icon, size: 48, color: context.buttonColor),
             const SizedBox(height: 8),
             Text(
               label,

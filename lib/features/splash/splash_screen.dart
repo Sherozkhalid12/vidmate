@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../onboarding/onboarding_screen.dart';
 
 /// Splash screen with animated logo and glow effect
@@ -89,13 +90,17 @@ class _SplashScreenState extends State<SplashScreen>
                       Opacity(
                         opacity: _opacityAnimation.value,
                         child: ShaderMask(
-                          shaderCallback: (bounds) => LinearGradient(
-                            colors: [
-                              AppColors.neonPurple,
-                              AppColors.cyanGlow,
-                              AppColors.softBlue,
-                            ],
-                          ).createShader(bounds),
+                          shaderCallback: (bounds) {
+                            final primary = Theme.of(context).colorScheme.primary;
+                            final secondary = Theme.of(context).colorScheme.secondary;
+                            return LinearGradient(
+                              colors: [
+                                primary,
+                                secondary,
+                                primary.withOpacity(0.7),
+                              ],
+                            ).createShader(bounds);
+                          },
                           child: Text(
                             'VidConnect',
                             style: TextStyle(

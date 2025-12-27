@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 
@@ -54,7 +55,9 @@ class _LanguageScreenState extends State<LanguageScreen> {
             child: ListTile(
               leading: Icon(
                 isSelected ? Icons.check_circle : Icons.circle_outlined,
-                color: isSelected ? AppColors.neonPurple : context.textMuted,
+                color: isSelected 
+                    ? ThemeHelper.getAccentColor(context) // Theme-aware accent color
+                    : context.textMuted,
               ),
               title: Text(
                 language['name']!,
@@ -77,7 +80,7 @@ class _LanguageScreenState extends State<LanguageScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Language changed to ${language['name']}'),
-                    backgroundColor: AppColors.cyanGlow,
+                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                   ),
                 );
               },

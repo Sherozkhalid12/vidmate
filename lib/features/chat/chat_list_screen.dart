@@ -80,9 +80,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        AppBar(
+    return Container(
+      decoration: BoxDecoration(
+        gradient: context.backgroundGradient,
+      ),
+      child: Column(
+        children: [
+          AppBar(
           title: Text('Messages'),
           actions: [
             IconButton(
@@ -91,7 +95,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Search conversations feature coming soon'),
-                    backgroundColor: AppColors.cyanGlow,
+                    backgroundColor: context.surfaceColor,
                   ),
                 );
               },
@@ -102,7 +106,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('New chat feature coming soon'),
-                    backgroundColor: AppColors.cyanGlow,
+                    backgroundColor: context.surfaceColor,
                   ),
                 );
               },
@@ -151,6 +155,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
         ),
       ],
+      ),
     );
   }
 
@@ -200,15 +205,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: AppColors.cyanGlow,
+                      color: context.buttonColor,
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: context.backgroundColor,
+                        color: context.backgroundGradient.colors.first,
                         width: 2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.cyanGlow.withOpacity(0.5),
+                          color: context.buttonColor.withOpacity(0.3),
                           blurRadius: 4,
                           spreadRadius: 1,
                         ),
@@ -281,7 +286,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.neonPurple,
+                          color: context.buttonColor,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(

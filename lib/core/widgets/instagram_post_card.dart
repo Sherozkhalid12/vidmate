@@ -1,11 +1,12 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import '../theme/app_colors.dart';
-import '../theme/theme_extensions.dart';
+import 'dart:ui';
 import '../models/post_model.dart';
+import '../theme/app_colors.dart';
+import '../utils/theme_helper.dart';
 import '../../features/feed/comments_screen.dart';
 
-/// Instagram-style post card for feed
 class InstagramPostCard extends StatefulWidget {
   final PostModel post;
   final VoidCallback? onDelete;
@@ -20,390 +21,308 @@ class InstagramPostCard extends StatefulWidget {
   State<InstagramPostCard> createState() => _InstagramPostCardState();
 }
 
-class _InstagramPostCardState extends State<InstagramPostCard> {
+class _InstagramPostCardState extends State<InstagramPostCard> with SingleTickerProviderStateMixin {
   bool _isLiked = false;
   bool _isSaved = false;
+  late AnimationController _likeAnimationController;
 
   @override
   void initState() {
     super.initState();
     _isLiked = widget.post.isLiked;
+    _likeAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
   }
 
-  String _formatTime(DateTime time) {
-    final now = DateTime.now();
-    final difference = now.difference(time);
-    
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inHours < 1) {
-      return '${difference.inMinutes}m';
-    } else if (difference.inDays < 1) {
-      return '${difference.inHours}h';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays}d';
-    } else {
-      return '${time.day}/${time.month}/${time.year}';
-    }
+  @override
+  void dispose() {
+    _likeAnimationController.dispose();
+    super.dispose();
   }
 
   String _formatCount(int count) {
-    if (count >= 1000000) {
-      return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
-      return '${(count / 1000).toStringAsFixed(1)}K';
-    }
+    if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
+    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
     return count.toString();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border(
-          bottom: BorderSide(
-            color: context.borderColor,
-            width: 0.5,
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header - Author info
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            child: Row(
+      margin: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            // This is the only glass background now — the whole card
+            decoration: BoxDecoration(
+              // Use original dark mode transparency (8% white) for beautiful glassy effect
+              // Keep beautiful light mode transparency (85% white) for light mode
+              color: isDark 
+                  ? AppColors.glassSurface  // Original dark mode: 8% white (transparent, shows background)
+                  : AppColors.lightGlassSurfaceMedium, // Light mode: 85% white (beautiful)
+              borderRadius: BorderRadius.circular(24),
+              // No border in both modes - removes white edges
+            ),
+            child: Column(
               children: [
-                ClipOval(
-                  child: CachedNetworkImage(
-                    imageUrl: widget.post.author.avatarUrl,
-                    width: 32,
-                    height: 32,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Container(
-                      width: 32,
-                      height: 32,
-                      color: context.surfaceColor,
-                      child: const Center(
-                        child: SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.neonPurple,
-                          ),
-                        ),
-                      ),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      width: 32,
-                      height: 32,
-                      color: context.surfaceColor,
-                      child: Icon(
-                        Icons.person,
-                        color: context.textSecondary,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                // Header — no glass around avatar/username or ellipsis
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  child: Row(
                     children: [
-                      Text(
-                        widget.post.author.username,
-                        style: TextStyle(
-                          color: context.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                      Row(
+                        children: [
+                          ClipOval(
+                            child: CachedNetworkImage(
+                              imageUrl: widget.post.author.avatarUrl,
+                              width: 38,
+                              height: 38,
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                width: 38,
+                                height: 38,
+                                color: ThemeHelper.getSurfaceColor(context),
+                              ),
+                              errorWidget: (context, url, error) => Icon(
+                                CupertinoIcons.person_crop_circle,
+                                size: 38,
+                                color: ThemeHelper.getTextSecondary(context),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.post.author.username,
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextPrimary(context), // Theme-aware text color
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (widget.post.author.displayName != widget.post.author.username)
+                                Text(
+                                  widget.post.author.displayName,
+                                  style: TextStyle(
+                                    color: ThemeHelper.getTextSecondary(context), // Theme-aware text color
+                                    fontSize: 13,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => _showMoreMenu(context),
+                        child: Icon(
+                          CupertinoIcons.ellipsis_vertical,
+                          color: ThemeHelper.getTextPrimary(context), // Theme-aware icon color
+                          size: 22,
                         ),
                       ),
-                      if (widget.post.author.displayName != widget.post.author.username)
-                        Text(
-                          widget.post.author.displayName,
-                          style: TextStyle(
-                            color: context.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
                     ],
                   ),
                 ),
-                PopupMenuButton<String>(
-                  icon: Icon(Icons.more_vert, color: context.textPrimary),
-                  iconSize: 20,
-                  onSelected: (value) {
-                    if (value == 'delete' && widget.onDelete != null) {
-                      widget.onDelete!();
-                    } else if (value == 'report') {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Report submitted'),
-                          backgroundColor: AppColors.cyanGlow,
-                        ),
-                      );
-                    } else if (value == 'copy') {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Link copied'),
-                          backgroundColor: AppColors.cyanGlow,
-                        ),
-                      );
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    if (widget.onDelete != null)
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
+
+                // Media + bottom overlay stack (actions + caption — no glass)
+                Stack(
+                  children: [
+                    AspectRatio(
+                      aspectRatio: 1 / 1.1,
+                      child: _buildMediaBackground(),
+                    ),
+
+                    // Bottom overlay content — plain, no container/glass
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.delete, color: AppColors.warning),
-                            SizedBox(width: 8),
-                            Text('Delete'),
+                            // Action buttons row — plain icons + text
+                            Row(
+                              children: [
+                                _buildPlainAction(
+                                  icon: _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
+                                  label: _formatCount((_isLiked ? 1 : 0) + widget.post.likes),
+                                  color: _isLiked 
+                                      ? const Color(0xFFFF2D55) // Keep red for liked state
+                                      : Colors.white, // Theme-aware for overlay on image
+                                  onTap: () {
+                                    setState(() => _isLiked = !_isLiked);
+                                    if (_isLiked) _likeAnimationController.forward(from: 0);
+                                  },
+                                ),
+                                const SizedBox(width: 24),
+                                _buildPlainAction(
+                                  icon: CupertinoIcons.bubble_left_bubble_right,
+                                  label: _formatCount(widget.post.comments),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => CommentsScreen(postId: widget.post.id)),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 24),
+                                _buildPlainAction(
+                                  icon: CupertinoIcons.paperplane,
+                                  label: _formatCount(widget.post.shares ?? 0),
+                                  onTap: () {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Share coming soon')),
+                                    );
+                                  },
+                                ),
+                                const Spacer(),
+                                GestureDetector(
+                                  onTap: () => setState(() => _isSaved = !_isSaved),
+                                  child: Icon(
+                                    _isSaved ? CupertinoIcons.bookmark_fill : CupertinoIcons.bookmark,
+                                    color: _isSaved 
+                                        ? Colors.amber // Keep amber for saved state
+                                        : Colors.white, // Theme-aware for overlay on image
+                                    size: 26,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 12),
+
+                            // Caption — plain rich text, no background/glass
+                            // Text on image overlay - use high contrast for readability
+                            RichText(
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              text: TextSpan(
+                                style: TextStyle(
+                                  color: Colors.white, // High contrast for overlay
+                                  fontSize: 14,
+                                  height: 1.4,
+                                  shadows: [
+                                    Shadow(
+                                      blurRadius: 5,
+                                      color: Colors.black.withOpacity(0.7), // Shadow for contrast
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                children: [
+                                  TextSpan(
+                                    text: '@${widget.post.author.username} ',
+                                    style: const TextStyle(fontWeight: FontWeight.w700),
+                                  ),
+                                  TextSpan(text: widget.post.caption),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                    if (widget.onDelete != null)
-                      const PopupMenuDivider(),
-                    PopupMenuItem(
-                      value: 'report',
-                      child: Row(
-                        children: [
-                          Icon(Icons.flag, color: context.textSecondary),
-                          const SizedBox(width: 8),
-                          const Text('Report'),
-                        ],
-                      ),
                     ),
-                    PopupMenuItem(
-                      value: 'copy',
-                      child: Row(
-                        children: [
-                          Icon(Icons.link, color: context.textSecondary),
-                          const SizedBox(width: 8),
-                          const Text('Copy Link'),
-                        ],
+
+                    if (widget.post.isVideo)
+                      Center(
+                        child: Icon(
+                          CupertinoIcons.play_circle_fill,
+                          size: 70,
+                          color: ThemeHelper.getHighContrastIconColor(context).withOpacity(0.8), // High contrast for overlay
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ],
             ),
           ),
-          // Media
-          GestureDetector(
-            onDoubleTap: () {
-              setState(() {
-                _isLiked = true;
-              });
-              // Show heart animation
-            },
-            child: Stack(
-              children: [
-                if (widget.post.imageUrl != null)
-                  CachedNetworkImage(
-                    imageUrl: widget.post.imageUrl!,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Container(
-                      height: 400,
-                      color: context.surfaceColor,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.neonPurple,
-                        ),
-                      ),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      height: 400,
-                      color: context.surfaceColor,
-                      child: Center(
-                        child: Icon(
-                          Icons.broken_image,
-                          size: 48,
-                          color: context.textMuted,
-                        ),
-                      ),
-                    ),
-                  )
-                else if (widget.post.thumbnailUrl != null)
-                  CachedNetworkImage(
-                    imageUrl: widget.post.thumbnailUrl!,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Container(
-                      height: 400,
-                      color: context.surfaceColor,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.neonPurple,
-                        ),
-                      ),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      height: 400,
-                      color: context.surfaceColor,
-                    ),
-                  ),
-                if (widget.post.isVideo)
-                  Positioned.fill(
-                      child: Container(
-                        color: Colors.black.withOpacity(0.3),
-                        child: Center(
-                          child: Icon(
-                            Icons.play_circle_filled,
-                            size: 64,
-                            color: context.textPrimary,
-                          ),
-                        ),
-                      ),
-                  ),
-              ],
-            ),
-          ),
-          // Actions
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _isLiked = !_isLiked;
-                    });
-                  },
-                  child: Icon(
-                    _isLiked ? Icons.favorite : Icons.favorite_border,
-                    color: _isLiked ? AppColors.warning : context.textPrimary,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => CommentsScreen(
-                          postId: widget.post.id,
-                        ),
-                      ),
-                    );
-                  },
-                  child: Icon(
-                    Icons.chat_bubble_outline,
-                    color: context.textPrimary,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Share feature coming soon'),
-                        backgroundColor: AppColors.cyanGlow,
-                      ),
-                    );
-                  },
-                  child: Icon(
-                    Icons.send_outlined,
-                    color: context.textPrimary,
-                    size: 28,
-                  ),
-                ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _isSaved = !_isSaved;
-                    });
-                  },
-                  child: Icon(
-                    _isSaved ? Icons.bookmark : Icons.bookmark_border,
-                    color: context.textPrimary,
-                    size: 28,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Likes count
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '${_formatCount((_isLiked ? 1 : 0) + widget.post.likes)} likes',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMediaBackground() {
+    return CachedNetworkImage(
+      imageUrl: widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '',
+      fit: BoxFit.cover,
+      placeholder: (context, url) => Center(
+        child: CupertinoActivityIndicator(
+          color: ThemeHelper.getTextSecondary(context), // Theme-aware loading indicator
+        ),
+      ),
+      errorWidget: (context, url, error) => Center(
+        child: Icon(
+          CupertinoIcons.exclamationmark_triangle_fill,
+          color: Colors.white, // Theme-aware error icon
+          size: 60,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlainAction({
+    required IconData icon,
+    required String? label,
+    Color? color,
+    required VoidCallback onTap,
+  }) {
+    // Default to high contrast for overlay on image, or use provided color
+    final defaultColor = color ?? ThemeHelper.getHighContrastIconColor(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 26),
+          if (label != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              label,
               style: TextStyle(
-                color: context.textPrimary,
+                color: Colors.white,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
             ),
-          ),
-          const SizedBox(height: 8),
-          // Caption
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: RichText(
-              text: TextSpan(
-                style: TextStyle(
-                  color: context.textPrimary,
-                  fontSize: 14,
-                ),
-                children: [
-                  TextSpan(
-                    text: '${widget.post.author.username} ',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  TextSpan(text: widget.post.caption),
-                ],
-              ),
-            ),
-          ),
-          // View all comments
-          if (widget.post.comments > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => CommentsScreen(
-                        postId: widget.post.id,
-                      ),
-                    ),
-                  );
-                },
-                child: Text(
-                  'View all ${_formatCount(widget.post.comments)} comments',
-                  style: TextStyle(
-                    color: context.textMuted,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            ),
-          // Time
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Text(
-              _formatTime(widget.post.createdAt),
-              style: TextStyle(
-                color: context.textMuted,
-                fontSize: 12,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
+          ],
         ],
       ),
     );
   }
-}
 
+  void _showMoreMenu(BuildContext context) {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        actions: [
+          if (widget.onDelete != null)
+            CupertinoActionSheetAction(
+              isDestructiveAction: true,
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onDelete!();
+              },
+              child: const Text('Delete'),
+            ),
+          CupertinoActionSheetAction(child: const Text('Report'), onPressed: () => Navigator.pop(context)),
+          CupertinoActionSheetAction(child: const Text('Copy Link'), onPressed: () => Navigator.pop(context)),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          child: const Text('Cancel'),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+    );
+  }
+}

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/glass_button.dart';
-import '../home/home_screen.dart';
+import '../main/main_screen.dart';
 import 'signup_screen.dart';
 
 /// Login screen with glassmorphism design
@@ -56,7 +57,7 @@ class _LoginScreenState extends State<LoginScreen>
           Navigator.of(context).pushReplacement(
             PageRouteBuilder(
               pageBuilder: (context, animation, secondaryAnimation) =>
-                  const HomeScreen(),
+                  const MainScreen(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(
                   opacity: animation,
@@ -107,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen>
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.neonPurple
+                                color: ThemeHelper.getAccentColor(context) // Theme-aware accent color
                                     .withOpacity(_glowAnimation.value * 0.5),
                                 blurRadius: 40,
                                 spreadRadius: 10,
@@ -118,7 +119,7 @@ class _LoginScreenState extends State<LoginScreen>
                             padding: const EdgeInsets.all(24),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              gradient: AppColors.purpleGradient,
+                              gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
                             ),
                             child: Icon(
                               Icons.play_circle_filled,
@@ -229,13 +230,15 @@ class _LoginScreenState extends State<LoginScreen>
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text('Password reset feature coming soon'),
-                            backgroundColor: AppColors.cyanGlow,
+                            backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                           ),
                         );
                       },
                       child: Text(
                         'Forgot Password?',
-                        style: TextStyle(color: AppColors.neonPurple),
+                        style: TextStyle(
+                          color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                        ),
                       ),
                     ),
                   ),
@@ -319,7 +322,7 @@ class _LoginScreenState extends State<LoginScreen>
                         child: Text(
                           'Sign Up',
                           style: TextStyle(
-                            color: AppColors.neonPurple,
+                            color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
