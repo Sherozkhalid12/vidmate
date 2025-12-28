@@ -1,16 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
 import '../profile/profile_screen.dart';
 
-/// Search screen with glass search bar and animated results
+class ExploreItem {
+  final String imageUrl;
+  final UserModel user;
+  final double aspectRatio;
+
+  ExploreItem({
+    required this.imageUrl,
+    required this.user,
+    required this.aspectRatio,
+  });
+}
+
+/// Instagram-style Search Screen
 class SearchScreen extends StatefulWidget {
-  final VoidCallback? onBackToHome;
-  final double? bottomPadding; // Optional bottom padding for navigation bar
-  
-  const SearchScreen({super.key, this.onBackToHome, this.bottomPadding});
+  final double? bottomPadding;
+
+  const SearchScreen({super.key, this.bottomPadding});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -18,29 +31,26 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
-  final List<UserModel> _users = [];
-  final List<String> _trendingHashtags = [
-    '#TechTrends',
-    '#DesignInspiration',
-    '#TravelVibes',
-    '#FitnessGoals',
-    '#MusicLife',
-    '#Foodie',
-    '#Photography',
-    '#ArtDaily',
+  final FocusNode _searchFocusNode = FocusNode();
+  List<UserModel> _filteredUsers = [];
+  List<String> _recentSearches = [
+    'john_doe',
+    'jane_smith',
+    'design',
+    'tech',
   ];
   bool _isSearching = false;
 
   @override
   void initState() {
     super.initState();
-    _users.addAll(MockDataService.mockUsers);
     _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -49,260 +59,185 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _isSearching = query.isNotEmpty;
       if (_isSearching) {
-        _users.clear();
-        _users.addAll(
-          MockDataService.mockUsers.where(
-            (user) =>
-                user.username.toLowerCase().contains(query) ||
-                user.displayName.toLowerCase().contains(query),
-          ),
-        );
+        _filteredUsers = MockDataService.mockUsers
+            .where((user) =>
+        user.username.toLowerCase().contains(query) ||
+            user.displayName.toLowerCase().contains(query))
+            .toList();
       } else {
-        _users.clear();
-        _users.addAll(MockDataService.mockUsers);
+        _filteredUsers = [];
       }
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _searchFocusNode.unfocus();
+  }
+
+  void _removeRecentSearch(String search) {
+    setState(() {
+      _recentSearches.remove(search);
+    });
+  }
+
+  void _clearAllRecent() {
+    setState(() {
+      _recentSearches.clear();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root, so no need to duplicate here
-    return Column(
-      children: [
-        AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          leading: IconButton(
-            icon: Icon(Icons.arrow_back),
-            color: ThemeHelper.getTextPrimary(context),
-            onPressed: () {
-              if (widget.onBackToHome != null) {
-                widget.onBackToHome!();
-              } else if (Navigator.canPop(context)) {
-                Navigator.pop(context);
-              }
-            },
-          ),
-          title: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: ThemeHelper.getSurfaceColor(context),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: ThemeHelper.getBorderColor(context),
-                width: 1.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: TextField(
-              controller: _searchController,
-              autofocus: false,
-              style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
-              decoration: InputDecoration(
-                hintText: 'Search users, hashtags...',
-                hintStyle: TextStyle(color: ThemeHelper.getTextMuted(context)),
-                border: InputBorder.none,
-              ),
-            ),
-          ),
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-        Expanded(
-          child: _isSearching ? _buildSearchResults() : _buildTrending(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTrending() {
-    return SingleChildScrollView(
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 20,
-        bottom: (widget.bottomPadding ?? 0) + 20, // Add bottom padding for nav bar
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Trending title with underline
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Trending',
-                style: TextStyle(
-                  color: ThemeHelper.getTextPrimary(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+        child: SafeArea(
+          child: Column(
+          children: [
+            // Top bar with back button and search
+            Container(
+              padding: const EdgeInsets.fromLTRB(8, 8, 16, 12),
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                border: Border(
+                  bottom: BorderSide(
+                    color: ThemeHelper.getBorderColor(context).withOpacity(0.3),
+                    width: 0.5,
+                  ),
                 ),
               ),
-              Container(
-                width: 80,
-                height: 3,
-                margin: const EdgeInsets.only(top: 4),
-                decoration: BoxDecoration(
-                  color: ThemeHelper.getAccentColor(context),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          // Trending hashtags
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Hashtags',
-                style: TextStyle(
-                  color: ThemeHelper.getTextSecondary(context),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Container(
-                width: 70,
-                height: 2,
-                margin: const EdgeInsets.only(top: 4),
-                decoration: BoxDecoration(
-                  color: ThemeHelper.getAccentColor(context),
-                  borderRadius: BorderRadius.circular(1),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _trendingHashtags.map((tag) {
-              return AnimationConfiguration.staggeredList(
-                position: _trendingHashtags.indexOf(tag),
-                duration: const Duration(milliseconds: 375),
-                child: SlideAnimation(
-                  verticalOffset: 50.0,
-                  child: FadeInAnimation(
-                    child: GestureDetector(
-                      onTap: () {
-                        _searchController.text = tag;
-                        // _onSearchChanged will be called automatically by the listener
-                      },
-                        child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
+              child: Row(
+                children: [
+                  // iOS-style back button
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    onPressed: () => Navigator.pop(context),
+                    child: Icon(
+                      CupertinoIcons.back,
+                      color: ThemeHelper.getAccentColor(context),
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Search bar
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: ThemeHelper.getSurfaceColor(context),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: ThemeHelper.getBorderColor(context),
+                          width: 1,
                         ),
-                        decoration: BoxDecoration(
-                          color: ThemeHelper.getSurfaceColor(context),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: ThemeHelper.getBorderColor(context),
-                            width: 1.5,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.search,
+                            color: ThemeHelper.getTextSecondary(context),
+                            size: 18,
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 4,
-                              offset: const Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              tag,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              focusNode: _searchFocusNode,
+                              autofocus: true,
                               style: TextStyle(
                                 color: ThemeHelper.getTextPrimary(context),
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Search',
+                                hintStyle: TextStyle(
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  fontSize: 16,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                  width: 0,
+                                  color: Colors.transparent
+                                 ),
+                                ),
+
+                                enabledBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                      width: 0,
+                                      color: Colors.transparent                                  ),
+                                ),
+                                fillColor: Colors.transparent,
+                                focusedBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                      width: 0,
+                                      color: Colors.transparent                                  ),
+                                ),
+                                disabledBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(
+                                      width: 0,
+                                      color: Colors.transparent                                  ),
+                                ),
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
                               ),
                             ),
-                            Container(
-                              width: tag.length * 7.0,
-                              height: 1.5,
-                              margin: const EdgeInsets.only(top: 2),
-                              decoration: BoxDecoration(
-                                color: ThemeHelper.getAccentColor(context),
-                                borderRadius: BorderRadius.circular(1),
+                          ),
+                          if (_searchController.text.isNotEmpty)
+                            GestureDetector(
+                              onTap: _clearSearch,
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  color: ThemeHelper.getTextMuted(context).withOpacity(0.3),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.close,
+                                  color: ThemeHelper.getTextPrimary(context),
+                                  size: 14,
+                                ),
                               ),
                             ),
-                          ],
-                        ),
+                        ],
                       ),
                     ),
                   ),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 32),
-          // Suggested users with underline
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Suggested',
-                style: TextStyle(
-                  color: ThemeHelper.getTextSecondary(context),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
+                ],
               ),
-              Container(
-                width: 80,
-                height: 2,
-                margin: const EdgeInsets.only(top: 4),
-                decoration: BoxDecoration(
-                  color: ThemeHelper.getAccentColor(context),
-                  borderRadius: BorderRadius.circular(1),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ..._users.map((user) {
-            return AnimationConfiguration.staggeredList(
-              position: _users.indexOf(user),
-              duration: const Duration(milliseconds: 375),
-              child: SlideAnimation(
-                verticalOffset: 50.0,
-                child: FadeInAnimation(
-                  child: _buildUserCard(user),
-                ),
-              ),
-            );
-          }).toList(),
-        ],
+            ),
+            // Content
+            Expanded(
+              child: _isSearching ? _buildSearchResults() : _buildRecentSearches(),
+            ),
+          ],
+        ),
+        ),
       ),
     );
   }
 
-  Widget _buildSearchResults() {
-    if (_users.isEmpty) {
+  Widget _buildRecentSearches() {
+    if (_recentSearches.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.search_off,
-              size: 64,
-              color: ThemeHelper.getTextMuted(context),
+              CupertinoIcons.search,
+              size: 80,
+              color: ThemeHelper.getTextMuted(context).withOpacity(0.5),
             ),
             const SizedBox(height: 16),
             Text(
-              'No results found',
+              'No recent searches',
               style: TextStyle(
                 color: ThemeHelper.getTextMuted(context),
-                fontSize: 16,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -310,218 +245,282 @@ class _SearchScreenState extends State<SearchScreen> {
       );
     }
 
-    return AnimationLimiter(
-      child: ListView.builder(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 20,
-          bottom: (widget.bottomPadding ?? 0) + 20, // Add bottom padding for nav bar
-        ),
-        itemCount: _users.length,
-        itemBuilder: (context, index) {
-          return AnimationConfiguration.staggeredList(
-            position: index,
-            duration: const Duration(milliseconds: 375),
-            child: SlideAnimation(
-              verticalOffset: 50.0,
-              child: FadeInAnimation(
-                child: _buildUserCard(_users[index]),
-              ),
-            ),
-          );
-        },
+    return ListView(
+      padding: EdgeInsets.only(
+        bottom: (widget.bottomPadding ?? 0) + 16,
       ),
-    );
-  }
-
-  Widget _buildUserCard(UserModel user) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProfileScreen(user: user),
-          ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: ThemeHelper.getSurfaceColor(context),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: ThemeHelper.getBorderColor(context),
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-          Stack(
+      children: [
+        // Recent header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              ClipOval(
-                child: Image.network(
-                  user.avatarUrl,
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      width: 60,
-                      height: 60,
-                      color: ThemeHelper.getSurfaceColor(context),
-                      child: Icon(
-                        Icons.person,
-                        color: ThemeHelper.getTextSecondary(context),
-                        size: 30,
-                      ),
-                    );
-                  },
-                ),
-              ),
-              if (user.isOnline)
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: ThemeHelper.getAccentColor(context),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: ThemeHelper.getBackgroundColor(context),
-                        width: 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
-                          blurRadius: 4,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  user.displayName,
-                  style: TextStyle(
-                    color: ThemeHelper.getTextPrimary(context),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '@${user.username}',
-                      style: TextStyle(
-                        color: ThemeHelper.getTextSecondary(context),
-                        fontSize: 14,
-                      ),
-                    ),
-                    Container(
-                      width: 60,
-                      height: 1.5,
-                      margin: const EdgeInsets.only(top: 2),
-                      decoration: BoxDecoration(
-                        color: ThemeHelper.getAccentColor(context),
-                        borderRadius: BorderRadius.circular(1),
-                      ),
-                    ),
-                  ],
-                ),
-                if (user.bio != null) ...[
-                  const SizedBox(height: 4),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        user.bio!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: ThemeHelper.getTextMuted(context),
-                          fontSize: 12,
-                        ),
-                      ),
-                      Container(
-                        width: 80,
-                        height: 1.5,
-                        margin: const EdgeInsets.only(top: 2),
-                        decoration: BoxDecoration(
-                          color: ThemeHelper.getAccentColor(context),
-                          borderRadius: BorderRadius.circular(1),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (!user.isFollowing)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              decoration: BoxDecoration(
-                color: ThemeHelper.getAccentColor(context),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Follow',
+                    'Recent',
                     style: TextStyle(
-                      color: ThemeHelper.getOnAccentColor(context),
-                      fontSize: 14,
+                      color: ThemeHelper.getTextPrimary(context),
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   Container(
-                    width: 40,
-                    height: 1.5,
-                    margin: const EdgeInsets.only(top: 2),
+                    width: 50,
+                    height: 2,
+                    margin: const EdgeInsets.only(top: 4),
                     decoration: BoxDecoration(
-                      color: ThemeHelper.getOnAccentColor(context),
+                      color: ThemeHelper.getAccentColor(context),
                       borderRadius: BorderRadius.circular(1),
                     ),
                   ),
                 ],
               ),
-            ),
-        ],
+              GestureDetector(
+                onTap: _clearAllRecent,
+                child: Text(
+                  'Clear All',
+                  style: TextStyle(
+                    color: ThemeHelper.getAccentColor(context),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
+        // Recent searches list
+        ...AnimationConfiguration.toStaggeredList(
+          duration: const Duration(milliseconds: 375),
+          childAnimationBuilder: (widget) => SlideAnimation(
+            verticalOffset: 50.0,
+            child: FadeInAnimation(child: widget),
+          ),
+          children: _recentSearches.map((search) {
+            return Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: ThemeHelper.getBorderColor(context).withOpacity(0.2),
+                    width: 0.5,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      CupertinoIcons.clock,
+                      color: ThemeHelper.getTextSecondary(context),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            search,
+                            style: TextStyle(
+                              color: ThemeHelper.getTextPrimary(context),
+                              fontSize: 15,
+                            ),
+                          ),
+                          Container(
+                            width: 50,
+                            height: 1.5,
+                            margin: const EdgeInsets.only(top: 2),
+                            decoration: BoxDecoration(
+                              color: ThemeHelper.getAccentColor(context),
+                              borderRadius: BorderRadius.circular(1),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _removeRecentSearch(search),
+                      child: Icon(
+                        Icons.close,
+                        color: ThemeHelper.getTextMuted(context),
+                        size: 20,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchResults() {
+    if (_filteredUsers.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              CupertinoIcons.search,
+              size: 80,
+              color: ThemeHelper.getTextMuted(context).withOpacity(0.5),
+            ),
+            const SizedBox(height: 16),
+            Column(
+              children: [
+                Text(
+                  'No results found',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextPrimary(context),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Container(
+                  width: 120,
+                  height: 2,
+                  margin: const EdgeInsets.only(top: 4),
+                  decoration: BoxDecoration(
+                    color: ThemeHelper.getAccentColor(context),
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.only(
+        bottom: (widget.bottomPadding ?? 0) + 16,
+        top: 8,
       ),
+      itemCount: _filteredUsers.length,
+      itemBuilder: (context, index) {
+        final user = _filteredUsers[index];
+        return AnimationConfiguration.staggeredList(
+          position: index,
+          duration: const Duration(milliseconds: 375),
+          child: SlideAnimation(
+            verticalOffset: 50.0,
+            child: FadeInAnimation(
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfileScreen(user: user),
+                    ),
+                  );
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: ThemeHelper.getBorderColor(context).withOpacity(0.2),
+                        width: 0.5,
+                      ),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    child: Row(
+                      children: [
+                        Stack(
+                          children: [
+                            ClipOval(
+                              child: Image.network(
+                                user.avatarUrl,
+                                width: 50,
+                                height: 50,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    width: 50,
+                                    height: 50,
+                                    color: ThemeHelper.getSurfaceColor(context),
+                                    child: Icon(
+                                      Icons.person,
+                                      color: ThemeHelper.getTextSecondary(context),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            if (user.isOnline)
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 14,
+                                  height: 14,
+                                  decoration: BoxDecoration(
+                                    color: ThemeHelper.getAccentColor(context),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: ThemeHelper.getBackgroundColor(context),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    user.username,
+                                    style: TextStyle(
+                                      color: ThemeHelper.getTextPrimary(context),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Container(
+                                    width: 60,
+                                    height: 1.5,
+                                    margin: const EdgeInsets.only(top: 2),
+                                    decoration: BoxDecoration(
+                                      color: ThemeHelper.getAccentColor(context),
+                                      borderRadius: BorderRadius.circular(1),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                user.displayName,
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextMuted(context),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
-

@@ -82,226 +82,229 @@ class _VideoTileState extends State<VideoTile> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: widget.onTap,
-      onTapDown: (_) {
-        setState(() => _isHovered = true);
-        _controller.forward();
-      },
-      onTapUp: (_) {
-        setState(() => _isHovered = false);
-        _controller.reverse();
-      },
-      onTapCancel: () {
-        setState(() => _isHovered = false);
-        _controller.reverse();
-      },
-      child: AnimatedBuilder(
-        animation: _scaleAnimation,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _isHovered ? _scaleAnimation.value : 1.0,
-            child: GlassCard(
-              padding: EdgeInsets.zero,
-              margin: EdgeInsets.zero, // Let parent handle margins
-              borderRadius: BorderRadius.circular(20),
-              onTap: widget.onTap,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Thumbnail – fills completely to the card's rounded borders
-                  Stack(
-                    children: [
-                      AspectRatio(
-                        aspectRatio: 4 / 3, // or 9 / 16 for vertical videos
-                        child: CachedNetworkImage(
-                          imageUrl: widget.thumbnailUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          placeholder: (context, url) => Container(
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Center(
-                              child: SizedBox(
-                                width: 40,
-                                height: 40,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Theme.of(context).iconTheme.color ?? ThemeHelper.getTextPrimary(context),
-                                ),
-                              ),
-                            ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Center(
-                              child: Icon(
-                                CupertinoIcons.exclamationmark_triangle_fill,
-                                color: ThemeHelper.getTextSecondary(context),
-                                size: 60,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      // Play overlay – theme-aware icon with high contrast
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.35),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Center(
-                            child: Builder(
-                              builder: (context) {
-                                final isDark = Theme.of(context).brightness == Brightness.dark;
-                                // High contrast: white in dark mode, black in light mode
-                                final iconColor = isDark ? Colors.white : Colors.black;
-                                return Container(
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.25),
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.white.withOpacity(0.4),
-                                        blurRadius: 20,
-                                        spreadRadius: 4,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Icon(
-                                    widget.isPlaying 
-                                        ? CupertinoIcons.pause_fill 
-                                        : CupertinoIcons.play_fill,
-                                    color: Colors.black,
-                                    size: 44,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      // Duration badge - high contrast text on semi-transparent dark background
-                      if (widget.duration != null)
-                        Positioned(
-                          bottom: 12,
-                          right: 12,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.75),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              _formatDuration(widget.duration!),
-                              style: const TextStyle(
-                                color: Colors.white, // Always white on dark semi-transparent bg for contrast
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Title and channel info
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16.0),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) {
+          setState(() => _isHovered = true);
+          _controller.forward();
+        },
+        onTapUp: (_) {
+          setState(() => _isHovered = false);
+          _controller.reverse();
+        },
+        onTapCancel: () {
+          setState(() => _isHovered = false);
+          _controller.reverse();
+        },
+        child: AnimatedBuilder(
+          animation: _scaleAnimation,
+          builder: (context, child) {
+            return Transform.scale(
+              scale: _isHovered ? _scaleAnimation.value : 1.0,
+              child: GlassCard(
+                padding: EdgeInsets.zero,
+                margin: EdgeInsets.zero, // Let parent handle margins
+                borderRadius: BorderRadius.circular(20),
+                onTap: widget.onTap,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Thumbnail – fills completely to the card's rounded borders
+                    Stack(
                       children: [
-                        if (widget.channelAvatar != null) ...[
-                          ClipOval(
-                            child: CachedNetworkImage(
-                              imageUrl: widget.channelAvatar!,
-                              width: 40,
-                              height: 40,
-                              fit: BoxFit.cover,
-                              placeholder: (context, url) => Container(
-                                width: 40,
-                                height: 40,
-                                color: ThemeHelper.getSurfaceColor(context),
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Theme.of(context).iconTheme.color ?? ThemeHelper.getTextPrimary(context),
-                                    ),
+                        AspectRatio(
+                          aspectRatio: 4 / 3, // or 9 / 16 for vertical videos
+                          child: CachedNetworkImage(
+                            imageUrl: widget.thumbnailUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            placeholder: (context, url) => Container(
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Theme.of(context).iconTheme.color ?? ThemeHelper.getTextPrimary(context),
                                   ),
                                 ),
                               ),
-                              errorWidget: (context, url, error) => Container(
-                                width: 40,
-                                height: 40,
-                                color: ThemeHelper.getSurfaceColor(context),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
                                 child: Icon(
-                                  CupertinoIcons.person_crop_circle_fill,
+                                  CupertinoIcons.exclamationmark_triangle_fill,
                                   color: ThemeHelper.getTextSecondary(context),
-                                  size: 24,
+                                  size: 60,
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                        ],
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: ThemeHelper.getTextPrimary(context),
-                                  fontSize: 16,
+                        ),
+
+                        // Play overlay – theme-aware icon with high contrast
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.35),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Center(
+                              child: Builder(
+                                builder: (context) {
+                                  final isDark = Theme.of(context).brightness == Brightness.dark;
+                                  // High contrast: white in dark mode, black in light mode
+                                  final iconColor = isDark ? Colors.white : Colors.black;
+                                  return Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.25),
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.white.withOpacity(0.4),
+                                          blurRadius: 20,
+                                          spreadRadius: 4,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      widget.isPlaying
+                                          ? CupertinoIcons.pause_fill
+                                          : CupertinoIcons.play_fill,
+                                      color: Colors.black,
+                                      size: 44,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // Duration badge - high contrast text on semi-transparent dark background
+                        if (widget.duration != null)
+                          Positioned(
+                            bottom: 12,
+                            right: 12,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.75),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                _formatDuration(widget.duration!),
+                                style: const TextStyle(
+                                  color: Colors.white, // Always white on dark semi-transparent bg for contrast
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              if (widget.channelName != null) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  widget.channelName!,
-                                  style: TextStyle(
-                                    color: ThemeHelper.getTextSecondary(context),
-                                    fontSize: 14,
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Title and channel info
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (widget.channelAvatar != null) ...[
+                            ClipOval(
+                              child: CachedNetworkImage(
+                                imageUrl: widget.channelAvatar!,
+                                width: 40,
+                                height: 40,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => Container(
+                                  width: 40,
+                                  height: 40,
+                                  color: ThemeHelper.getSurfaceColor(context),
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Theme.of(context).iconTheme.color ?? ThemeHelper.getTextPrimary(context),
+                                      ),
+                                    ),
                                   ),
                                 ),
+                                errorWidget: (context, url, error) => Container(
+                                  width: 40,
+                                  height: 40,
+                                  color: ThemeHelper.getSurfaceColor(context),
+                                  child: Icon(
+                                    CupertinoIcons.person_crop_circle_fill,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 24,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                          ],
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: ThemeHelper.getTextPrimary(context),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (widget.channelName != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    widget.channelName!,
+                                    style: TextStyle(
+                                      color: ThemeHelper.getTextSecondary(context),
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
 
-                  // Stats – using beautiful Cupertino icons
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      children: [
-                        _buildStat(CupertinoIcons.eye_fill, _formatNumber(widget.views)),
-                        const SizedBox(width: 20),
-                        _buildStat(CupertinoIcons.heart_fill, _formatNumber(widget.likes)),
-                        const SizedBox(width: 20),
-                        _buildStat(CupertinoIcons.bubble_left_bubble_right_fill, _formatNumber(widget.comments)),
-                      ],
+                    // Stats – using beautiful Cupertino icons
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          _buildStat(CupertinoIcons.eye_fill, _formatNumber(widget.views)),
+                          const SizedBox(width: 20),
+                          _buildStat(CupertinoIcons.heart_fill, _formatNumber(widget.likes)),
+                          const SizedBox(width: 20),
+                          _buildStat(CupertinoIcons.bubble_left_bubble_right_fill, _formatNumber(widget.comments)),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

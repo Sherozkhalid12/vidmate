@@ -1,15 +1,19 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'dart:ui';
-import '../../core/utils/theme_helper.dart';
+import 'package:flutter_application_1/features/feed/create_content_screen.dart';
+import 'package:flutter_application_1/features/feed/create_post_screen.dart';
+import '../../core/theme/theme_extensions.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import '../../core/theme/app_colors.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
-import '../../core/widgets/glass_card.dart';
-import 'followers_list_screen.dart';
+import '../../core/utils/theme_helper.dart';
 import '../settings/settings_screen.dart';
+import 'followers_list_screen.dart';
+import 'edit/edit_profile_screen.dart';
 
-/// Instagram-style profile screen with full-width header and tabbed content
+/// Instagram-style profile screen
 class ProfileScreen extends StatefulWidget {
   final UserModel? user;
 
@@ -26,9 +30,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     with SingleTickerProviderStateMixin {
   late UserModel _user;
   final List<PostModel> _posts = [];
-  final List<PostModel> _reels = [];
-  final List<PostModel> _videos = [];
-  final List<PostModel> _saved = [];
   bool _isFollowing = false;
   late TabController _tabController;
 
@@ -37,11 +38,8 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.initState();
     _user = widget.user ?? MockDataService.mockUsers[0];
     _isFollowing = _user.isFollowing;
-    _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() {
-      setState(() {}); // Rebuild to update tab colors
-    });
-    _loadContent();
+    _tabController = TabController(length: 4, vsync: this, initialIndex: 0);
+    _loadPosts();
   }
 
   @override
@@ -50,15 +48,10 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
-  void _loadContent() {
+  void _loadPosts() {
     final allPosts = MockDataService.getMockPosts();
     setState(() {
-      // Filter posts by author
-      _posts.addAll(allPosts.where((p) => p.author.id == _user.id && !p.isVideo));
-      _reels.addAll(allPosts.where((p) => p.author.id == _user.id && p.isVideo && p.videoDuration != null && p.videoDuration!.inSeconds <= 60));
-      _videos.addAll(allPosts.where((p) => p.author.id == _user.id && p.isVideo && p.videoDuration != null && p.videoDuration!.inSeconds > 60));
-      // Saved posts (mix of all types)
-      _saved.addAll(allPosts.take(12));
+      _posts.addAll(allPosts.where((p) => p.author.id == _user.id));
     });
   }
 
@@ -68,107 +61,374 @@ class _ProfileScreenState extends State<ProfileScreen>
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       body: Container(
-        padding: EdgeInsets.all(16),
         decoration: BoxDecoration(
-          gradient: ThemeHelper.getBackgroundGradient(context),
+          gradient: context.backgroundGradient,
         ),
         child: CustomScrollView(
-                slivers: [
-                  // App Bar
-                  SliverAppBar(
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    leading: IconButton(
-                      icon: Icon(Icons.arrow_back),
-                      color: ThemeHelper.getHighContrastIconColor(context),
-                      onPressed: () => Navigator.pop(context),
+          slivers: [
+            SliverAppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              leadingWidth: 100,
+              leading: Padding(
+                padding: EdgeInsets.only(left: 16.0),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    InkWell(
+                      onTap: (){
+                        Navigator.pop(context);
+                      },
+                      child: Icon(
+                        Icons.arrow_back_ios_new,
+                        size: 20,
+                      ),
                     ),
-                    title: Text(
-                      _user.username,
-                      style: TextStyle(
-                        color: ThemeHelper.getHighContrastIconColor(context), // Theme-aware: white in dark, black in light
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        shadows: [
-                          Shadow(
-                            color: Colors.black.withOpacity(0.3),
-                            offset: const Offset(0, 1),
-                            blurRadius: 4,
+                    SizedBox(width: 12,),
+                    InkWell(
+                      onTap: (){
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>  CreateContentScreen(),
                           ),
-                        ],
+                        );
+                      },
+                      child: Icon(
+                        CupertinoIcons.plus,
+                        size: 25,
                       ),
                     ),
-                    actions: [
-                      IconButton(
-                        icon: Icon(Icons.menu),
-                        color: ThemeHelper.getHighContrastIconColor(context), // Theme-aware: white in dark, black in light
-                        onPressed: _showMenuBottomSheet,
-                      ),
-                    ],
-                  ),
-            // Profile Header (Full-width with image background)
-            SliverToBoxAdapter(
-              child: _buildProfileHeader(),
+                  ],
+                ),
+              ),
+              title: Text(
+                _user.username,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              actions: [
+                IconButton(
+                  icon: Icon(Icons.menu),
+                 onPressed: (){
+                   _showMenuBottomSheet();
+                 },
+                ),
+              ],
             ),
-            // Followers/Following Glass Cards
+            // Profile header
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: _buildFollowersCard(),
+                    // Profile info row
+                    Row(
+                      children: [
+                        // Profile picture
+                        Stack(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: _isFollowing
+                                    ? null
+                                    : LinearGradient(
+                                  colors: [
+                                    context.buttonColor.withOpacity(0.8),
+                                    context.buttonColor.withOpacity(0.6),
+                                  ],
+                                ),
+                              ),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: context.backgroundColor,
+                                ),
+                                padding: const EdgeInsets.all(2),
+                                child: ClipOval(
+                                  child: Image.network(
+                                    _user.avatarUrl,
+                                    width: 90,
+                                    height: 90,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        width: 90,
+                                        height: 90,
+                                        color: context.surfaceColor,
+                                        child: Icon(
+                                          Icons.person,
+                                          color: context.textSecondary,
+                                          size: 45,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (_user.isOnline)
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: BoxDecoration(
+                                    color: context.buttonColor,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: context.backgroundGradient.colors.first,
+                                      width: 3,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(width: 20),
+                        // Stats
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _buildStatColumn(_user.posts, 'posts'),
+                              _buildStatColumn(_user.followers, 'followers'),
+                              _buildStatColumn(_user.following, 'following'),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildFollowingCard(),
+                    const SizedBox(height: 16),
+                    // Username and bio
+                    Text(
+                      _user.displayName,
+                      style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (_user.bio != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _user.bio!,
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _isFollowing
+                              ? OutlinedButton(
+                            onPressed: () {
+                              setState(() {
+                                _isFollowing = !_isFollowing;
+                              });
+                            },
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(
+                                color: context.borderColor,
+                                width: 1,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            child: Text(
+                              'Following',
+                              style: TextStyle(
+                                color: context.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          )
+                              : ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _isFollowing = !_isFollowing;
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: context.buttonColor,
+                              foregroundColor: context.buttonTextColor,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              elevation: 0,
+                            ),
+                            child: Text(
+                              'Follow',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              // Navigate to chat with this user
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Opening chat with ${_user.username}...'),
+                                  backgroundColor: context.surfaceColor,
+                                ),
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(
+                                color: context.borderColor,
+                                width: 1,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            child: Text(
+                              'Message',
+                              style: TextStyle(
+                                color: context.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => EditProfileScreen(user: _user),
+                              ),
+                            );
+                          },
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: context.borderColor,
+                              width: 1,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.all(8),
+                            minimumSize: const Size(40, 40),
+                          ),
+                          child: Icon(
+                            Icons.person_add_outlined,
+                            color: context.textPrimary,
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Highlights/Stories
+                    SizedBox(
+                      height: 90,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: 5,
+                        itemBuilder: (context, index) {
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 12),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 66,
+                                  height: 66,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        context.buttonColor.withOpacity(0.8),
+                                        context.buttonColor.withOpacity(0.6),
+                                      ],
+                                    ),
+                                  ),
+                                  padding: const EdgeInsets.all(2.5),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: context.backgroundColor,
+                                    ),
+                                    child: ClipOval(
+                                      child: Image.network(
+                                        'https://i.pravatar.cc/150?img=${index + 10}',
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error, stackTrace) {
+                                          return Container(
+                                            color: context.surfaceColor,
+                                            child: Icon(
+                                              Icons.add,
+                                              color: context.textSecondary,
+                                              size: 20,
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                SizedBox(
+                                  width: 66,
+                                  child: Text(
+                                    index == 0 ? 'New' : 'Story ${index}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: context.textSecondary,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
-            // Tab Bar (Sticky) - No shade, with stats
+            // Tab bar
             SliverPersistentHeader(
               pinned: true,
               delegate: _SliverAppBarDelegate(
-                Container(
-                  color: Colors.transparent,
-                  child: TabBar(
-                    controller: _tabController,
-                    indicatorColor: ThemeHelper.getAccentColor(context),
-                    labelColor: ThemeHelper.getAccentColor(context),
-                    unselectedLabelColor: ThemeHelper.getTextMuted(context),
-                    tabs: [
-                      _buildTabWithStat(
-                        icon: Icons.grid_on,
-                        count: _user.posts,
-                        isSelected: _tabController.index == 0,
-                        context: context,
-                      ),
-                      _buildTabWithStat(
-                        icon: Icons.play_circle_outline,
-                        count: _reels.length,
-                        isSelected: _tabController.index == 1,
-                        context: context,
-                      ),
-                      _buildTabWithStat(
-                        icon: Icons.video_library,
-                        count: _videos.length,
-                        isSelected: _tabController.index == 2,
-                        context: context,
-                      ),
-                      _buildTabWithStat(
-                        icon: Icons.bookmark_border,
-                        count: _saved.length,
-                        isSelected: _tabController.index == 3,
-                        context: context,
-                      ),
-                    ],
-                  ),
+                TabBar(
+                  controller: _tabController,
+                  indicatorColor: context.textPrimary,
+                  labelColor: context.textPrimary,
+                  unselectedLabelColor: context.textMuted,
+                  tabs: const [
+                    Tab(icon: Icon(Icons.grid_on)),
+                    Tab(icon: Icon(Icons.play_circle_outline)),
+                    Tab(icon: Icon(Icons.video_library)),
+                    Tab(icon: Icon(Icons.bookmark_border)),
+                  ],
                 ),
               ),
             ),
-            // Tab Content
+            // Content grid
             SliverFillRemaining(
               hasScrollBody: true,
               child: TabBarView(
@@ -176,186 +436,21 @@ class _ProfileScreenState extends State<ProfileScreen>
                 children: [
                   _buildPostsGrid(),
                   _buildReelsGrid(),
-                  _buildVideosGrid(),
+                  _buildLongVideosGrid(),
                   _buildSavedGrid(),
                 ],
               ),
             ),
-          ],
-                ) // closes Padding
-        ), // closes Container (line 72) and body parameter
-    ); // closes Scaffold and return statement
-  }
-
-  Widget _buildProfileHeader() {
-    return Container(
-      height: 480,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        gradient: ThemeHelper.getBackgroundGradient(context),
-        image: DecorationImage(
-          image: NetworkImage(
-            _user.avatarUrl.isNotEmpty
-                ? _user.avatarUrl
-                    .replaceAll('/150?', '/800?')
-                    .replaceAll('/150', '/800')
-                    .replaceAll('?img=', '?img=')
-                    .replaceAll('w=150', 'w=800')
-                    .replaceAll('h=150', 'h=800')
-                : 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1200&h=1200&fit=crop&q=90&auto=format',
-          ),
-          fit: BoxFit.cover,
-          onError: (exception, stackTrace) {
-            // Fallback handled by gradient background
-          },
-        ),
-      ),
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.transparent,
-              Colors.black.withOpacity(0.3),
-              Colors.black.withOpacity(0.7),
-              Colors.black.withOpacity(0.9),
-            ],
-            stops: const [0.0, 0.3, 0.6, 0.85, 1.0],
-          ),
-        ),
-        alignment: Alignment.bottomLeft,
-        child:  Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Display name (large, bold) with Follow button to the right
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _user.displayName.isNotEmpty ? _user.displayName : _user.username,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black54,
-                              offset: Offset(0, 1),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '@${_user.username}',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(.5),
-                          fontSize: 16,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black54,
-                              offset: Offset(0, 1),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                _isFollowing
-                    ? OutlinedButton(
-                  onPressed: () {
-                    setState(() {
-                      _isFollowing = !_isFollowing;
-                    });
-                  },
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white, width: 1.5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20), // More rounded
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    backgroundColor: Colors.white.withOpacity(0.2),
-                  ),
-                  child: const Text(
-                    'Following',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                  ),
-                )
-                    : ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      _isFollowing = !_isFollowing;
-                    });
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20), // More rounded
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Follow',
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            // Bio below name
-            if (_user.bio != null && _user.bio!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                _user.bio!,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  shadows: [
-                    Shadow(
-                      color: Colors.black54,
-                      offset: Offset(0, 1),
-                      blurRadius: 4,
-                    ),
-                  ],
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              SizedBox(height: 30,),
-            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStatItem(int value, String label) {
+  Widget _buildStatColumn(int value, String label) {
     return GestureDetector(
       onTap: () {
-        if (label == 'Followers') {
+        if (label == 'followers') {
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -365,7 +460,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ),
           );
-        } else if (label == 'Following') {
+        } else if (label == 'following') {
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -381,202 +476,20 @@ class _ProfileScreenState extends State<ProfileScreen>
         children: [
           Text(
             _formatCount(value),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              shadows: [
-                Shadow(
-                  color: Colors.black54,
-                  offset: Offset(0, 1),
-                  blurRadius: 4,
-                ),
-              ],
+            style: TextStyle(
+              color: context.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             label,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: context.textSecondary,
               fontSize: 12,
-              shadows: [
-                Shadow(
-                  color: Colors.black54,
-                  offset: Offset(0, 1),
-                  blurRadius: 4,
-                ),
-              ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFollowersCard() {
-    return GlassCard(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => FollowersListScreen(
-              userId: _user.id,
-              isFollowers: true,
-            ),
-          ),
-        );
-      },
-      padding: const EdgeInsets.all(12),
-      borderRadius: BorderRadius.circular(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Avatars above text (matching screenshot)
-          Row(
-            children: [
-              for (int index = 0; index < (_user.followers > 0 ? 3 : 0); index++)
-                Transform.translate(
-                  offset: Offset(index * -8.0, 0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: ThemeHelper.getBackgroundColor(context),
-                        width: 2,
-                      ),
-                    ),
-                    child: ClipOval(
-                      child: Image.network(
-                        'https://i.pravatar.cc/150?img=${index + 1}',
-                        width: 24,
-                        height: 24,
-                        fit: BoxFit.cover,
-                        cacheWidth: 48, // Cache HD version but display small
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 24,
-                            height: 24,
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Icon(
-                              Icons.person,
-                              size: 14,
-                              color: ThemeHelper.getTextSecondary(context),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text(
-                _formatCount(_user.followers),
-                style: TextStyle(
-                  color: ThemeHelper.getTextPrimary(context), // Theme-aware text color
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(width: 2),
-              Text(
-                'followers',
-                style: TextStyle(
-                  color: ThemeHelper.getTextSecondary(context), // Theme-aware text color
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFollowingCard() {
-    return GlassCard(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => FollowersListScreen(
-              userId: _user.id,
-              isFollowers: false,
-            ),
-          ),
-        );
-      },
-      padding: const EdgeInsets.all(12),
-      borderRadius: BorderRadius.circular(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Avatars above text (matching screenshot)
-          Row(
-            children: [
-              for (int index = 0; index < (_user.following > 0 ? 3 : 0); index++)
-                Transform.translate(
-                  offset: Offset(index * -8.0, 0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: ThemeHelper.getBackgroundColor(context),
-                        width: 2,
-                      ),
-                    ),
-                    child: ClipOval(
-                      child: Image.network(
-                        'https://i.pravatar.cc/150?img=${index + 5}',
-                        width: 24,
-                        height: 24,
-                        fit: BoxFit.cover,
-                        cacheWidth: 48, // Cache HD version but display small
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 24,
-                            height: 24,
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Icon(
-                              Icons.person,
-                              size: 14,
-                              color: ThemeHelper.getTextSecondary(context),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text(
-                _formatCount(_user.following),
-                style: TextStyle(
-                  color: ThemeHelper.getTextPrimary(context), // Theme-aware text color
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(width: 2),
-              Text(
-                'following',
-                style: TextStyle(
-                  color: ThemeHelper.getTextSecondary(context), // Theme-aware text color
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-
         ],
       ),
     );
@@ -584,109 +497,46 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   Widget _buildPostsGrid() {
     if (_posts.isEmpty) {
-      return _buildEmptyState(
-        icon: Icons.grid_on,
-        title: 'No Posts Yet',
-        message: 'When you share photos and videos, they\'ll appear here.',
-      );
-    }
-
-    return AnimationLimiter(
-      child: GridView.builder(
-        padding: const EdgeInsets.all(2),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 2,
-          mainAxisSpacing: 2,
-          childAspectRatio: 1.0,
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: context.borderColor,
+                  width: 2,
+                ),
+              ),
+              child: Icon(
+                Icons.grid_on,
+                size: 40,
+                color: context.textMuted,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No Posts Yet',
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'When you share photos and videos, they\'ll appear here.',
+              style: TextStyle(
+                color: context.textMuted,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
-        itemCount: _posts.length,
-        itemBuilder: (context, index) {
-          return AnimationConfiguration.staggeredGrid(
-            position: index,
-            duration: const Duration(milliseconds: 375),
-            columnCount: 2,
-            child: ScaleAnimation(
-              child: FadeInAnimation(
-                child: _buildPostGridItem(_posts[index]),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildReelsGrid() {
-    if (_reels.isEmpty) {
-      return _buildEmptyState(
-        icon: Icons.play_circle_outline,
-        title: 'No Reels Yet',
-        message: 'Reels you create will appear here.',
-      );
-    }
-
-    return AnimationLimiter(
-      child: GridView.builder(
-        padding: const EdgeInsets.all(2),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 2,
-          mainAxisSpacing: 2,
-          childAspectRatio: 0.75, // Portrait aspect ratio for reels
-        ),
-        itemCount: _reels.length,
-        itemBuilder: (context, index) {
-          return AnimationConfiguration.staggeredGrid(
-            position: index,
-            duration: const Duration(milliseconds: 375),
-            columnCount: 2,
-            child: ScaleAnimation(
-              child: FadeInAnimation(
-                child: _buildReelGridItem(_reels[index]),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildVideosGrid() {
-    if (_videos.isEmpty) {
-      return _buildEmptyState(
-        icon: Icons.video_library,
-        title: 'No Videos Yet',
-        message: 'Long-form videos you upload will appear here.',
-      );
-    }
-
-    return AnimationLimiter(
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _videos.length,
-        itemBuilder: (context, index) {
-          return AnimationConfiguration.staggeredList(
-            position: index,
-            duration: const Duration(milliseconds: 375),
-            child: SlideAnimation(
-              verticalOffset: 50.0,
-              child: FadeInAnimation(
-                child: _buildVideoListItem(_videos[index]),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildSavedGrid() {
-    if (_saved.isEmpty) {
-      return _buildEmptyState(
-        icon: Icons.bookmark_border,
-        title: 'Saved',
-        message: 'Save photos and videos that you want to see again.',
       );
     }
 
@@ -697,9 +547,8 @@ class _ProfileScreenState extends State<ProfileScreen>
           crossAxisCount: 3,
           crossAxisSpacing: 2,
           mainAxisSpacing: 2,
-          childAspectRatio: 1.0,
         ),
-        itemCount: _saved.length,
+        itemCount: _posts.length,
         itemBuilder: (context, index) {
           return AnimationConfiguration.staggeredGrid(
             position: index,
@@ -707,7 +556,51 @@ class _ProfileScreenState extends State<ProfileScreen>
             columnCount: 3,
             child: ScaleAnimation(
               child: FadeInAnimation(
-                child: _buildSavedGridItem(_saved[index]),
+                child: GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: context.surfaceColor,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(
+                          _posts[index].thumbnailUrl ??
+                              _posts[index].imageUrl ??
+                              '',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: context.surfaceColor,
+                              child: Icon(
+                                Icons.image_not_supported,
+                                color: context.textMuted,
+                              ),
+                            );
+                          },
+                        ),
+                        if (_posts[index].isVideo)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.6),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Icon(
+                                Icons.play_arrow,
+                                color: context.textPrimary,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           );
@@ -716,210 +609,230 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _buildPostGridItem(PostModel post) {
-    return GestureDetector(
-      onTap: () {
-        // Navigate to post detail
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: ThemeHelper.getSurfaceColor(context),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.network(
-              (post.imageUrl ?? post.thumbnailUrl ?? '').replaceAll('/600?', '/1200?').replaceAll('/800?', '/1200?'),
-              fit: BoxFit.cover,
-              cacheWidth: 600, // Cache HD version
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: ThemeHelper.getSurfaceColor(context),
-                  child: Icon(
-                    Icons.image_not_supported,
-                    color: ThemeHelper.getTextMuted(context),
-                    size: 32,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildReelsGrid() {
+    final reels = _posts.where((p) => p.isVideo).toList();
 
-  Widget _buildReelGridItem(PostModel reel) {
-    return GestureDetector(
-      onTap: () {
-        // Navigate to reel player
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: ThemeHelper.getSurfaceColor(context),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
+    if (reels.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.network(
-              (reel.thumbnailUrl ?? '').replaceAll('/600?', '/1200?').replaceAll('/800?', '/1200?'),
-              fit: BoxFit.cover,
-              cacheWidth: 600, // Cache HD version
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: ThemeHelper.getSurfaceColor(context),
-                );
-              },
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: context.borderColor,
+                  width: 2,
+                ),
+              ),
+              child: Icon(
+                Icons.play_circle_outline,
+                size: 40,
+                color: context.textMuted,
+              ),
             ),
-            // Play icon overlay
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.play_arrow,
-                  color: Colors.white,
-                  size: 32,
-                ),
+            const SizedBox(height: 16),
+            Text(
+              'No Reels Yet',
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Reels you create will appear here.',
+              style: TextStyle(
+                color: context.textMuted,
+                fontSize: 14,
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
+      );
+    }
 
-  Widget _buildVideoListItem(PostModel video) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: ThemeHelper.getSurfaceColor(context),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Stack(
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Image.network(
-                (video.thumbnailUrl ?? '').replaceAll('/600?', '/1200?').replaceAll('/800?', '/1200?'),
-                fit: BoxFit.cover,
-                cacheWidth: 1200, // Cache HD version for full-width videos
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: ThemeHelper.getSurfaceColor(context),
-                    child: Icon(
-                      Icons.video_library,
-                      color: ThemeHelper.getTextMuted(context),
-                      size: 48,
+    return AnimationLimiter(
+      child: GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(2),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 2,
+          mainAxisSpacing: 2,
+        ),
+        itemCount: reels.length,
+        itemBuilder: (context, index) {
+          return AnimationConfiguration.staggeredGrid(
+            position: index,
+            duration: const Duration(milliseconds: 375),
+            columnCount: 3,
+            child: ScaleAnimation(
+              child: FadeInAnimation(
+                child: GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: context.surfaceColor,
                     ),
-                  );
-                },
-              ),
-            ),
-            // Play icon overlay
-            Positioned.fill(
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.play_arrow,
-                    color: Colors.white,
-                    size: 48,
-                  ),
-                ),
-              ),
-            ),
-            // Duration badge
-            if (video.videoDuration != null)
-              Positioned(
-                bottom: 12,
-                right: 12,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    _formatDuration(video.videoDuration!),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(
+                          reels[index].thumbnailUrl ?? '',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: context.surfaceColor,
+                            );
+                          },
+                        ),
+                        Center(
+                          child: Icon(
+                            Icons.play_circle_outline,
+                            color: context.textPrimary,
+                            size: 32,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildSavedGridItem(PostModel saved) {
-    return GestureDetector(
-      onTap: () {
-        // Navigate to saved item
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: ThemeHelper.getSurfaceColor(context),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
+  Widget _buildLongVideosGrid() {
+    final longVideos = _posts.where((p) => p.isVideo && (p.videoDuration?.inMinutes ?? 0) >= 1).toList();
+
+    if (longVideos.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.network(
-              (saved.imageUrl ?? saved.thumbnailUrl ?? '').replaceAll('/600?', '/1200?').replaceAll('/800?', '/1200?'),
-              fit: BoxFit.cover,
-              cacheWidth: 400, // Cache HD version
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: ThemeHelper.getSurfaceColor(context),
-                  child: Icon(
-                    Icons.image_not_supported,
-                    color: ThemeHelper.getTextMuted(context),
-                    size: 24,
-                  ),
-                );
-              },
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: context.borderColor,
+                  width: 2,
+                ),
+              ),
+              child: Icon(
+                Icons.video_library,
+                size: 40,
+                color: context.textMuted,
+              ),
             ),
-            // Type icon overlay
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Icon(
-                  saved.isVideo ? Icons.play_arrow : Icons.image,
-                  color: Colors.white,
-                  size: 16,
-                ),
+            const SizedBox(height: 16),
+            Text(
+              'No Long Videos Yet',
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Long videos you upload will appear here.',
+              style: TextStyle(
+                color: context.textMuted,
+                fontSize: 14,
               ),
             ),
           ],
         ),
+      );
+    }
+
+    return AnimationLimiter(
+      child: GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(2),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 2,
+          mainAxisSpacing: 2,
+        ),
+        itemCount: longVideos.length,
+        itemBuilder: (context, index) {
+          return AnimationConfiguration.staggeredGrid(
+            position: index,
+            duration: const Duration(milliseconds: 375),
+            columnCount: 3,
+            child: ScaleAnimation(
+              child: FadeInAnimation(
+                child: GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: context.surfaceColor,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(
+                          longVideos[index].thumbnailUrl ?? '',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: context.surfaceColor,
+                            );
+                          },
+                        ),
+                        Center(
+                          child: Icon(
+                            Icons.play_circle_filled,
+                            color: context.textPrimary,
+                            size: 32,
+                          ),
+                        ),
+                        if (longVideos[index].videoDuration != null)
+                          Positioned(
+                            bottom: 4,
+                            right: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.8),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                _formatDuration(longVideos[index].videoDuration!),
+                                style: TextStyle(
+                                  color: context.textPrimary,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildEmptyState({
-    required IconData icon,
-    required String title,
-    required String message,
-  }) {
+  Widget _buildSavedGrid() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -930,36 +843,33 @@ class _ProfileScreenState extends State<ProfileScreen>
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                color: ThemeHelper.getBorderColor(context),
+                color: context.borderColor,
                 width: 2,
               ),
             ),
             child: Icon(
-              icon,
+              Icons.bookmark_border,
               size: 40,
-              color: ThemeHelper.getTextMuted(context),
+              color: context.textMuted,
             ),
           ),
           const SizedBox(height: 16),
           Text(
-            title,
+            'Saved',
             style: TextStyle(
-              color: ThemeHelper.getTextPrimary(context), // Theme-aware text color
+              color: context.textPrimary,
               fontSize: 18,
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Text(
-              message,
-              style: TextStyle(
-                color: ThemeHelper.getTextMuted(context), // Theme-aware text color
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
+          Text(
+            'Save photos and videos that you want to see again.',
+            style: TextStyle(
+              color: context.textMuted,
+              fontSize: 14,
             ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -976,8 +886,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       builder: (context) => Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom + 
-                  MediaQuery.of(context).padding.bottom + 78, // Add bottom nav height + safe area
+          bottom: MediaQuery.of(context).viewInsets.bottom +
+              MediaQuery.of(context).padding.bottom + 78, // Add bottom nav height + safe area
         ),
         child: Container(
           padding: const EdgeInsets.all(20),
@@ -1003,50 +913,51 @@ class _ProfileScreenState extends State<ProfileScreen>
                   );
                 },
               ),
-            ListTile(
-              leading: Icon(
-                Icons.archive,
-                color: ThemeHelper.getAccentColor(context),
+              ListTile(
+                leading: Icon(
+                  Icons.archive,
+                  color: ThemeHelper.getAccentColor(context),
+                ),
+                title: Text(
+                  'Archive',
+                  style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('Archive feature coming soon'),
+                      backgroundColor: ThemeHelper.getAccentColor(context),
+                    ),
+                  );
+                },
               ),
-              title: Text(
-                'Archive',
-                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+              ListTile(
+                leading: Icon(
+                  Icons.qr_code,
+                  color: ThemeHelper.getAccentColor(context),
+                ),
+                title: Text(
+                  'QR Code',
+                  style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('QR Code feature coming soon'),
+                      backgroundColor: ThemeHelper.getAccentColor(context),
+                    ),
+                  );
+                },
               ),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Archive feature coming soon'),
-                    backgroundColor: ThemeHelper.getAccentColor(context),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.qr_code,
-                color: ThemeHelper.getAccentColor(context),
-              ),
-              title: Text(
-                'QR Code',
-                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('QR Code feature coming soon'),
-                    backgroundColor: ThemeHelper.getAccentColor(context),
-                  ),
-                );
-              },
-            ),
-          ],
-            ), // closes Column
-          ), // closes Container
-        ), // closes Padding
+            ],
+          ), // closes Column
+        ), // closes Container
+      ), // closes Padding
     ); // closes showModalBottomSheet
   }
+
 
   String _formatCount(int count) {
     if (count >= 1000000) {
@@ -1058,57 +969,37 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   String _formatDuration(Duration duration) {
-    final minutes = duration.inMinutes;
-    final seconds = duration.inSeconds % 60;
-    if (minutes > 0) {
-      return '${minutes}:${seconds.toString().padLeft(2, '0')}';
-    }
-    return '0:${seconds.toString().padLeft(2, '0')}';
-  }
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
 
-  Widget _buildTabWithStat({
-    required IconData icon,
-    required int count,
-    required bool isSelected,
-    required BuildContext context,
-  }) {
-    return Tab(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon),
-          const SizedBox(height: 4),
-          Text(
-            _formatCount(count),
-            style: TextStyle(
-              fontSize: 10,
-              color: isSelected
-                  ? ThemeHelper.getAccentColor(context)
-                  : ThemeHelper.getTextMuted(context),
-            ),
-          ),
-        ],
-      ),
-    );
+    if (hours > 0) {
+      return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 }
 
 // Custom delegate for sticky tab bar
 class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  final Widget child;
+  final TabBar tabBar;
 
-  _SliverAppBarDelegate(this.child);
-
-  @override
-  double get minExtent => 48;
+  _SliverAppBarDelegate(this.tabBar);
 
   @override
-  double get maxExtent => 48;
+  double get minExtent => tabBar.preferredSize.height;
+
+  @override
+  double get maxExtent => tabBar.preferredSize.height;
 
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return child;
+    return Container(
+      color: Colors.transparent,
+      child: tabBar,
+    );
   }
 
   @override
