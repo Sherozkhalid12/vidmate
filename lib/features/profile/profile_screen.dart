@@ -38,7 +38,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.initState();
     _user = widget.user ?? MockDataService.mockUsers[0];
     _isFollowing = _user.isFollowing;
-    _tabController = TabController(length: 4, vsync: this, initialIndex: 0);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
     _loadPosts();
   }
 
@@ -124,108 +124,72 @@ class _ProfileScreenState extends State<ProfileScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Profile info row
-                    Row(
-                      children: [
-                        // Profile picture
-                        Stack(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(3),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: _isFollowing
-                                    ? null
-                                    : LinearGradient(
-                                  colors: [
-                                    context.buttonColor.withOpacity(0.8),
-                                    context.buttonColor.withOpacity(0.6),
-                                  ],
-                                ),
+                    // Profile picture - centered
+                    Center(
+                      child: ClipOval(
+                        child: Image.network(
+                          _user.avatarUrl,
+                          width: 100,
+                          height: 100,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              width: 100,
+                              height: 100,
+                              color: context.surfaceColor,
+                              child: Icon(
+                                Icons.person,
+                                color: context.textSecondary,
+                                size: 50,
                               ),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: context.backgroundColor,
-                                ),
-                                padding: const EdgeInsets.all(2),
-                                child: ClipOval(
-                                  child: Image.network(
-                                    _user.avatarUrl,
-                                    width: 90,
-                                    height: 90,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Container(
-                                        width: 90,
-                                        height: 90,
-                                        color: context.surfaceColor,
-                                        child: Icon(
-                                          Icons.person,
-                                          color: context.textSecondary,
-                                          size: 45,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Username with verified badge - centered
+                    Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _user.username,
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
                             ),
-                            if (_user.isOnline)
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: Container(
-                                  width: 20,
-                                  height: 20,
-                                  decoration: BoxDecoration(
-                                    color: context.buttonColor,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: context.backgroundGradient.colors.first,
-                                      width: 3,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(width: 20),
-                        // Stats
-                        Expanded(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: [
-                              _buildStatColumn(_user.posts, 'posts'),
-                              _buildStatColumn(_user.followers, 'followers'),
-                              _buildStatColumn(_user.following, 'following'),
-                            ],
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.blue,
+                            ),
+                            child: const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
-                    // Username and bio
-                    Text(
-                      _user.displayName,
-                      style: TextStyle(
-                        color: context.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    // Stats - centered
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildStatColumn(_user.followers, "Follower's"),
+                        _buildStatColumn(_user.following, 'Following'),
+                        _buildStatColumn(_user.posts, 'Posts'),
+                      ],
                     ),
-                    if (_user.bio != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        _user.bio!,
-                        style: TextStyle(
-                          color: context.textPrimary,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 12),
-                    // Action buttons
+                    // Action buttons - ABOVE bio
                     Row(
                       children: [
                         Expanded(
@@ -300,7 +264,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                               padding: const EdgeInsets.symmetric(vertical: 8),
                             ),
                             child: Text(
-                              'Message',
+                              'Massage',
                               style: TextStyle(
                                 color: context.textPrimary,
                                 fontWeight: FontWeight.w600,
@@ -308,104 +272,36 @@ class _ProfileScreenState extends State<ProfileScreen>
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => EditProfileScreen(user: _user),
-                              ),
-                            );
-                          },
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(
-                              color: context.borderColor,
-                              width: 1,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            padding: const EdgeInsets.all(8),
-                            minimumSize: const Size(40, 40),
-                          ),
-                          child: Icon(
-                            Icons.person_add_outlined,
-                            color: context.textPrimary,
-                            size: 20,
-                          ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    // Highlights/Stories
-                    SizedBox(
-                      height: 90,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: 5,
-                        itemBuilder: (context, index) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 12),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 66,
-                                  height: 66,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        context.buttonColor.withOpacity(0.8),
-                                        context.buttonColor.withOpacity(0.6),
-                                      ],
-                                    ),
-                                  ),
-                                  padding: const EdgeInsets.all(2.5),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: context.backgroundColor,
-                                    ),
-                                    child: ClipOval(
-                                      child: Image.network(
-                                        'https://i.pravatar.cc/150?img=${index + 10}',
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return Container(
-                                            color: context.surfaceColor,
-                                            child: Icon(
-                                              Icons.add,
-                                              color: context.textSecondary,
-                                              size: 20,
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                SizedBox(
-                                  width: 66,
-                                  child: Text(
-                                    index == 0 ? 'New' : 'Story ${index}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: context.textSecondary,
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                    // Bio and link
+                    if (_user.bio != null) ...[
+                      Text(
+                        _user.bio!,
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
+                    ],
+                    // Link/Website if available
+                    if (_user.bio != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          const Text('🔗 '),
+                          Text(
+                            'Linktr.ee/${_user.username}',
+                            style: TextStyle(
+                              color: Colors.blue,
+                              fontSize: 14,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -420,10 +316,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                   labelColor: context.textPrimary,
                   unselectedLabelColor: context.textMuted,
                   tabs: const [
-                    Tab(icon: Icon(Icons.grid_on)),
-                    Tab(icon: Icon(Icons.play_circle_outline)),
-                    Tab(icon: Icon(Icons.video_library)),
-                    Tab(icon: Icon(Icons.bookmark_border)),
+                    Tab(text: 'Post.'),
+                    Tab(text: 'Reels.'),
+                    Tab(text: 'Long Videos'),
                   ],
                 ),
               ),
@@ -437,7 +332,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                   _buildPostsGrid(),
                   _buildReelsGrid(),
                   _buildLongVideosGrid(),
-                  _buildSavedGrid(),
                 ],
               ),
             ),

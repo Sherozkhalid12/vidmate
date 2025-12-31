@@ -85,3 +85,5 @@ import '../../core/utils/theme_helper.dart';  // Adjust path as needed
 
 All files follow the same pattern as the high-priority screens that were already refactored. Use `ThemeHelper.getAccentColor(context)` and `ThemeHelper.getAccentGradient(context)` consistently.
 
+
+

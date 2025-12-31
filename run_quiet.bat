@@ -10,3 +10,8 @@ set ANDROID_LOG_TAGS=*:E
 REM Run Flutter (batch files don't filter well, so we'll rely on app-level filtering)
 flutter run
 
+
+
+
+
+

@@ -1,20 +1,20 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:video_player/video_player.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
-import 'package:video_player/video_player.dart';
-import '../../core/theme/app_colors.dart';
-import '../../core/widgets/glass_card.dart';
+import '../../core/providers/video_player_provider.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
-import '../feed/comments_screen.dart';
 
-/// YouTube-style long-form video player
-class VideoPlayerScreen extends StatefulWidget {
+/// Long-form video player with Riverpod state management
+class VideoPlayerScreen extends ConsumerStatefulWidget {
   final String videoUrl;
   final String title;
   final UserModel author;
-  final PostModel? post; // Optional post for like/comment/share
+  final PostModel? post;
 
   const VideoPlayerScreen({
     super.key,
@@ -25,72 +25,65 @@ class VideoPlayerScreen extends StatefulWidget {
   });
 
   @override
-  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+  ConsumerState<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  late VideoPlayerController _controller;
-  bool _isPlaying = false;
-  bool _isInitialized = false;
-  Duration _duration = Duration.zero;
-  Duration _position = Duration.zero;
-  bool _showControls = true;
+class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   bool _isLiked = false;
   int _likeCount = 0;
   int _commentCount = 0;
-  String _selectedQuality = '1080p'; // Default quality
-  bool _isMiniPlayer = false;
+  Timer? _controlsTimer;
 
   @override
   void initState() {
     super.initState();
-    _initializePlayer();
     if (widget.post != null) {
       _isLiked = widget.post!.isLiked;
       _likeCount = widget.post!.likes;
       _commentCount = widget.post!.comments;
     }
+    _startControlsTimer();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controlsTimer?.cancel();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
-  void _initializePlayer() {
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
-    _controller.initialize().then((_) {
-      setState(() {
-        _isInitialized = true;
-        _duration = _controller.value.duration;
-        _isPlaying = _controller.value.isPlaying;
-      });
-      _controller.addListener(_videoListener);
-      _controller.play();
+  void _startControlsTimer() {
+    _controlsTimer?.cancel();
+    _controlsTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        ref.read(videoPlayerProvider(widget.videoUrl).notifier).toggleControls();
+      }
     });
   }
 
-  void _videoListener() {
-    if (mounted) {
-      setState(() {
-        _position = _controller.value.position;
-        _isPlaying = _controller.value.isPlaying;
-      });
+  void _toggleFullscreen() {
+    final notifier = ref.read(videoPlayerProvider(widget.videoUrl).notifier);
+    notifier.toggleFullscreen();
+    
+    final state = ref.read(videoPlayerProvider(widget.videoUrl));
+    if (state.isFullscreen) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+    } else {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
   }
-
-  void _togglePlayPause() {
-    setState(() {
-      if (_isPlaying) {
-        _controller.pause();
-      } else {
-        _controller.play();
-      }
-      _isPlaying = !_isPlaying;
-    });
-  }
-
 
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -106,32 +99,90 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final playerState = ref.watch(videoPlayerProvider(widget.videoUrl));
+    final notifier = ref.read(videoPlayerProvider(widget.videoUrl).notifier);
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: GestureDetector(
           onTap: () {
-            setState(() {
-              _showControls = !_showControls;
-            });
+            notifier.toggleControls();
+            _startControlsTimer();
+          },
+          onDoubleTapDown: (details) {
+            final screenWidth = MediaQuery.of(context).size.width;
+            if (details.localPosition.dx < screenWidth / 2) {
+              notifier.seekBackward();
+            } else {
+              notifier.seekForward();
+            }
+            _startControlsTimer();
           },
           child: Stack(
             children: [
               // Video player
               Center(
-                child: _isInitialized
+                child: playerState.isInitialized && playerState.controller != null
                     ? AspectRatio(
-                        aspectRatio: _controller.value.aspectRatio,
-                        child: VideoPlayer(_controller),
+                        aspectRatio: playerState.controller!.value.aspectRatio,
+                        child: VideoPlayer(playerState.controller!),
                       )
                     : Center(
                         child: CircularProgressIndicator(
-                          color: Theme.of(context).colorScheme.primary, // Theme-aware loading indicator
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
               ),
+              
+              // Minimal title at top (only in fullscreen)
+              if (playerState.isFullscreen && playerState.showControls)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.7),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back, color: Colors.white),
+                            onPressed: () {
+                              _toggleFullscreen();
+                              Navigator.pop(context);
+                            },
+                          ),
+                          Expanded(
+                            child: Text(
+                              '${widget.title} - ${widget.author.displayName}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
               // Controls overlay
-              if (_showControls)
+              if (playerState.showControls)
                 Positioned(
                   bottom: 0,
                   left: 0,
@@ -151,14 +202,39 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Progress bar
-                        VideoProgressIndicator(
-                          _controller,
-                          allowScrubbing: true,
-                          colors: VideoProgressColors(
-                            playedColor: Theme.of(context).colorScheme.primary, // Theme-aware progress color
-                            bufferedColor: context.textMuted,
-                            backgroundColor: context.surfaceColor,
+                        // Draggable Progress bar
+                        GestureDetector(
+                          onHorizontalDragStart: (_) {
+                            notifier.toggleControls();
+                            _startControlsTimer();
+                          },
+                          onHorizontalDragUpdate: (details) {
+                            if (!playerState.isInitialized) return;
+                            final box = context.findRenderObject() as RenderBox?;
+                            if (box == null) return;
+                            final dragPosition = details.localPosition.dx;
+                            final totalWidth = box.size.width;
+                            final progress = (dragPosition / totalWidth).clamp(0.0, 1.0);
+                            final targetPosition = Duration(
+                              milliseconds: (playerState.duration.inMilliseconds * progress).round(),
+                            );
+                            notifier.seekTo(targetPosition);
+                          },
+                          onHorizontalDragEnd: (_) {
+                            _startControlsTimer();
+                          },
+                          child: Stack(
+                            children: [
+                              VideoProgressIndicator(
+                                playerState.controller!,
+                                allowScrubbing: true,
+                                colors: VideoProgressColors(
+                                  playedColor: Theme.of(context).colorScheme.primary,
+                                  bufferedColor: context.textMuted,
+                                  backgroundColor: context.surfaceColor,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -166,7 +242,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         Row(
                           children: [
                             Text(
-                              _formatDuration(_position),
+                              _formatDuration(playerState.position),
                               style: TextStyle(
                                 color: context.textPrimary,
                                 fontSize: 12,
@@ -175,58 +251,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             const Spacer(),
                             IconButton(
                               icon: Icon(
-                                _isPlaying ? Icons.pause : Icons.play_arrow,
-                                color: context.textPrimary,
-                              ),
-                              onPressed: _togglePlayPause,
-                            ),
-                            // Quality selector
-                            PopupMenuButton<String>(
-                              icon: Icon(
-                                Icons.high_quality,
-                                color: context.textPrimary,
-                              ),
-                              onSelected: (quality) {
-                                setState(() {
-                                  _selectedQuality = quality;
-                                });
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Quality changed to $quality'),
-                                    backgroundColor: Theme.of(context).colorScheme.primary,
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: '1080p',
-                                  child: Text('1080p HD'),
-                                ),
-                                const PopupMenuItem(
-                                  value: '720p',
-                                  child: Text('720p HD'),
-                                ),
-                                const PopupMenuItem(
-                                  value: '480p',
-                                  child: Text('480p SD'),
-                                ),
-                              ],
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                _isMiniPlayer ? Icons.fullscreen : Icons.fullscreen_exit,
+                                playerState.isPlaying ? Icons.pause : Icons.play_arrow,
                                 color: context.textPrimary,
                               ),
                               onPressed: () {
-                                setState(() {
-                                  _isMiniPlayer = !_isMiniPlayer;
-                                });
+                                notifier.togglePlayPause();
+                                _startControlsTimer();
+                              },
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                playerState.isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                                color: context.textPrimary,
+                              ),
+                              onPressed: () {
+                                _toggleFullscreen();
+                                _startControlsTimer();
                               },
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _formatDuration(_duration),
+                              _formatDuration(playerState.duration),
                               style: TextStyle(
                                 color: context.textPrimary,
                                 fontSize: 12,
@@ -238,8 +283,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     ),
                   ),
                 ),
-              // Top bar
-              if (_showControls)
+              
+              // Top bar (only in portrait mode)
+              if (!playerState.isFullscreen && playerState.showControls)
                 Positioned(
                   top: 0,
                   left: 0,
@@ -248,236 +294,73 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     backgroundColor: Colors.transparent,
                     elevation: 0,
                     leading: IconButton(
-                      icon: Icon(Icons.arrow_back),
+                      icon: const Icon(Icons.arrow_back),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    actions: [
-                      IconButton(
-                        icon: Icon(Icons.more_vert),
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            backgroundColor: context.secondaryBackgroundColor,
-                            builder: (context) => Container(
-                              padding: const EdgeInsets.all(20),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  ListTile(
-                                    leading: Icon(
-                                      Icons.share,
-                                      color: Theme.of(context).colorScheme.primary, // Theme-aware icon color
-                                    ),
-                                    title: Text('Share', style: TextStyle(color: context.textPrimary)),
-                                    onTap: () {
-                                      Navigator.pop(context);
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('Share feature coming soon'),
-                                          backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  ListTile(
-                                    leading: Icon(
-                                      Icons.download,
-                                      color: Theme.of(context).colorScheme.primary, // Theme-aware icon color
-                                    ),
-                                    title: Text('Download', style: TextStyle(color: context.textPrimary)),
-                                    onTap: () {
-                                      Navigator.pop(context);
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('Download feature coming soon'),
-                                          backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  ListTile(
-                                    leading: Icon(Icons.report, color: AppColors.warning),
-                                    title: Text('Report', style: TextStyle(color: context.textPrimary)),
-                                    onTap: () {
-                                      Navigator.pop(context);
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('Report feature coming soon'),
-                                          backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
                   ),
                 ),
-              // Video info card
-              if (_showControls)
+
+              // Video info card (only in portrait mode, not fullscreen)
+              if (!playerState.isFullscreen && playerState.showControls)
                 Positioned(
                   bottom: 120,
                   left: 0,
                   right: 0,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: GlassCard(
-                      padding: const EdgeInsets.all(16),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.title,
-                            style: TextStyle(
-                              color: context.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              ClipOval(
-                                child: CachedNetworkImage(
-                                  imageUrl: widget.author.avatarUrl,
-                                  width: 40,
-                                  height: 40,
-                                  fit: BoxFit.cover,
-                                  placeholder: (context, url) => Container(
-                                    width: 40,
-                                    height: 40,
-                                    color: context.surfaceColor,
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Theme.of(context).colorScheme.primary, // Theme-aware loading indicator
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  errorWidget: (context, url, error) => Container(
-                                    width: 40,
-                                    height: 40,
-                                    color: context.surfaceColor,
-                                    child: Icon(
-                                      Icons.person,
-                                      color: context.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      widget.author.displayName,
-                                      style: TextStyle(
-                                        color: context.textPrimary,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${_formatCount(widget.author.followers)} subscribers',
-                                      style: TextStyle(
-                                        color: context.textSecondary,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Theme.of(context).colorScheme.primary,
-                                      Theme.of(context).colorScheme.primary.withOpacity(0.8),
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  'Subscribe',
-                                  style: TextStyle(
-                                    color: context.textPrimary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.author.displayName,
+                          style: TextStyle(
+                            color: context.textSecondary,
+                            fontSize: 14,
                           ),
-                          // Like, Comment, Share buttons
-                          if (widget.post != null) ...[
-                            const SizedBox(height: 16),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                _buildActionButton(
-                                  icon: _isLiked ? Icons.favorite : Icons.favorite_border,
-                                  label: _formatCount(_likeCount),
-                                  color: _isLiked ? AppColors.warning : context.textPrimary,
-                                  onTap: () {
-                                    setState(() {
-                                      _isLiked = !_isLiked;
-                                      _likeCount += _isLiked ? 1 : -1;
-                                      _likeCount = _likeCount.clamp(0, double.infinity).toInt();
-                                    });
-                                  },
-                                ),
-                                _buildActionButton(
-                                  icon: Icons.comment_outlined,
-                                  label: _formatCount(_commentCount),
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => CommentsScreen(
-                                          postId: widget.post!.id,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                                _buildActionButton(
-                                  icon: Icons.share_outlined,
-                                  label: 'Share',
-                                  onTap: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: const Text('Share feature coming soon'),
-                                        backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
-                                        behavior: SnackBarBehavior.floating,
-                                        margin: const EdgeInsets.all(16),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // Seek indicator overlay
+              if (playerState.showSeekIndicator)
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          playerState.seekDirection == 'forward'
+                              ? Icons.forward_10
+                              : Icons.replay_10,
+                          color: Colors.white,
+                          size: 32,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          _formatDuration(playerState.seekTarget),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -487,54 +370,4 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       ),
     );
   }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    Color? color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: context.surfaceColor,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: context.borderColor,
-                width: 1,
-              ),
-            ),
-            child: Icon(
-              icon,
-              color: color ?? context.textPrimary,
-              size: 24,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: context.textSecondary,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatCount(int count) {
-    if (count >= 1000000) {
-      return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
-      return '${(count / 1000).toStringAsFixed(1)}K';
-    }
-    return count.toString();
-  }
 }
-

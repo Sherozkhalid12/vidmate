@@ -202,3 +202,5 @@ For bulk replacements in remaining files:
 
 The pattern is consistent: replace hardcoded accent colors with `Theme.of(context).colorScheme.primary` and use `ThemeHelper` methods for text/surface colors.
 
+
+

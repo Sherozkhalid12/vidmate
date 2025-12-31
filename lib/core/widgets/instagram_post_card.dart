@@ -37,7 +37,6 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
     );
   }
 
-
   String _formatCount(int count) {
     if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
     if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
@@ -65,342 +64,309 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
     super.dispose();
   }
 
-
-
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return Container(
-      margin:  EdgeInsets.only(bottom: 16, left: 16, right: 16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            decoration: BoxDecoration(
-              color: isDark
-                  ? AppColors.glassSurface
-                  : AppColors.lightGlassSurfaceMedium,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+      margin: const EdgeInsets.only(bottom: 16),
+      color: ThemeHelper.getBackgroundColor(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header - Instagram style
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
               children: [
-                // Header — clean modern style (no follow button)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                  child: Row(
-                    children: [
-                      // Clickable profile section
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ProfileScreen(user: widget.post.author),
-                            ),
-                          );
-                        },
-                        child: Row(
-                          children: [
-                            ClipOval(
-                              child: CachedNetworkImage(
-                                imageUrl: widget.post.author.avatarUrl,
-                                width: 40,
-                                height: 40,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Container(
-                                  width: 40,
-                                  height: 40,
-                                  color: ThemeHelper.getSurfaceColor(context),
-                                ),
-                                errorWidget: (context, url, error) => Icon(
-                                  CupertinoIcons.person_crop_circle,
-                                  size: 40,
-                                  color: ThemeHelper.getTextSecondary(context),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      widget.post.author.username,
-                                      style: TextStyle(
-                                        color: ThemeHelper.getTextPrimary(context),
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Text('🇮🇳', style: TextStyle(fontSize: 14)), // Flag emoji
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      _formatTimeAgo(widget.post.createdAt),
-                                      style: TextStyle(
-                                        color: ThemeHelper.getTextSecondary(context),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Icon(
-                                      Icons.verified,
-                                      size: 14,
-                                      color: ThemeHelper.getAccentColor(context),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ],
+                // Profile picture
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProfileScreen(user: widget.post.author),
+                      ),
+                    );
+                  },
+                  child: ClipOval(
+                    child: CachedNetworkImage(
+                      imageUrl: widget.post.author.avatarUrl,
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        width: 32,
+                        height: 32,
+                        color: ThemeHelper.getSurfaceColor(context),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        width: 32,
+                        height: 32,
+                        color: ThemeHelper.getSurfaceColor(context),
+                        child: Icon(
+                          CupertinoIcons.person_crop_circle,
+                          size: 32,
+                          color: ThemeHelper.getTextSecondary(context),
                         ),
                       ),
-                      const Spacer(),
-                      // Follow button
-                      if (!widget.post.author.isFollowing)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: ThemeHelper.getAccentColor(context),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Follow',
-                            style: TextStyle(
-                              color: ThemeHelper.getOnAccentColor(context),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: () => _showMoreMenu(context),
-                          child: Icon(
-                            CupertinoIcons.ellipsis_vertical,
-                            color: ThemeHelper.getTextPrimary(context),
-                            size: 22,
-                          ),
-                        ),
-                    ],
+                    ),
                   ),
                 ),
-
-
-                // Media + modern overlay stack (actions + caption directly on the image)
-                AspectRatio(
-                  aspectRatio: 1 / 1, // Square like older version (or change to 1/1.1 if preferred)
-                  child: Stack(
-                    children: [
-                      _buildMediaBackground(),
-
-                      // Video play icon
-                      if (widget.post.isVideo)
-                        Center(
-                          child: Icon(
-                            CupertinoIcons.play_circle_fill,
-                            size: 70,
-                            color: Colors.white.withOpacity(0.9),
+                const SizedBox(width: 12),
+                // Username and time
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ProfileScreen(user: widget.post.author),
+                        ),
+                      );
+                    },
+                    child: Row(
+                      children: [
+                        Text(
+                          widget.post.author.username,
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-
-                      // Bottom overlay: modern Instagram actions + caption with shadow
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.transparent,
-                                Colors.black.withOpacity(0.4),
-                              ],
-                              stops: const [0.0, 1.0],
-                            ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.verified,
+                          size: 12,
+                          color: ThemeHelper.getAccentColor(context),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '• ${_formatTimeAgo(widget.post.createdAt)}',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextSecondary(context),
+                            fontSize: 12,
                           ),
-                          child:                       Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Engagement row - likes with share icon on left, comment and save on right
-                                Row(
-                                  children: [
-                                    // Left side - likes and share
-                                    GestureDetector(
-                                      onTap: () {
-                                        setState(() {
-                                          _isLiked = !_isLiked;
-                                          if (_isLiked) _likeAnimationController.forward(from: 0);
-                                        });
-                                      },
-                                      child: Row(
-                                        children: [
-                                          Text(
-                                            _formatCount((_isLiked ? 1 : 0) + widget.post.likes),
-                                            style: TextStyle(
-                                              color: ThemeHelper.getTextPrimary(context),
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Icon(
-                                            Icons.share_outlined,
-                                            size: 16,
-                                            color: ThemeHelper.getTextSecondary(context),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    // Right side - comment and save
-                                    Row(
-                                      children: [
-                                        GestureDetector(
-                                          onTap: () {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) => CommentsScreen(postId: widget.post.id),
-                                              ),
-                                            );
-                                          },
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                CupertinoIcons.bubble_left_bubble_right,
-                                                size: 20,
-                                                color: ThemeHelper.getTextSecondary(context),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                _formatCount(widget.post.comments),
-                                                style: TextStyle(
-                                                  color: ThemeHelper.getTextSecondary(context),
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16),
-                                        GestureDetector(
-                                          onTap: () => setState(() => _isSaved = !_isSaved),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                _isSaved ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
-                                                size: 20,
-                                                color: _isSaved
-                                                    ? Colors.amber
-                                                    : ThemeHelper.getTextSecondary(context),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                _formatCount(_isSaved ? 145 : 1),
-                                                style: TextStyle(
-                                                  color: ThemeHelper.getTextSecondary(context),
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-
-                                const SizedBox(height: 12),
-
-                                // Caption below engagement
-                                RichText(
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                  text: TextSpan(
-                                    style: TextStyle(
-                                      color: ThemeHelper.getTextPrimary(context),
-                                      fontSize: 14,
-                                      height: 1.4,
-                                    ),
-                                    children: [
-                                      TextSpan(
-                                        text: widget.post.caption,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Follow button (keep in same position)
+                if (!widget.post.author.isFollowing)
+                  GestureDetector(
+                    onTap: () {
+                      // Handle follow action
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: ThemeHelper.getAccentColor(context),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Follow',
+                        style: TextStyle(
+                          color: ThemeHelper.getOnAccentColor(context),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ],
+                    ),
+                  )
+                else
+                  GestureDetector(
+                    onTap: () => _showMoreMenu(context),
+                    child: Icon(
+                      CupertinoIcons.ellipsis,
+                      color: ThemeHelper.getTextPrimary(context),
+                      size: 20,
+                    ),
                   ),
+              ],
+            ),
+          ),
+
+          // Media - Full width square image
+          GestureDetector(
+            onDoubleTap: () {
+              setState(() {
+                _isLiked = !_isLiked;
+                if (_isLiked) _likeAnimationController.forward(from: 0);
+              });
+            },
+            child: AspectRatio(
+              aspectRatio: 1.0,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CachedNetworkImage(
+                    imageUrl: widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '',
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                    placeholder: (context, url) => Container(
+                      color: ThemeHelper.getSurfaceColor(context),
+                      child: Center(
+                        child: CupertinoActivityIndicator(
+                          color: ThemeHelper.getTextSecondary(context),
+                        ),
+                      ),
+                    ),
+                    errorWidget: (context, url, error) => Container(
+                      color: ThemeHelper.getSurfaceColor(context),
+                      child: Center(
+                        child: Icon(
+                          CupertinoIcons.exclamationmark_triangle_fill,
+                          color: ThemeHelper.getTextSecondary(context),
+                          size: 48,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Video play icon overlay
+                  if (widget.post.isVideo)
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          CupertinoIcons.play_fill,
+                          color: Colors.white,
+                          size: 40,
+                        ),
+                      ),
+                    ),
+                  // Like animation overlay
+                  if (_isLiked)
+                    Center(
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.8, end: 1.2).animate(
+                          CurvedAnimation(
+                            parent: _likeAnimationController,
+                            curve: Curves.elasticOut,
+                          ),
+                        ),
+                        child: Icon(
+                          CupertinoIcons.heart_fill,
+                          color: Colors.red,
+                          size: 80,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+
+          // Actions row - Like/Comment/Share on RIGHT side
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                const Spacer(),
+                // Right side actions - Like, Comment, Share
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isLiked = !_isLiked;
+                      if (_isLiked) _likeAnimationController.forward(from: 0);
+                    });
+                  },
+                  child: Icon(
+                    _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
+                    size: 28,
+                    color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => CommentsScreen(postId: widget.post.id),
+                      ),
+                    );
+                  },
+                  child: Icon(
+                    CupertinoIcons.chat_bubble,
+                    size: 28,
+                    color: ThemeHelper.getTextPrimary(context),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Icon(
+                  CupertinoIcons.paperplane,
+                  size: 28,
+                  color: ThemeHelper.getTextPrimary(context),
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
 
-  Widget _buildMediaBackground() {
-    return CachedNetworkImage(
-      imageUrl: widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '',
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-      placeholder: (context, url) => Center(
-        child: CupertinoActivityIndicator(
-          color: ThemeHelper.getTextSecondary(context),
-        ),
-      ),
-      errorWidget: (context, url, error) => Center(
-        child: Icon(
-          CupertinoIcons.exclamationmark_triangle_fill,
-          color: Colors.white,
-          size: 60,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOverlayAction({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: color,
-            size: 26,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+          // Likes count
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              '${_formatCount((_isLiked ? 1 : 0) + widget.post.likes)} likes',
+              style: TextStyle(
+                color: ThemeHelper.getTextPrimary(context),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
+
+          const SizedBox(height: 4),
+
+          // Caption
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: RichText(
+              text: TextSpan(
+                style: TextStyle(
+                  color: ThemeHelper.getTextPrimary(context),
+                  fontSize: 14,
+                ),
+                children: [
+                  TextSpan(
+                    text: '${widget.post.author.username} ',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  TextSpan(text: widget.post.caption),
+                ],
+              ),
+            ),
+          ),
+
+          // View all comments
+          if (widget.post.comments > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CommentsScreen(postId: widget.post.id),
+                    ),
+                  );
+                },
+                child: Text(
+                  'View all ${_formatCount(widget.post.comments)} comments',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextSecondary(context),
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -420,8 +386,14 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
               },
               child: const Text('Delete'),
             ),
-          CupertinoActionSheetAction(child: const Text('Report'), onPressed: () => Navigator.pop(context)),
-          CupertinoActionSheetAction(child: const Text('Copy Link'), onPressed: () => Navigator.pop(context)),
+          CupertinoActionSheetAction(
+            child: const Text('Report'),
+            onPressed: () => Navigator.pop(context),
+          ),
+          CupertinoActionSheetAction(
+            child: const Text('Copy Link'),
+            onPressed: () => Navigator.pop(context),
+          ),
         ],
         cancelButton: CupertinoActionSheetAction(
           child: const Text('Cancel'),

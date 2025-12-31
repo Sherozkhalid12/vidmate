@@ -289,8 +289,9 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
         likes: post.likes,
         comments: post.comments,
         duration: post.videoDuration,
+        videoUrl: post.videoUrl,
         onTap: () {
-          if (post.isVideo) {
+          if (post.isVideo && post.videoUrl != null) {
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -308,4 +309,7 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
     );
   }
 }
+
+
+
 

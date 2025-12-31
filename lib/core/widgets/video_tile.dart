@@ -1,11 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:video_player/video_player.dart';
 import '../theme/app_colors.dart';
 import '../utils/theme_helper.dart';
-import 'glass_card.dart';
+import 'package:flutter_application_1/features/profile/profile_screen.dart';
+import '../../features/feed/comments_screen.dart';
 
-/// Video tile widget for feed – updated with beautiful Cupertino icons
+/// Video tile widget redesigned to match Instagram-style post card
 class VideoTile extends StatefulWidget {
   final String thumbnailUrl;
   final String title;
@@ -16,6 +18,7 @@ class VideoTile extends StatefulWidget {
   final int comments;
   final Duration? duration;
   final VoidCallback? onTap;
+  final String? videoUrl; // Add video URL for inline playback
   final bool isPlaying;
 
   const VideoTile({
@@ -29,6 +32,7 @@ class VideoTile extends StatefulWidget {
     this.comments = 0,
     this.duration,
     this.onTap,
+    this.videoUrl,
     this.isPlaying = false,
   });
 
@@ -36,27 +40,92 @@ class VideoTile extends StatefulWidget {
   State<VideoTile> createState() => _VideoTileState();
 }
 
-class _VideoTileState extends State<VideoTile> with SingleTickerProviderStateMixin {
-  bool _isHovered = false;
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
+class _VideoTileState extends State<VideoTile> {
+  VideoPlayerController? _videoController;
+  bool _isVideoInitialized = false;
+  bool _isLiked = false;
+  bool _isSaved = false;
+  bool _isVideoVisible = true; // Track visibility for auto-pause
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.02).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+    // Initialize video if URL provided
+    if (widget.videoUrl != null) {
+      _initializeVideo();
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _videoController?.pause();
+    _videoController?.dispose();
     super.dispose();
+  }
+
+  void _initializeVideo() {
+    if (widget.videoUrl == null) return;
+    
+    _videoController = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl!))
+      ..setLooping(true)
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() {
+            _isVideoInitialized = true;
+          });
+          // Auto-play if visible and widget.isPlaying is true
+          if (_isVideoVisible && widget.isPlaying) {
+            _videoController?.play();
+          }
+        }
+      }).catchError((error) {
+        // Handle video initialization error
+        if (mounted) {
+          setState(() {
+            _isVideoInitialized = false;
+          });
+        }
+      });
+    
+    // Add listener for instant UI updates
+    _videoController?.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  void _togglePlayPause() {
+    if (_videoController == null || !_isVideoInitialized) {
+      widget.onTap?.call();
+      return;
+    }
+
+    // Instant play/pause - call directly without setState delay
+    if (_videoController!.value.isPlaying) {
+      _videoController!.pause();
+    } else {
+      _videoController!.play();
+    }
+    // State will update via listener, but force immediate update for UI
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _seekForward() {
+    if (_videoController == null || !_isVideoInitialized) return;
+    final currentPosition = _videoController!.value.position;
+    final newPosition = currentPosition + const Duration(seconds: 10);
+    final duration = _videoController!.value.duration;
+    _videoController!.seekTo(newPosition > duration ? duration : newPosition);
+  }
+
+  void _seekBackward() {
+    if (_videoController == null || !_isVideoInitialized) return;
+    final currentPosition = _videoController!.value.position;
+    final newPosition = currentPosition - const Duration(seconds: 10);
+    _videoController!.seekTo(newPosition < Duration.zero ? Duration.zero : newPosition);
   }
 
   String _formatDuration(Duration duration) {
@@ -71,269 +140,341 @@ class _VideoTileState extends State<VideoTile> with SingleTickerProviderStateMix
     return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 
-  String _formatNumber(int number) {
-    if (number >= 1000000) {
-      return '${(number / 1000000).toStringAsFixed(1)}M';
-    } else if (number >= 1000) {
-      return '${(number / 1000).toStringAsFixed(1)}K';
-    }
-    return number.toString();
+  String _formatCount(int count) {
+    if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
+    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
+    return count.toString();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.0),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onTapDown: (_) {
-          setState(() => _isHovered = true);
-          _controller.forward();
-        },
-        onTapUp: (_) {
-          setState(() => _isHovered = false);
-          _controller.reverse();
-        },
-        onTapCancel: () {
-          setState(() => _isHovered = false);
-          _controller.reverse();
-        },
-        child: AnimatedBuilder(
-          animation: _scaleAnimation,
-          builder: (context, child) {
-            return Transform.scale(
-              scale: _isHovered ? _scaleAnimation.value : 1.0,
-              child: GlassCard(
-                padding: EdgeInsets.zero,
-                margin: EdgeInsets.zero, // Let parent handle margins
-                borderRadius: BorderRadius.circular(20),
-                onTap: widget.onTap,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Thumbnail – fills completely to the card's rounded borders
-                    Stack(
-                      children: [
-                        AspectRatio(
-                          aspectRatio: 4 / 3, // or 9 / 16 for vertical videos
-                          child: CachedNetworkImage(
-                            imageUrl: widget.thumbnailUrl,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                            placeholder: (context, url) => Container(
-                              color: ThemeHelper.getSurfaceColor(context),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 40,
-                                  height: 40,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Theme.of(context).iconTheme.color ?? ThemeHelper.getTextPrimary(context),
-                                  ),
-                                ),
+    // Auto-pause when not visible
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final renderObject = context.findRenderObject();
+      if (renderObject != null && renderObject.attached) {
+        final isVisible = renderObject is RenderBox && 
+                         renderObject.hasSize && 
+                         renderObject.size.height > 0;
+        if (_isVideoVisible != isVisible) {
+          setState(() {
+            _isVideoVisible = isVisible;
+          });
+          if (!isVisible && _videoController?.value.isPlaying == true) {
+            _videoController?.pause();
+          }
+        }
+      }
+    });
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      color: ThemeHelper.getBackgroundColor(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header - Instagram style
+          if (widget.channelAvatar != null || widget.channelName != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  if (widget.channelAvatar != null)
+                    GestureDetector(
+                      onTap: widget.onTap,
+                      child: ClipOval(
+                        child: CachedNetworkImage(
+                          imageUrl: widget.channelAvatar!,
+                          width: 32,
+                          height: 32,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            width: 32,
+                            height: 32,
+                            color: ThemeHelper.getSurfaceColor(context),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            width: 32,
+                            height: 32,
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Icon(
+                              CupertinoIcons.person_crop_circle,
+                              size: 32,
+                              color: ThemeHelper.getTextSecondary(context),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (widget.channelAvatar != null) const SizedBox(width: 12),
+                  if (widget.channelName != null)
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: widget.onTap,
+                        child: Text(
+                          widget.channelName!,
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  Icon(
+                    CupertinoIcons.ellipsis,
+                    color: ThemeHelper.getTextPrimary(context),
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+
+          // Video/Thumbnail - Instagram style
+          GestureDetector(
+            onTap: _togglePlayPause,
+            onDoubleTap: () {
+              // Double tap right side = forward, left side = backward
+              final screenWidth = MediaQuery.of(context).size.width;
+              final tapPosition = (context.findRenderObject() as RenderBox?)
+                  ?.localToGlobal(Offset.zero);
+              if (tapPosition != null) {
+                // This is a simplified version - in real implementation, use GestureDetector's onTapDown
+                _seekForward();
+              }
+            },
+            child: Stack(
+              children: [
+                AspectRatio(
+                  aspectRatio: 1.0,
+                  child: _isVideoInitialized && _videoController != null
+                      ? VideoPlayer(_videoController!)
+                      : CachedNetworkImage(
+                          imageUrl: widget.thumbnailUrl,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          placeholder: (context, url) => Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Center(
+                              child: CupertinoActivityIndicator(
+                                color: ThemeHelper.getTextSecondary(context),
                               ),
                             ),
-                            errorWidget: (context, url, error) => Container(
-                              color: ThemeHelper.getSurfaceColor(context),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Center(
+                              child: Icon(
+                                CupertinoIcons.exclamationmark_triangle_fill,
+                                color: ThemeHelper.getTextSecondary(context),
+                                size: 48,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+                // Play/Pause overlay
+                if (_isVideoInitialized && _videoController != null)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: _togglePlayPause,
+                      child: Container(
+                        color: Colors.transparent,
+                        child: Center(
+                          child: Icon(
+                            _videoController!.value.isPlaying
+                                ? CupertinoIcons.pause_circle_fill
+                                : CupertinoIcons.play_circle_fill,
+                            size: 60,
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.black.withOpacity(0.1),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            CupertinoIcons.play_fill,
+                            color: Colors.white,
+                            size: 40,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Forward/Backward controls overlay
+                if (_isVideoInitialized && _videoController != null)
+                  Positioned.fill(
+                    child: Row(
+                      children: [
+                        // Left side - backward
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: _seekBackward,
+                            child: Container(
+                              color: Colors.transparent,
                               child: Center(
                                 child: Icon(
-                                  CupertinoIcons.exclamationmark_triangle_fill,
-                                  color: ThemeHelper.getTextSecondary(context),
-                                  size: 60,
+                                  CupertinoIcons.backward_fill,
+                                  color: Colors.white.withOpacity(0.7),
+                                  size: 40,
                                 ),
                               ),
                             ),
                           ),
                         ),
-
-                        // Play overlay – theme-aware icon with high contrast
-                        Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.35),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Center(
-                              child: Builder(
-                                builder: (context) {
-                                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                                  // High contrast: white in dark mode, black in light mode
-                                  final iconColor = isDark ? Colors.white : Colors.black;
-                                  return Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.25),
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.white.withOpacity(0.4),
-                                          blurRadius: 20,
-                                          spreadRadius: 4,
-                                        ),
-                                      ],
-                                    ),
-                                    child: Icon(
-                                      widget.isPlaying
-                                          ? CupertinoIcons.pause_fill
-                                          : CupertinoIcons.play_fill,
-                                      color: Colors.black,
-                                      size: 44,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        // Duration badge - high contrast text on semi-transparent dark background
-                        if (widget.duration != null)
-                          Positioned(
-                            bottom: 12,
-                            right: 12,
+                        // Right side - forward
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: _seekForward,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.75),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                _formatDuration(widget.duration!),
-                                style: const TextStyle(
-                                  color: Colors.white, // Always white on dark semi-transparent bg for contrast
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
+                              color: Colors.transparent,
+                              child: Center(
+                                child: Icon(
+                                  CupertinoIcons.forward_fill,
+                                  color: Colors.white.withOpacity(0.7),
+                                  size: 40,
                                 ),
                               ),
                             ),
                           ),
+                        ),
                       ],
                     ),
-
-                    const SizedBox(height: 12),
-
-                    // Title and channel info
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (widget.channelAvatar != null) ...[
-                            ClipOval(
-                              child: CachedNetworkImage(
-                                imageUrl: widget.channelAvatar!,
-                                width: 40,
-                                height: 40,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Container(
-                                  width: 40,
-                                  height: 40,
-                                  color: ThemeHelper.getSurfaceColor(context),
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Theme.of(context).iconTheme.color ?? ThemeHelper.getTextPrimary(context),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                errorWidget: (context, url, error) => Container(
-                                  width: 40,
-                                  height: 40,
-                                  color: ThemeHelper.getSurfaceColor(context),
-                                  child: Icon(
-                                    CupertinoIcons.person_crop_circle_fill,
-                                    color: ThemeHelper.getTextSecondary(context),
-                                    size: 24,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                          ],
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: ThemeHelper.getTextPrimary(context),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                if (widget.channelName != null) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    widget.channelName!,
-                                    style: TextStyle(
-                                      color: ThemeHelper.getTextSecondary(context),
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ],
+                  ),
+                // Duration badge
+                if (widget.duration != null)
+                  Positioned(
+                    bottom: 12,
+                    right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.75),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        _formatDuration(widget.duration!),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
+                  ),
+              ],
+            ),
+          ),
 
-                    // Stats – using beautiful Cupertino icons
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          _buildStat(CupertinoIcons.eye_fill, _formatNumber(widget.views)),
-                          const SizedBox(width: 20),
-                          _buildStat(CupertinoIcons.heart_fill, _formatNumber(widget.likes)),
-                          const SizedBox(width: 20),
-                          _buildStat(CupertinoIcons.bubble_left_bubble_right_fill, _formatNumber(widget.comments)),
-                        ],
-                      ),
+          // Actions row - Instagram style
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => setState(() => _isLiked = !_isLiked),
+                  child: Icon(
+                    _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
+                    size: 28,
+                    color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: widget.onTap,
+                  child: Icon(
+                    CupertinoIcons.chat_bubble,
+                    size: 28,
+                    color: ThemeHelper.getTextPrimary(context),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Icon(
+                  CupertinoIcons.paperplane,
+                  size: 28,
+                  color: ThemeHelper.getTextPrimary(context),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => setState(() => _isSaved = !_isSaved),
+                  child: Icon(
+                    _isSaved ? CupertinoIcons.bookmark_fill : CupertinoIcons.bookmark,
+                    size: 28,
+                    color: _isSaved ? Colors.amber : ThemeHelper.getTextPrimary(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Likes count
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              '${_formatCount((_isLiked ? 1 : 0) + widget.likes)} likes',
+              style: TextStyle(
+                color: ThemeHelper.getTextPrimary(context),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 4),
+
+          // Caption
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: RichText(
+              text: TextSpan(
+                style: TextStyle(
+                  color: ThemeHelper.getTextPrimary(context),
+                  fontSize: 14,
+                ),
+                children: [
+                  if (widget.channelName != null)
+                    TextSpan(
+                      text: '${widget.channelName} ',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                  ],
+                  TextSpan(text: widget.title),
+                ],
+              ),
+            ),
+          ),
+
+          // View all comments
+          if (widget.comments > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: GestureDetector(
+                onTap: widget.onTap,
+                child: Text(
+                  'View all ${_formatCount(widget.comments)} comments',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextSecondary(context),
+                    fontSize: 14,
+                  ),
                 ),
               ),
-            );
-          },
-        ),
-      ),
-    );
-  }
+            ),
 
-  Widget _buildStat(IconData icon, String value) {
-    return Builder(
-      builder: (context) {
-        // Use theme-aware colors for icons and text
-        final iconColor = ThemeHelper.getTextSecondary(context);
-        final textColor = ThemeHelper.getTextMuted(context);
-        return Row(
-          children: [
-            Icon(
-              icon,
-              color: iconColor,
-              size: 20,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              value,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        );
-      },
+          const SizedBox(height: 8),
+        ],
+      ),
     );
   }
 }
