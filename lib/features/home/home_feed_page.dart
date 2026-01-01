@@ -8,12 +8,10 @@ import '../../core/widgets/ad_banner.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/post_model.dart';
 import '../search/explore_screen.dart';
-import '../search/search_screen.dart';
-import '../video/video_player_screen.dart';
 import '../profile/profile_screen.dart';
 import '../chat/chat_list_screen.dart';
+import 'home_reels_viewer_screen.dart';
 
-/// Home Feed Page - displays the main feed with posts
 class HomeFeedPage extends StatefulWidget {
   final double bottomPadding;
 
@@ -76,15 +74,11 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Gradient is applied at MainScreen root, so no need to duplicate here
-    // Just use transparent container to let gradient show through
     return SafeArea(
-      bottom: false, // Bottom nav handles safe area
+      bottom: false,
       child: Column(
         children: [
-          // App Bar
           _buildAppBar(),
-          // Scrollable content
           Expanded(
             child: RefreshIndicator(
               onRefresh: () async {
@@ -97,7 +91,6 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
               child: CustomScrollView(
                 controller: _scrollController,
                 slivers: [
-                  // Posts feed
                   if (_isLoading && _posts.isEmpty)
                     SliverFillRemaining(
                       child: Center(
@@ -112,7 +105,6 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                       sliver: SliverList(
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
-                            // Show ad every 5 posts
                             if (index > 0 && index % 5 == 0 && index < _posts.length) {
                               return const AdBanner(
                                 height: 60,
@@ -120,7 +112,6 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                               );
                             }
                             
-                            // Adjust post index for ads
                             final postIndex = index - (index ~/ 5);
                             
                             if (postIndex < _posts.length) {
@@ -164,7 +155,6 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          // App logo
           Text(
             'VidConnect',
             style: TextStyle(
@@ -179,12 +169,12 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) =>  ExploreScreen(),
+                    builder: (context) => const ExploreScreen(),
                   ),
                 );
               },
               child: Container(
-                margin: EdgeInsets.symmetric(horizontal: 10),
+                margin: const EdgeInsets.symmetric(horizontal: 10),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: ThemeHelper.getSurfaceColor(context),
@@ -230,7 +220,7 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
             child: Container(
               padding: const EdgeInsets.all(6),
               child: Transform.rotate(
-                angle: -0.785398, // -45 degrees in radians (pointing upward-right like Instagram)
+                angle: -0.785398,
                 child: Icon(
                   Icons.send,
                   color: ThemeHelper.getTextPrimary(context),
@@ -292,24 +282,23 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
         videoUrl: post.videoUrl,
         onTap: () {
           if (post.isVideo && post.videoUrl != null) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => VideoPlayerScreen(
-                  videoUrl: post.videoUrl!,
-                  title: post.caption,
-                  author: post.author,
-                  post: post,
+            final videoPosts = _posts.where((p) => p.isVideo && p.videoUrl != null).toList();
+            final currentIndex = videoPosts.indexWhere((p) => p.id == post.id);
+            
+            if (currentIndex >= 0) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => HomeReelsViewerScreen(
+                    videos: videoPosts,
+                    initialIndex: currentIndex,
+                  ),
                 ),
-              ),
-            );
+              );
+            }
           }
         },
       ),
     );
   }
 }
-
-
-
-

@@ -6,7 +6,6 @@ import '../../core/services/mock_data_service.dart';
 import '../../core/models/story_model.dart';
 import '../../core/models/user_model.dart';
 import 'package:video_player/video_player.dart';
-import '../main/main_screen.dart';
 
 /// Vertical stories viewer (like reels) - swipe vertically between users
 /// Horizontal swipe within each user's multiple stories
@@ -440,6 +439,22 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     _progressTimer?.cancel();
     _progressTimer = null;
     
+    // Pause ALL videos from previous user - YouTube/Instagram style
+    final previousUser = _users[_currentUserIndex];
+    final previousUserHash = previousUser.id.hashCode;
+    if (_videoControllers.containsKey(previousUserHash)) {
+      for (var controller in _videoControllers[previousUserHash]!.values) {
+        if (controller.value.isInitialized && controller.value.isPlaying) {
+          try {
+            controller.pause();
+            controller.seekTo(Duration.zero);
+          } catch (e) {
+            // Ignore pause errors
+          }
+        }
+      }
+    }
+    
     setState(() {
       _currentUserIndex = index;
     });
@@ -474,6 +489,25 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     final user = _users[userIndex];
     final userHash = user.id.hashCode;
     final previousStoryIdx = _currentStoryIndex[userHash] ?? 0;
+    
+    // Pause ALL videos for this user (not just previous) - YouTube/Instagram style
+    if (_videoControllers.containsKey(userHash)) {
+      for (var entry in _videoControllers[userHash]!.entries) {
+        if (entry.key != storyIndex) {
+          final controller = entry.value;
+          if (controller.value.isInitialized && controller.value.isPlaying) {
+            try {
+              controller.pause();
+              controller.seekTo(Duration.zero);
+            } catch (e) {
+              // Ignore pause errors
+            }
+          }
+        }
+      }
+    }
+    
+    // Also pause previous story explicitly
     _pauseCurrentVideo(userHash, previousStoryIdx);
     
     // Update current story index
@@ -722,20 +756,28 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
       );
     }
 
-    // Safely play/pause with error handling
-    if (isCurrentStory && !controller.value.isPlaying) {
-      try {
-        controller.play();
-      } catch (e) {
-        debugPrint('Error playing video: $e');
-        // If play fails, show error fallback
-        return _buildVideoErrorFallback(null);
+    // YouTube/Instagram style: Only play current story, pause all others immediately
+    if (isCurrentStory) {
+      // Play current story if not playing
+      if (!controller.value.isPlaying) {
+        try {
+          controller.play();
+        } catch (e) {
+          debugPrint('Error playing video: $e');
+          // If play fails, show error fallback
+          return _buildVideoErrorFallback(null);
+        }
       }
-    } else if (!isCurrentStory && controller.value.isPlaying) {
-      try {
-        controller.pause();
-      } catch (e) {
-        debugPrint('Error pausing video: $e');
+    } else {
+      // Immediately pause if not current story (critical for proper disposal)
+      if (controller.value.isPlaying) {
+        try {
+          controller.pause();
+          // Also seek to beginning for better UX when returning
+          controller.seekTo(Duration.zero);
+        } catch (e) {
+          debugPrint('Error pausing video: $e');
+        }
       }
     }
 

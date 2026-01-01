@@ -1,23 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:video_player/video_player.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/post_model.dart';
+import '../../core/providers/video_player_provider.dart';
 import '../video/video_player_screen.dart';
 import '../profile/profile_screen.dart';
 
 /// Long Videos Page - YouTube-style video feed
-class LongVideosScreen extends StatefulWidget {
+class LongVideosScreen extends ConsumerStatefulWidget {
   const LongVideosScreen({super.key});
 
   @override
-  State<LongVideosScreen> createState() => _LongVideosScreenState();
+  ConsumerState<LongVideosScreen> createState() => _LongVideosScreenState();
 }
 
-class _LongVideosScreenState extends State<LongVideosScreen> {
+class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
   final ScrollController _scrollController = ScrollController();
   final List<PostModel> _videos = [];
   bool _isLoading = false;
+  String? _currentlyPlayingVideoId;
 
   @override
   void initState() {
@@ -280,96 +284,8 @@ class _LongVideosScreenState extends State<LongVideosScreen> {
               ],
             ),
           ),
-          // Video Thumbnail
-          GestureDetector(
-            onTap: () {
-              if (video.videoUrl != null) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => VideoPlayerScreen(
-                      videoUrl: video.videoUrl!,
-                      title: video.caption,
-                      author: video.author,
-                      post: video,
-                    ),
-                  ),
-                );
-              }
-            },
-            child: Stack(
-              children: [
-                // Thumbnail Image
-                CachedNetworkImage(
-                  imageUrl: video.thumbnailUrl ?? video.imageUrl ?? '',
-                  width: double.infinity,
-                  height: 220,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(
-                    width: double.infinity,
-                    height: 220,
-                    color: ThemeHelper.getSurfaceColor(context),
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        color: ThemeHelper.getAccentColor(context),
-                      ),
-                    ),
-                  ),
-                  errorWidget: (context, url, error) => Container(
-                    width: double.infinity,
-                    height: 220,
-                    color: ThemeHelper.getSurfaceColor(context),
-                    child: Icon(
-                      Icons.video_library,
-                      color: ThemeHelper.getTextSecondary(context),
-                      size: 48,
-                    ),
-                  ),
-                ),
-                // Play Button Overlay
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.play_arrow,
-                          color: Colors.white,
-                          size: 32,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                // Video Duration Badge
-                if (video.videoDuration != null)
-                  Positioned(
-                    bottom: 8,
-                    right: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.8),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        _formatDuration(video.videoDuration!),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          // Video Player/Thumbnail
+          _buildVideoPlayer(video),
         ],
       ),
     );
@@ -385,6 +301,270 @@ class _LongVideosScreenState extends State<LongVideosScreen> {
       return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
     }
     return '${twoDigits(minutes)}:${twoDigits(seconds)}';
+  }
+
+  Widget _buildVideoPlayer(PostModel video) {
+    final isPlaying = _currentlyPlayingVideoId == video.id;
+    final videoUrl = video.videoUrl;
+    
+    if (videoUrl == null) {
+      return Container(
+        width: double.infinity,
+        height: 220,
+        color: ThemeHelper.getSurfaceColor(context),
+        child: Icon(
+          Icons.video_library,
+          color: ThemeHelper.getTextSecondary(context),
+          size: 48,
+        ),
+      );
+    }
+
+    if (isPlaying) {
+      // Show inline video player
+      return _buildInlineVideoPlayer(video, videoUrl);
+    } else {
+      // Show thumbnail with play button
+      return GestureDetector(
+        onTap: () {
+          setState(() {
+            _currentlyPlayingVideoId = video.id;
+          });
+        },
+        child: Stack(
+          children: [
+            CachedNetworkImage(
+              imageUrl: video.thumbnailUrl ?? video.imageUrl ?? '',
+              width: double.infinity,
+              height: 220,
+              fit: BoxFit.cover,
+              placeholder: (context, url) => Container(
+                width: double.infinity,
+                height: 220,
+                color: ThemeHelper.getSurfaceColor(context),
+                child: Center(
+                  child: CircularProgressIndicator(
+                    color: ThemeHelper.getAccentColor(context),
+                  ),
+                ),
+              ),
+              errorWidget: (context, url, error) => Container(
+                width: double.infinity,
+                height: 220,
+                color: ThemeHelper.getSurfaceColor(context),
+                child: Icon(
+                  Icons.video_library,
+                  color: ThemeHelper.getTextSecondary(context),
+                  size: 48,
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.1),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow,
+                      color: Colors.white,
+                      size: 32,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (video.videoDuration != null)
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _formatDuration(video.videoDuration!),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Widget _buildInlineVideoPlayer(PostModel video, String videoUrl) {
+    final playerState = ref.watch(videoPlayerProvider(videoUrl));
+    final notifier = ref.read(videoPlayerProvider(videoUrl).notifier);
+
+    return Container(
+      width: double.infinity,
+      height: 220,
+      color: Colors.black,
+      child: Stack(
+        children: [
+          // Video Player
+          if (playerState.isInitialized && playerState.controller != null)
+            Center(
+              child: AspectRatio(
+                aspectRatio: playerState.controller!.value.aspectRatio,
+                child: VideoPlayer(playerState.controller!),
+              ),
+            )
+          else
+            Center(
+              child: CircularProgressIndicator(
+                color: ThemeHelper.getAccentColor(context),
+              ),
+            ),
+          
+          // Left/Right tap areas for seeking
+          Row(
+            children: [
+              // Left tap area - backward
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    notifier.seekBackward();
+                    _showSeekFeedback(context, 'backward');
+                  },
+                  child: Container(
+                    color: Colors.transparent,
+                    child: Center(
+                      child: Icon(
+                        Icons.replay_10,
+                        color: Colors.white.withValues(alpha: 0.7),
+                        size: 40,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Center tap area - play/pause
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    notifier.togglePlayPause();
+                  },
+                  child: Container(
+                    color: Colors.transparent,
+                    child: Center(
+                      child: Icon(
+                        playerState.isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Colors.white.withValues(alpha: 0.9),
+                        size: 48,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Right tap area - forward
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    notifier.seekForward();
+                    _showSeekFeedback(context, 'forward');
+                  },
+                  child: Container(
+                    color: Colors.transparent,
+                    child: Center(
+                      child: Icon(
+                        Icons.forward_10,
+                        color: Colors.white.withValues(alpha: 0.7),
+                        size: 40,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          // Close button to stop playing
+          Positioned(
+            top: 8,
+            right: 8,
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _currentlyPlayingVideoId = null;
+                });
+                // Pause the video
+                notifier.pause();
+              },
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ),
+          ),
+          
+          // Fullscreen button
+          Positioned(
+            bottom: 8,
+            right: 8,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => VideoPlayerScreen(
+                      videoUrl: videoUrl,
+                      title: video.caption,
+                      author: video.author,
+                      post: video,
+                    ),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Icon(
+                  Icons.fullscreen,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSeekFeedback(BuildContext context, String direction) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(direction == 'forward' ? '⏩ +10s' : '⏪ -10s'),
+        duration: const Duration(milliseconds: 500),
+        backgroundColor: Colors.black.withValues(alpha: 0.8),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 100),
+      ),
+    );
   }
 }
 

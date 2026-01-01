@@ -40,8 +40,6 @@ dependencies:
   youtube_player_flutter: ^9.0.0
 
   # UI Widgets
-  flutter_staggered_grid_view:
-
   # Animations
   animations: ^2.0.11
   

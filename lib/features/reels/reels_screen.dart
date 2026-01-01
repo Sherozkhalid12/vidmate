@@ -60,7 +60,19 @@ class _ReelsScreenState extends State<ReelsScreen> {
 
   void _initializeVideo(int index) {
     if (index < 0 || index >= _reels.length) return;
-    if (_controllers.containsKey(index)) return;
+    if (_controllers.containsKey(index)) {
+      // If already initialized and it's the current index, ensure it's playing
+      if (index == _currentIndex && _controllers[index]!.value.isInitialized) {
+        if (!_controllers[index]!.value.isPlaying) {
+          try {
+            _controllers[index]!.play();
+          } catch (e) {
+            // Ignore play errors
+          }
+        }
+      }
+      return;
+    }
 
     final reel = _reels[index];
     if (reel.videoUrl != null) {
@@ -72,9 +84,14 @@ class _ReelsScreenState extends State<ReelsScreen> {
       
       // Initialize asynchronously without blocking UI
       controller.initialize().then((_) {
-        if (mounted) {
+        if (mounted && _controllers.containsKey(index)) {
+          // Only play if this is still the current index
           if (index == _currentIndex) {
-            controller.play();
+            try {
+              controller.play();
+            } catch (e) {
+              // Ignore play errors
+            }
           }
           if (mounted) {
             setState(() {});
@@ -92,9 +109,33 @@ class _ReelsScreenState extends State<ReelsScreen> {
   void _onPageChanged(int index) {
     if (index < 0 || index >= _reels.length) return;
     
-    // Pause previous video smoothly
-    if (_controllers.containsKey(_currentIndex)) {
-      _controllers[_currentIndex]!.pause();
+    // Pause ALL videos first (YouTube/Instagram style - only one plays at a time)
+    for (var entry in _controllers.entries) {
+      final controller = entry.value;
+      if (controller.value.isInitialized && controller.value.isPlaying) {
+        try {
+          controller.pause();
+        } catch (e) {
+          // Ignore errors during pause
+        }
+      }
+    }
+    
+    // Dispose previous video controller to free resources immediately
+    if (_controllers.containsKey(_currentIndex) && _currentIndex != index) {
+      try {
+        final oldController = _controllers[_currentIndex];
+        if (oldController != null) {
+          oldController.removeListener(() {});
+          if (oldController.value.isInitialized) {
+            oldController.pause();
+          }
+          oldController.dispose();
+          _controllers.remove(_currentIndex);
+        }
+      } catch (e) {
+        // Ignore errors during disposal
+      }
     }
     
     setState(() {
@@ -107,20 +148,21 @@ class _ReelsScreenState extends State<ReelsScreen> {
       if (mounted && _controllers.containsKey(index)) {
         final controller = _controllers[index]!;
         if (controller.value.isInitialized && !controller.value.isPlaying) {
-          controller.play();
+          try {
+            controller.play();
+          } catch (e) {
+            // Ignore play errors
+          }
         }
       }
     });
     
-    // Preload next 3 videos for ultra-smooth scrolling
+    // Preload next 2 videos for smooth scrolling (reduced from 3 to save memory)
     if (index + 1 < _reels.length) {
       _initializeVideo(index + 1);
     }
     if (index + 2 < _reels.length) {
       _initializeVideo(index + 2);
-    }
-    if (index + 3 < _reels.length) {
-      _initializeVideo(index + 3);
     }
     
     // Preload previous video for backward scrolling
@@ -128,13 +170,22 @@ class _ReelsScreenState extends State<ReelsScreen> {
       _initializeVideo(index - 1);
     }
     
-    // Dispose videos that are far away to save memory (keep only 5 videos in memory)
-    final disposeThreshold = 5;
+    // Dispose videos that are far away to save memory (keep only 3 videos in memory)
+    final disposeThreshold = 3;
     final keysToRemove = <int>[];
     _controllers.forEach((key, controller) {
       if ((key - index).abs() > disposeThreshold) {
-        controller.dispose();
-        keysToRemove.add(key);
+        try {
+          controller.removeListener(() {});
+          if (controller.value.isInitialized) {
+            controller.pause();
+          }
+          controller.dispose();
+          keysToRemove.add(key);
+        } catch (e) {
+          // Ignore errors during disposal
+          keysToRemove.add(key);
+        }
       }
     });
     for (var key in keysToRemove) {
