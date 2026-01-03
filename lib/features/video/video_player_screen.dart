@@ -4,10 +4,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
+import '../../core/services/mock_data_service.dart';
+import '../../core/widgets/glass_card.dart';
 import '../profile/profile_screen.dart';
+import 'dart:ui';
 
 /// Long-form video player with Riverpod state management
 class VideoPlayerScreen extends ConsumerStatefulWidget {
@@ -113,9 +117,21 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
 
   void _startControlsTimer() {
     _controlsTimer?.cancel();
+    
+    // Only start timer if controls are currently visible
+    // This prevents auto-showing controls after user explicitly hides them
+    final currentState = ref.read(videoPlayerProvider(widget.videoUrl));
+    if (!currentState.showControls) {
+      return; // Don't start timer if controls are hidden
+    }
+    
     _controlsTimer = Timer(const Duration(seconds: 3), () {
       if (mounted) {
+        final state = ref.read(videoPlayerProvider(widget.videoUrl));
+        // Only auto-hide if controls are still visible (user didn't show them again)
+        if (state.showControls) {
         ref.read(videoPlayerProvider(widget.videoUrl).notifier).toggleControls();
+        }
       }
     });
   }
@@ -549,17 +565,41 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
       },
       child: Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
+        body: playerState.isFullscreen
+            ? _buildFullscreenView(playerState, notifier)
+            : _buildEmbeddedView(playerState, notifier),
+      ),
+    );
+  }
+
+  Widget _buildFullscreenView(VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    return SafeArea(
         child: GestureDetector(
           onTap: () {
+          // Single tap: Only toggle controls, don't skip
             // Close playback speed menu if open
             if (playerState.showPlaybackSpeedMenu) {
               notifier.togglePlaybackSpeedMenu();
             }
+          
+          // Toggle controls
             notifier.toggleControls();
+          
+          // Get the new state after toggle
+          final newState = ref.read(videoPlayerProvider(widget.videoUrl));
+          
+          // Only start timer if controls are now visible (to auto-hide them)
+          // If controls are hidden, cancel timer and don't restart it
+          if (newState.showControls) {
+            // Controls are now visible - start timer to auto-hide
             _startControlsTimer();
+          } else {
+            // Controls are now hidden - cancel timer
+            _controlsTimer?.cancel();
+          }
           },
           onDoubleTapDown: (details) {
+          // Double tap: Skip forward/backward
             final screenWidth = MediaQuery.of(context).size.width;
             if (details.localPosition.dx < screenWidth / 2) {
               notifier.seekBackward();
@@ -570,7 +610,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
           },
           child: Stack(
             children: [
-              // Video player with left/right tap gestures
+              // Video player
               Center(
                 child: playerState.isInitialized && playerState.controller != null
                     ? Stack(
@@ -578,69 +618,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           AspectRatio(
                         aspectRatio: playerState.controller!.value.aspectRatio,
                         child: VideoPlayer(playerState.controller!),
-                          ),
-                          // Left/Right tap areas for seeking
-                          Row(
-                            children: [
-                              // Left tap area - backward
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    notifier.seekBackward();
-                                    _startControlsTimer();
-                                  },
-                                  child: Container(
-                                    color: Colors.transparent,
-                                    child: Center(
-                                      child: AnimatedOpacity(
-                                        opacity: playerState.showControls ? 0.6 : 0.0,
-                                        duration: const Duration(milliseconds: 200),
-                                        child: Icon(
-                                          Icons.replay_10,
-                                          color: Colors.white,
-                                          size: 50,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // Center tap area - play/pause toggle
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    notifier.togglePlayPause();
-                                    _startControlsTimer();
-                                  },
-                                  child: Container(
-                                    color: Colors.transparent,
-                                  ),
-                                ),
-                              ),
-                              // Right tap area - forward
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    notifier.seekForward();
-                                    _startControlsTimer();
-                                  },
-                                  child: Container(
-                                    color: Colors.transparent,
-                                    child: Center(
-                                      child: AnimatedOpacity(
-                                        opacity: playerState.showControls ? 0.6 : 0.0,
-                                        duration: const Duration(milliseconds: 200),
-                                        child: Icon(
-                                          Icons.forward_10,
-                                          color: Colors.white,
-                                          size: 50,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
                           ),
                           // Buffering indicator
                           if (playerState.isBuffering)
@@ -727,8 +704,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                                 child: IconButton(
                                   icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
                             onPressed: () {
+                              // Only exit fullscreen, don't navigate away
                               _toggleFullscreen();
-                              Navigator.pop(context);
                             },
                           ),
                               ),
@@ -770,78 +747,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                   ),
                 ),
 
-              // Beautiful fullscreen action buttons - Always visible and prominent
-              if (playerState.isFullscreen)
-                Positioned(
-                  right: 20,
-                  bottom: 200,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Like button with animation
-                      _buildFullscreenActionButton(
-                        icon: _isLiked ? Icons.favorite : Icons.favorite_border,
-                        label: _formatCount(_likeCount),
-                        color: _isLiked ? Colors.red : Colors.white,
-                        isVisible: playerState.showControls,
-                        onTap: () {
-                          setState(() {
-                            _isLiked = !_isLiked;
-                            _likeCount += _isLiked ? 1 : -1;
-                          });
-                          _startControlsTimer();
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      // Comment button
-                      _buildFullscreenActionButton(
-                        icon: Icons.comment_outlined,
-                        label: _formatCount(_commentCount),
-                        color: Colors.white,
-                        isVisible: playerState.showControls,
-                        onTap: () {
-                          _startControlsTimer();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Comments feature coming soon!'),
-                              backgroundColor: Colors.black.withValues(alpha: 0.9),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      // Share button
-                      _buildFullscreenActionButton(
-                        icon: Icons.share_outlined,
-                        label: 'Share',
-                        color: Colors.white,
-                        isVisible: playerState.showControls,
-                        onTap: () {
-                          _startControlsTimer();
-                          _showShareDialog(context);
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      // Visit profile button
-                      _buildFullscreenActionButton(
-                        icon: Icons.person_outline,
-                        label: 'Profile',
-                        color: Colors.white,
-                        isVisible: playerState.showControls,
-                        onTap: () {
-                          _startControlsTimer();
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ProfileScreen(user: widget.author),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
 
               // Controls overlay with smooth animation
                 Positioned(
@@ -926,39 +831,145 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                             ],
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        // Time and controls
+                        const SizedBox(height: 16),
+                        // Time and controls with modern design
                         Row(
                           children: [
-                            Text(
+                            // Time display with glass background
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Text(
                               _formatDuration(playerState.position),
-                              style: TextStyle(
-                                color: context.textPrimary,
-                                fontSize: 12,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            // Backward 10 seconds button
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.15),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.replay_10,
+                                  color: Colors.white,
+                                  size: 26,
+                                ),
+                                onPressed: () {
+                                  notifier.seekBackward();
+                                  _startControlsTimer();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            // Play/Pause button with prominent gradient
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Theme.of(context).colorScheme.primary,
+                                    Theme.of(context).colorScheme.primary.withOpacity(0.8),
+                                  ],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: IconButton(
+                                iconSize: 32,
+                                icon: Icon(
+                                  playerState.isPlaying ? Icons.pause : Icons.play_arrow,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () {
+                                  notifier.togglePlayPause();
+                                  _startControlsTimer();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            // Forward 10 seconds button
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.15),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.forward_10,
+                                  color: Colors.white,
+                                  size: 26,
+                                ),
+                                onPressed: () {
+                                  notifier.seekForward();
+                                  _startControlsTimer();
+                                },
                               ),
                             ),
                             const Spacer(),
                             // Playback speed button
-                            IconButton(
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.15),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: IconButton(
                               icon: Stack(
                                 children: [
-                                  Icon(
+                                    const Icon(
                                     Icons.speed,
-                                    color: context.textPrimary,
+                                      color: Colors.white,
+                                      size: 24,
                                   ),
                                   if (playerState.playbackSpeed != 1.0)
                                     Positioned(
                                       right: 0,
                                       top: 0,
                                       child: Container(
-                                        padding: const EdgeInsets.all(2),
+                                          padding: const EdgeInsets.all(3),
                                         decoration: BoxDecoration(
                                           color: Theme.of(context).colorScheme.primary,
                                           shape: BoxShape.circle,
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                                                blurRadius: 4,
+                                              ),
+                                            ],
                                         ),
                                         constraints: const BoxConstraints(
-                                          minWidth: 12,
-                                          minHeight: 12,
+                                            minWidth: 14,
+                                            minHeight: 14,
                                         ),
                                         child: Text(
                                           playerState.playbackSpeed.toStringAsFixed(1),
@@ -977,32 +988,49 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                                 _startControlsTimer();
                               },
                             ),
-                            IconButton(
-                              icon: Icon(
-                                playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                                color: context.textPrimary,
-                              ),
-                              onPressed: () {
-                                notifier.togglePlayPause();
-                                _startControlsTimer();
-                              },
                             ),
-                            IconButton(
+                            const SizedBox(width: 12),
+                            // Fullscreen toggle button
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.15),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: IconButton(
                               icon: Icon(
                                 playerState.isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                                color: context.textPrimary,
+                                  color: Colors.white,
+                                  size: 24,
                               ),
                               onPressed: () {
                                 _toggleFullscreen();
                                 _startControlsTimer();
                               },
                             ),
-                            const SizedBox(width: 8),
-                            Text(
+                            ),
+                            const SizedBox(width: 12),
+                            // Duration with glass background
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Text(
                               _formatDuration(playerState.duration),
-                              style: TextStyle(
-                                color: context.textPrimary,
-                                fontSize: 12,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ],
@@ -1209,6 +1237,888 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
             ],
           ),
           ),
+    );
+  }
+
+  Widget _buildEmbeddedView(VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    return SafeArea(
+      child: Column(
+        children: [
+          // Embedded video player with constrained overlay
+          _buildEmbeddedVideoPlayer(playerState, notifier),
+          // Scrollable content below video player
+          Expanded(
+            child: _buildVideoDescriptionContent(playerState, notifier),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmbeddedVideoPlayer(VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    const double embeddedHeight = 240.0;
+    
+    return GestureDetector(
+      onTap: () {
+        // Close playback speed menu if open
+        if (playerState.showPlaybackSpeedMenu) {
+          notifier.togglePlaybackSpeedMenu();
+        }
+        
+        // Toggle controls
+        notifier.toggleControls();
+        
+        // Get the new state after toggle
+        final newState = ref.read(videoPlayerProvider(widget.videoUrl));
+        
+        // Only start timer if controls are now visible (to auto-hide them)
+        if (newState.showControls) {
+          // Controls are now visible - start timer to auto-hide
+          _startControlsTimer();
+        } else {
+          // Controls are now hidden - cancel timer
+          _controlsTimer?.cancel();
+        }
+      },
+      onDoubleTapDown: (details) {
+        final playerWidth = MediaQuery.of(context).size.width;
+        if (details.localPosition.dx < playerWidth / 2) {
+          notifier.seekBackward();
+        } else {
+          notifier.seekForward();
+        }
+        _startControlsTimer();
+      },
+      child: Container(
+        height: embeddedHeight,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(24),
+            bottomRight: Radius.circular(24),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(24),
+            bottomRight: Radius.circular(24),
+          ),
+          child: Stack(
+            children: [
+            // Video player
+            Center(
+              child: playerState.isInitialized && playerState.controller != null
+                  ? AspectRatio(
+                      aspectRatio: playerState.controller!.value.aspectRatio,
+                      child: VideoPlayer(playerState.controller!),
+                    )
+                  : Center(
+                      child: CircularProgressIndicator(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+            ),
+            // Buffering indicator
+            if (playerState.isBuffering)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.3),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 3,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Buffering...',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            // Overlay controls - beautiful glass effect
+            Positioned.fill(
+              child: AnimatedOpacity(
+                opacity: playerState.showControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 300),
+                child: IgnorePointer(
+                  ignoring: !playerState.showControls,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.85),
+                          Colors.black.withOpacity(0.3),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 0.5, 1.0],
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Progress bar
+                        GestureDetector(
+                          onHorizontalDragStart: (details) {
+                            if (!playerState.showControls) {
+                              notifier.toggleControls();
+                            }
+                            _startControlsTimer();
+                          },
+                          onHorizontalDragUpdate: (details) {
+                            if (!playerState.isInitialized) return;
+                            final box = context.findRenderObject() as RenderBox?;
+                            if (box == null) return;
+                            
+                            final padding = 12.0;
+                            final dragPosition = (details.localPosition.dx - padding).clamp(0.0, box.size.width - padding * 2);
+                            final totalWidth = (box.size.width - padding * 2).clamp(1.0, double.infinity);
+                            final progress = (dragPosition / totalWidth).clamp(0.0, 1.0);
+                            final targetPosition = Duration(
+                              milliseconds: (playerState.duration.inMilliseconds * progress).round(),
+                            );
+                            notifier.seekTo(targetPosition);
+                          },
+                          onHorizontalDragEnd: (_) {
+                            _startControlsTimer();
+                          },
+                          onTapDown: (details) {
+                            if (!playerState.isInitialized) return;
+                            final box = context.findRenderObject() as RenderBox?;
+                            if (box == null) return;
+                            
+                            final padding = 12.0;
+                            final tapPosition = (details.localPosition.dx - padding).clamp(0.0, box.size.width - padding * 2);
+                            final totalWidth = (box.size.width - padding * 2).clamp(1.0, double.infinity);
+                            final progress = (tapPosition / totalWidth).clamp(0.0, 1.0);
+                            final targetPosition = Duration(
+                              milliseconds: (playerState.duration.inMilliseconds * progress).round(),
+                            );
+                            notifier.seekTo(targetPosition);
+                            _startControlsTimer();
+                          },
+                          child: Stack(
+                            children: [
+                              if (playerState.controller != null)
+                                VideoProgressIndicator(
+                                  playerState.controller!,
+                                  allowScrubbing: true,
+                                  colors: VideoProgressColors(
+                                    playedColor: Theme.of(context).colorScheme.primary,
+                                    bufferedColor: Colors.white.withOpacity(0.3),
+                                    backgroundColor: Colors.white.withOpacity(0.2),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // Controls row with modern design
+                        Row(
+                          children: [
+                            // Time display with glass background
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.2),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                _formatDuration(playerState.position),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            // Backward 10 seconds with glass background
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.1),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(Icons.replay_10, color: Colors.white, size: 22),
+                                onPressed: () {
+                                  notifier.seekBackward();
+                                  _startControlsTimer();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Play/Pause with gradient background
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Theme.of(context).colorScheme.primary,
+                                    Theme.of(context).colorScheme.primary.withOpacity(0.8),
+                                  ],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: IconButton(
+                                icon: Icon(
+                                  playerState.isPlaying ? Icons.pause : Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: 26,
+                                ),
+                                onPressed: () {
+                                  notifier.togglePlayPause();
+                                  _startControlsTimer();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Forward 10 seconds with glass background
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.1),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(Icons.forward_10, color: Colors.white, size: 22),
+                                onPressed: () {
+                                  notifier.seekForward();
+                                  _startControlsTimer();
+                                },
+                              ),
+                            ),
+                            const Spacer(),
+                            // Fullscreen toggle with glass background
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.1),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(Icons.fullscreen, color: Colors.white, size: 22),
+                                onPressed: () {
+                                  _toggleFullscreen();
+                                  _startControlsTimer();
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Duration with glass background
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.2),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                _formatDuration(playerState.duration),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Seek indicator
+            if (playerState.showSeekIndicator)
+              Center(
+                child: AnimatedOpacity(
+                  opacity: 1.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          playerState.seekDirection == 'forward'
+                              ? Icons.forward_10
+                              : Icons.replay_10,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatDuration(playerState.seekTarget),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),)
+    );
+  }
+
+  Widget _buildVideoDescriptionContent(VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: ThemeHelper.getBackgroundGradient(context),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top bar with back button
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: ThemeHelper.getSurfaceColor(context),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      color: ThemeHelper.getTextPrimary(context),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          // Video info section with glass card
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: GlassCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title
+                  Text(
+                    widget.title,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextPrimary(context),
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Metadata with icons
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.favorite,
+                        size: 16,
+                        color: Colors.red,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatCount(_likeCount),
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      Icon(
+                        Icons.comment,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatCount(_commentCount),
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Divider
+                  Container(
+                    height: 1,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.transparent,
+                          ThemeHelper.getBorderColor(context),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Author info
+                  Row(
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                        child: CircleAvatar(
+                          radius: 22,
+                          backgroundImage: NetworkImage(widget.author.avatarUrl),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.author.displayName,
+                              style: TextStyle(
+                                color: ThemeHelper.getTextPrimary(context),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${_formatCount(widget.author.followers)} followers',
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        decoration: BoxDecoration(
+                          color:  Theme.of(context).colorScheme.primary,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () {},
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              child: Text(
+                                'Follow',
+                                style: TextStyle(
+                                  color: context.buttonTextColor,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Description
+                  Text(
+                    widget.post?.caption ?? widget.title,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextPrimary(context),
+                      fontSize: 14,
+                      height: 1.6,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Action buttons with glass cards
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GlassCard(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    onTap: () {
+                      setState(() {
+                        _isLiked = !_isLiked;
+                        _likeCount += _isLiked ? 1 : -1;
+                      });
+                    },
+                    child: Column(
+                      children: [
+                        Icon(
+                          _isLiked ? Icons.favorite : Icons.favorite_border,
+                          color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                          size: 24,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _formatCount(_likeCount),
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: GlassCard(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text('Comments feature coming soon!'),
+                          backgroundColor: Colors.black.withOpacity(0.9),
+                        ),
+                      );
+                    },
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.comment_outlined,
+                          color: ThemeHelper.getTextPrimary(context),
+                          size: 24,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _formatCount(_commentCount),
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: GlassCard(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    onTap: () => _showShareDialog(context),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.share_outlined,
+                          color: ThemeHelper.getTextPrimary(context),
+                          size: 24,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Share',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: GlassCard(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    onTap: () {},
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.bookmark_border,
+                          color: ThemeHelper.getTextPrimary(context),
+                          size: 24,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Save',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Suggested videos header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Theme.of(context).colorScheme.primary,
+                        Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Suggested Videos',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextPrimary(context),
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Suggested videos list
+          _buildSuggestedVideosList(),
+          const SizedBox(height: 16),
+        ],
+      ),)
+    );
+  }
+
+  Widget _buildDescriptionActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSuggestedVideosList() {
+    // Get suggested videos from mock data
+    final allPosts = MockDataService.getMockPosts();
+    final suggestedVideos = allPosts
+        .where((p) => p.isVideo && p.id != widget.post?.id)
+        .take(10)
+        .toList();
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: suggestedVideos.length,
+      itemBuilder: (context, index) {
+        final video = suggestedVideos[index];
+        return _buildSuggestedVideoItem(video);
+      },
+    );
+  }
+
+  Widget _buildSuggestedVideoItem(PostModel video) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: GlassCard(
+        padding: const EdgeInsets.all(12),
+        onTap: () {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => VideoPlayerScreen(
+                videoUrl: video.videoUrl ?? '',
+                title: video.caption,
+                author: video.author,
+                post: video,
+              ),
+            ),
+          );
+        },
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Thumbnail with gradient overlay
+            Container(
+              width: 140,
+              height: 80,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  colors: [
+                    Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  children: [
+                    video.thumbnailUrl != null
+                        ? Image.network(
+                            video.thumbnailUrl!,
+                            width: 140,
+                            height: 80,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: ThemeHelper.getSurfaceColor(context),
+                                child: Icon(
+                                  Icons.video_library,
+                                  color: ThemeHelper.getTextSecondary(context),
+                                ),
+                              );
+                            },
+                          )
+                        : Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Icon(
+                              Icons.video_library,
+                              color: ThemeHelper.getTextSecondary(context),
+                            ),
+                          ),
+                    // Duration badge
+                    if (video.videoDuration != null)
+                      Positioned(
+                        bottom: 6,
+                        right: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            _formatDuration(video.videoDuration!),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Video info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    video.caption,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextPrimary(context),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    video.author.displayName,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextSecondary(context),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.play_circle_outline,
+                        size: 14,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${_formatCount(video.likes)} views',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

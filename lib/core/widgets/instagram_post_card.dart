@@ -1,14 +1,16 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_application_1/features/profile/profile_screen.dart';
 import 'dart:ui';
 import '../models/post_model.dart';
 import '../theme/app_colors.dart';
 import '../utils/theme_helper.dart';
+import '../providers/posts_provider_riverpod.dart';
 import '../../features/feed/comments_screen.dart';
 
-class InstagramPostCard extends StatefulWidget {
+class InstagramPostCard extends ConsumerStatefulWidget {
   final PostModel post;
   final VoidCallback? onDelete;
 
@@ -19,18 +21,16 @@ class InstagramPostCard extends StatefulWidget {
   });
 
   @override
-  State<InstagramPostCard> createState() => _InstagramPostCardState();
+  ConsumerState<InstagramPostCard> createState() => _InstagramPostCardState();
 }
 
-class _InstagramPostCardState extends State<InstagramPostCard> with SingleTickerProviderStateMixin {
-  bool _isLiked = false;
+class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with SingleTickerProviderStateMixin {
   bool _isSaved = false;
   late AnimationController _likeAnimationController;
 
   @override
   void initState() {
     super.initState();
-    _isLiked = widget.post.isLiked;
     _likeAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -190,10 +190,11 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
           // Media - Full width square image
           GestureDetector(
             onDoubleTap: () {
-              setState(() {
-                _isLiked = !_isLiked;
-                if (_isLiked) _likeAnimationController.forward(from: 0);
-              });
+              final isLiked = ref.read(postLikedProvider(widget.post.id));
+              ref.read(postsProvider.notifier).toggleLike(widget.post.id);
+              if (!isLiked) {
+                _likeAnimationController.forward(from: 0);
+              }
             },
             child: AspectRatio(
               aspectRatio: 1.0,
@@ -241,45 +242,80 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
                       ),
                     ),
                   // Like animation overlay
-                  if (_isLiked)
-                    Center(
-                      child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.8, end: 1.2).animate(
-                          CurvedAnimation(
-                            parent: _likeAnimationController,
-                            curve: Curves.elasticOut,
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final isLiked = ref.watch(postLikedProvider(widget.post.id));
+                      if (isLiked) {
+                        return Center(
+                          child: ScaleTransition(
+                            scale: Tween<double>(begin: 0.8, end: 1.2).animate(
+                              CurvedAnimation(
+                                parent: _likeAnimationController,
+                                curve: Curves.elasticOut,
+                              ),
+                            ),
+                            child: Icon(
+                              CupertinoIcons.heart_fill,
+                              color: Colors.red,
+                              size: 80,
+                            ),
                           ),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.heart_fill,
-                          color: Colors.red,
-                          size: 80,
-                        ),
-                      ),
-                    ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
                 ],
               ),
             ),
           ),
 
-          // Actions row - Like/Comment/Share on RIGHT side
+          // Actions row - Bookmark on LEFT, Share/Comment/Like on RIGHT
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               children: [
-                const Spacer(),
-                // Right side actions - Like, Comment, Share
+                // Left side - Bookmark
                 GestureDetector(
                   onTap: () {
                     setState(() {
-                      _isLiked = !_isLiked;
-                      if (_isLiked) _likeAnimationController.forward(from: 0);
+                      _isSaved = !_isSaved;
                     });
                   },
-                  child: Icon(
-                    _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
-                    size: 28,
-                    color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                        size: 28,
+                        color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                // Right side actions - Share, Comment, Like
+                GestureDetector(
+                  onTap: () {
+                    // Handle share action
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.share_outlined,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatCount(widget.post.shares),
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -292,32 +328,59 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
                       ),
                     );
                   },
-                  child: Icon(
-                    CupertinoIcons.chat_bubble,
-                    size: 28,
-                    color: ThemeHelper.getTextPrimary(context),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.mode_comment_outlined,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatCount(widget.post.comments),
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 16),
-                Icon(
-                  CupertinoIcons.paperplane,
-                  size: 28,
-                  color: ThemeHelper.getTextPrimary(context),
+                Consumer(
+                  builder: (context, ref, child) {
+                    final isLiked = ref.watch(postLikedProvider(widget.post.id));
+                    final likeCount = ref.watch(postLikeCountProvider(widget.post.id));
+                    return GestureDetector(
+                      onTap: () {
+                        ref.read(postsProvider.notifier).toggleLike(widget.post.id);
+                        if (!isLiked) {
+                          _likeAnimationController.forward(from: 0);
+                        }
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isLiked ? Icons.favorite : Icons.favorite_border,
+                            size: 28,
+                            color: isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatCount(likeCount),
+                            style: TextStyle(
+                              color: ThemeHelper.getTextSecondary(context),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ],
-            ),
-          ),
-
-          // Likes count
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '${_formatCount((_isLiked ? 1 : 0) + widget.post.likes)} likes',
-              style: TextStyle(
-                color: ThemeHelper.getTextPrimary(context),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
             ),
           ),
 
@@ -342,29 +405,6 @@ class _InstagramPostCardState extends State<InstagramPostCard> with SingleTicker
               ),
             ),
           ),
-
-          // View all comments
-          if (widget.post.comments > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => CommentsScreen(postId: widget.post.id),
-                    ),
-                  );
-                },
-                child: Text(
-                  'View all ${_formatCount(widget.post.comments)} comments',
-                  style: TextStyle(
-                    color: ThemeHelper.getTextSecondary(context),
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            ),
 
           const SizedBox(height: 8),
         ],

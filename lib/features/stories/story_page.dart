@@ -81,24 +81,45 @@ class _StoryPageState extends State<StoryPage> {
                 ],
               ),
             ),
-            // Grid of story cards
+            // Grid of story cards - 2 per row for better presentation
             Expanded(
               child: _users.isEmpty
                   ? Center(
-                      child: Text(
-                        'No stories available',
-                        style: TextStyle(
-                          color: ThemeHelper.getTextSecondary(context),
-                        ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.auto_stories_outlined,
+                            size: 64,
+                            color: ThemeHelper.getTextSecondary(context),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No stories available',
+                            style: TextStyle(
+                              color: ThemeHelper.getTextPrimary(context),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Stories will appear here',
+                            style: TextStyle(
+                              color: ThemeHelper.getTextSecondary(context),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
                       ),
                     )
                   : GridView.builder(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 0.5, // Rectangular shape (taller)
+                        crossAxisSpacing: 24,
+                        mainAxisSpacing: 32,
+                        childAspectRatio: 0.75, // Taller to accommodate name below
                       ),
                       itemCount: _users.length,
                       itemBuilder: (context, index) {
@@ -121,148 +142,138 @@ class _StoryPageState extends State<StoryPage> {
     
     return GestureDetector(
       onTap: () => _openStoryViewer(userIndex, 0),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: ThemeHelper.getBorderColor(context),
-            width: 2,
-          ),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Story media background
-              firstStory.isVideo
-                  ? Container(
-                      color: Colors.black,
-                      child: Center(
-                        child: Icon(
-                          Icons.play_circle_filled,
-                          size: 48,
-                          color: Colors.white.withOpacity(0.7),
-                        ),
-                      ),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: firstStory.mediaUrl,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: ThemeHelper.getAccentColor(context),
-                          ),
-                        ),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Icon(
-                          Icons.image_not_supported,
-                          color: ThemeHelper.getTextSecondary(context),
-                        ),
-                      ),
-                    ),
-              // Gradient overlay
-              Container(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Circular story widget with shadow and gradient border
+          Expanded(
+            child: AspectRatio(
+              aspectRatio: 1.0,
+              child: Container(
                 decoration: BoxDecoration(
+                  shape: BoxShape.circle,
                   gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                     colors: [
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.7),
+                      ThemeHelper.getAccentColor(context),
+                      ThemeHelper.getAccentColor(context).withOpacity(0.6),
                     ],
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-              ),
-              // Profile picture and name overlay
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      // Profile picture with border
-                      Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: ThemeHelper.getAccentColor(context),
-                            width: 2,
-                          ),
-                        ),
-                        child: ClipOval(
-                          child: CachedNetworkImage(
-                            imageUrl: user.avatarUrl,
-                            width: 32,
-                            height: 32,
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(
-                              width: 32,
-                              height: 32,
-                              color: ThemeHelper.getSurfaceColor(context),
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              width: 32,
-                              height: 32,
-                              color: ThemeHelper.getSurfaceColor(context),
-                              child: Icon(
-                                Icons.person,
-                                size: 20,
-                                color: ThemeHelper.getTextSecondary(context),
+                padding: const EdgeInsets.all(4), // Border thickness
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: ThemeHelper.getBackgroundColor(context),
+                  ),
+                  padding: const EdgeInsets.all(3),
+                  child: ClipOval(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Story media background
+                        firstStory.isVideo
+                            ? Container(
+                                color: Colors.black,
+                                child: Center(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.1),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.play_circle_filled,
+                                      size: 40,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: firstStory.mediaUrl,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => Container(
+                                  color: ThemeHelper.getSurfaceColor(context),
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      color: ThemeHelper.getAccentColor(context),
+                                      strokeWidth: 3,
+                                    ),
+                                  ),
+                                ),
+                                errorWidget: (context, url, error) => Container(
+                                  color: ThemeHelper.getSurfaceColor(context),
+                                  child: Icon(
+                                    Icons.image_not_supported,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 32,
+                                  ),
+                                ),
+                              ),
+                        // Story count badge (if multiple stories) - enhanced design
+                        if (stories.length > 1)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    ThemeHelper.getAccentColor(context),
+                                    ThemeHelper.getAccentColor(context).withOpacity(0.8),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.3),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Text(
+                                '${stories.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      // User name
-                      Expanded(
-                        child: Text(
-                          user.displayName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-              // Story count badge (if multiple stories)
-              if (stories.length > 1)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.7),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${stories.length}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+            ),
           ),
-        ),
+          const SizedBox(height: 12),
+          // User name below circle - enhanced typography
+          Text(
+            user.displayName,
+            style: TextStyle(
+              color: ThemeHelper.getTextPrimary(context),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }

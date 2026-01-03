@@ -1,36 +1,33 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/video_tile.dart';
 import '../../core/widgets/instagram_post_card.dart';
 import '../../core/widgets/ad_banner.dart';
-import '../../core/services/mock_data_service.dart';
 import '../../core/models/post_model.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import '../search/explore_screen.dart';
 import '../profile/profile_screen.dart';
 import '../chat/chat_list_screen.dart';
 import 'home_reels_viewer_screen.dart';
 
-class HomeFeedPage extends StatefulWidget {
+class HomeFeedPage extends ConsumerStatefulWidget {
   final double bottomPadding;
 
   const HomeFeedPage({super.key, required this.bottomPadding});
 
   @override
-  State<HomeFeedPage> createState() => _HomeFeedPageState();
+  ConsumerState<HomeFeedPage> createState() => _HomeFeedPageState();
 }
 
-class _HomeFeedPageState extends State<HomeFeedPage> {
+class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
   final ScrollController _scrollController = ScrollController();
-  final List<PostModel> _posts = [];
-  bool _isLoading = false;
-  String _sortBy = 'latest';
 
   @override
   void initState() {
     super.initState();
-    _loadPosts();
     _scrollController.addListener(_onScroll);
   }
 
@@ -40,40 +37,20 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
     super.dispose();
   }
 
-  void _loadPosts() {
-    setState(() {
-      _isLoading = true;
-    });
-
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) {
-        var newPosts = List<PostModel>.from(MockDataService.getMockPosts());
-
-        if (_sortBy == 'popular') {
-          newPosts.sort((a, b) => b.likes.compareTo(a.likes));
-        } else {
-          newPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        }
-
-        setState(() {
-          _posts.addAll(newPosts);
-          _isLoading = false;
-        });
-      }
-    });
-  }
-
   void _onScroll() {
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent * 0.8) {
-      if (!_isLoading) {
-        _loadPosts();
-      }
+      // Load more posts if needed (for future pagination)
+      // Currently all posts are loaded at once
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final postsState = ref.watch(postsProvider);
+    final posts = ref.watch(postsListProvider);
+    final isLoading = postsState.isLoading;
+
     return SafeArea(
       bottom: false,
       child: Column(
@@ -82,16 +59,13 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: () async {
-                setState(() {
-                  _posts.clear();
-                });
-                _loadPosts();
+                await ref.read(postsProvider.notifier).loadPosts();
               },
               color: context.buttonColor,
               child: CustomScrollView(
                 controller: _scrollController,
                 slivers: [
-                  if (_isLoading && _posts.isEmpty)
+                  if (isLoading && posts.isEmpty)
                     SliverFillRemaining(
                       child: Center(
                         child: CircularProgressIndicator(
@@ -105,7 +79,7 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                       sliver: SliverList(
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
-                            if (index > 0 && index % 5 == 0 && index < _posts.length) {
+                            if (index > 0 && index % 5 == 0 && index < posts.length) {
                               return const AdBanner(
                                 height: 60,
                                 adType: 'banner',
@@ -114,18 +88,18 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                             
                             final postIndex = index - (index ~/ 5);
                             
-                            if (postIndex < _posts.length) {
+                            if (postIndex < posts.length) {
                               return AnimationConfiguration.staggeredList(
                                 position: postIndex,
                                 duration: const Duration(milliseconds: 375),
                                 child: SlideAnimation(
                                   verticalOffset: 50.0,
                                   child: FadeInAnimation(
-                                    child: _buildPostCard(_posts[postIndex]),
+                                    child: _buildPostCard(posts[postIndex]),
                                   ),
                                 ),
                               );
-                            } else if (_isLoading) {
+                            } else if (isLoading) {
                               return Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Center(
@@ -137,7 +111,7 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
                             }
                             return const SizedBox.shrink();
                           },
-                          childCount: _posts.length + (_posts.length ~/ 5) + (_isLoading ? 1 : 0),
+                          childCount: posts.length + (posts.length ~/ 5) + (isLoading ? 1 : 0),
                         ),
                       ),
                     ),
@@ -268,6 +242,8 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
       return InstagramPostCard(post: post);
     }
 
+    final posts = ref.watch(postsListProvider);
+    
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       child: VideoTile(
@@ -278,11 +254,13 @@ class _HomeFeedPageState extends State<HomeFeedPage> {
         views: post.likes * 10,
         likes: post.likes,
         comments: post.comments,
+        shares: post.shares,
         duration: post.videoDuration,
         videoUrl: post.videoUrl,
+        postId: post.id,
         onTap: () {
           if (post.isVideo && post.videoUrl != null) {
-            final videoPosts = _posts.where((p) => p.isVideo && p.videoUrl != null).toList();
+            final videoPosts = posts.where((p) => p.isVideo && p.videoUrl != null).toList();
             final currentIndex = videoPosts.indexWhere((p) => p.id == post.id);
             
             if (currentIndex >= 0) {

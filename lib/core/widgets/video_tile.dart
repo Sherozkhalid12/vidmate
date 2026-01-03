@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 import '../utils/theme_helper.dart';
 import '../providers/video_player_provider.dart';
+import '../providers/posts_provider_riverpod.dart';
 import 'dart:async';
 
 /// Video tile widget redesigned to match Instagram-style post card
@@ -16,10 +17,12 @@ class VideoTile extends ConsumerStatefulWidget {
   final int views;
   final int likes;
   final int comments;
+  final int shares;
   final Duration? duration;
   final VoidCallback? onTap;
   final String? videoUrl; // Add video URL for inline playback
   final bool isPlaying;
+  final String? postId; // Post ID for Riverpod state management
 
   const VideoTile({
     super.key,
@@ -30,10 +33,12 @@ class VideoTile extends ConsumerStatefulWidget {
     this.views = 0,
     this.likes = 0,
     this.comments = 0,
+    this.shares = 0,
     this.duration,
     this.onTap,
     this.videoUrl,
     this.isPlaying = false,
+    this.postId,
   });
 
   @override
@@ -41,7 +46,6 @@ class VideoTile extends ConsumerStatefulWidget {
 }
 
 class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserver, SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
-  bool _isLiked = false;
   bool _isSaved = false;
   bool _isVideoVisible = false; // Track visibility for auto-pause - start as false
   late AnimationController _playPauseAnimationController;
@@ -264,13 +268,8 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       if (_isVideoVisible != isVisible) {
         _isVideoVisible = isVisible;
         
-        if (isVisible) {
-          // YouTube-like: Auto-play when video becomes visible
-          if (widget.videoUrl != null) {
-            _playVideo();
-          }
-        } else {
-          // Pause immediately when video goes out of view (YouTube/Instagram style)
+        if (!isVisible) {
+          // Pause immediately when video goes out of view
           if (widget.videoUrl != null) {
             try {
               final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
@@ -280,6 +279,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
             }
           }
         }
+        // Don't auto-play when visible - user must tap to play
       } else if (!isVisible && widget.videoUrl != null) {
         // Double-check: if not visible but playing, pause immediately
         try {
@@ -437,66 +437,6 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                         ),
                 ),
                 
-                // Left/Right tap areas for seeking (only when controls are visible)
-                if (isVideoInitialized && playerState != null && _showControls)
-                  Positioned.fill(
-                    child: Row(
-                      children: [
-                        // Left tap area - backward
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              _seekBackward();
-                              _showControlsTemporarily();
-                            },
-                            child: Container(
-                              color: Colors.transparent,
-                              child: Center(
-                                child: AnimatedOpacity(
-                                  opacity: 0.6,
-                                  duration: const Duration(milliseconds: 200),
-                                  child: Icon(
-                                    Icons.replay_10,
-                                    color: Colors.white,
-                                    size: 40,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        // Center area - reserved for play/pause button
-                        Expanded(
-                          flex: 2,
-                          child: Container(color: Colors.transparent),
-                        ),
-                        // Right tap area - forward
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              _seekForward();
-                              _showControlsTemporarily();
-                            },
-                            child: Container(
-                              color: Colors.transparent,
-                              child: Center(
-                                child: AnimatedOpacity(
-                                  opacity: 0.6,
-                                  duration: const Duration(milliseconds: 200),
-                                  child: Icon(
-                                    Icons.forward_10,
-                                    color: Colors.white,
-                                    size: 40,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                
                 // Play/Pause button - centered, only handles taps on the button itself
                 if (isVideoInitialized && playerState != null)
                   Positioned.fill(
@@ -606,57 +546,162 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
             ),
           ),
 
-          // Actions row - Instagram style
+          // Actions row - Bookmark/Backward/Forward on LEFT, Share/Comment/Like on RIGHT
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               children: [
+                // Left side - Bookmark, Backward, Forward (only when playing)
                 GestureDetector(
-                  onTap: () => setState(() => _isLiked = !_isLiked),
-                  child: Icon(
-                    _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
-                    size: 28,
-                    color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                  onTap: () => setState(() => _isSaved = !_isSaved),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                        size: 28,
+                        color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
+                      ),
+                    ],
+                  ),
+                ),
+                // Backward 10s (only visible when playing - no empty space when hidden)
+                if (isPlaying && isVideoInitialized) ...[
+                  const SizedBox(width: 16),
+                  GestureDetector(
+                    onTap: _seekBackward,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.replay_10,
+                          size: 28,
+                          color: ThemeHelper.getTextPrimary(context),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                // Forward 10s (only visible when playing - no empty space when hidden)
+                if (isPlaying && isVideoInitialized) ...[
+                  const SizedBox(width: 16),
+                  GestureDetector(
+                    onTap: _seekForward,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.forward_10,
+                          size: 28,
+                          color: ThemeHelper.getTextPrimary(context),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                // Right side actions - Share, Comment, Like (matching InstagramPostCard)
+                GestureDetector(
+                  onTap: () {
+                    // Handle share action
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.share_outlined,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatCount(widget.shares),
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 16),
                 GestureDetector(
                   onTap: widget.onTap,
-                  child: Icon(
-                    CupertinoIcons.chat_bubble,
-                    size: 28,
-                    color: ThemeHelper.getTextPrimary(context),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.mode_comment_outlined,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatCount(widget.comments),
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 16),
-                Icon(
-                  CupertinoIcons.paperplane,
-                  size: 28,
-                  color: ThemeHelper.getTextPrimary(context),
-                ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => setState(() => _isSaved = !_isSaved),
-                  child: Icon(
-                    _isSaved ? CupertinoIcons.bookmark_fill : CupertinoIcons.bookmark,
-                    size: 28,
-                    color: _isSaved ? Colors.amber : ThemeHelper.getTextPrimary(context),
-                  ),
+                Consumer(
+                  builder: (context, ref, child) {
+                    if (widget.postId != null) {
+                      final isLiked = ref.watch(postLikedProvider(widget.postId!));
+                      final likeCount = ref.watch(postLikeCountProvider(widget.postId!));
+                      return GestureDetector(
+                        onTap: () {
+                          ref.read(postsProvider.notifier).toggleLike(widget.postId!);
+                        },
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isLiked ? Icons.favorite : Icons.favorite_border,
+                              size: 28,
+                              color: isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatCount(likeCount),
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    } else {
+                      // Fallback for when postId is not provided
+                      return GestureDetector(
+                        onTap: () {},
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.favorite_border,
+                              size: 28,
+                              color: ThemeHelper.getTextPrimary(context),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatCount(widget.likes),
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                  },
                 ),
               ],
-            ),
-          ),
-
-          // Likes count
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '${_formatCount((_isLiked ? 1 : 0) + widget.likes)} likes',
-              style: TextStyle(
-                color: ThemeHelper.getTextPrimary(context),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
             ),
           ),
 
