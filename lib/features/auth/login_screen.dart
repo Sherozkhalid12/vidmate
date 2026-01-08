@@ -155,7 +155,7 @@ class _LoginScreenState extends State<LoginScreen>
                   const SizedBox(height: 40),
                   // Email field
                   GlassCard(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.only(top: 8),
                     borderRadius: BorderRadius.circular(16),
                     child: TextFormField(
                       controller: _emailController,
@@ -164,8 +164,15 @@ class _LoginScreenState extends State<LoginScreen>
                       decoration: InputDecoration(
                         labelText: 'Email',
                         labelStyle: TextStyle(color: context.textSecondary),
+                        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                        isDense: false,
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
                         prefixIcon: Icon(Icons.email_outlined,
                             color: ThemeHelper.getAccentColor(context)),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         border: InputBorder.none,
                       ),
                       validator: (value) {
@@ -182,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen>
                   const SizedBox(height: 16),
                   // Password field
                   GlassCard(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.only(top: 8),
                     borderRadius: BorderRadius.circular(16),
                     child: TextFormField(
                       controller: _passwordController,
@@ -192,8 +199,15 @@ class _LoginScreenState extends State<LoginScreen>
                         labelText: 'Password',
                         labelStyle:
                             TextStyle(color: context.textSecondary),
+                        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                        isDense: false,
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
                         prefixIcon: Icon(Icons.lock_outlined,
                             color: ThemeHelper.getAccentColor(context)),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword

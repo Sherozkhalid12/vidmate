@@ -322,57 +322,53 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ProfileScreen(user: video.author),
+                      Row(
+                        children: [
+                          // Follow button on the left
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
                             ),
-                          );
-                        },
-                        child: Row(
-                          children: [
-                            ClipOval(
-                              child: CachedNetworkImage(
-                                imageUrl: video.author.avatarUrl,
-                                width: 40,
-                                height: 40,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Container(
-                                  width: 40,
-                                  height: 40,
-                                  color: Colors.grey[800],
-                                  child: const Center(
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                errorWidget: (context, url, error) => Container(
-                                  width: 40,
-                                  height: 40,
-                                  color: Colors.grey[800],
-                                  child: const Icon(
-                                    Icons.person,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
+                            child: const Text(
+                              'Follow',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Text(
-                              video.author.displayName,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
+                          ),
+                          const SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ProfileScreen(user: video.author),
+                                ),
+                              );
+                            },
+                            child: CircleAvatar(
+                              radius: 20,
+                              backgroundImage: CachedNetworkImageProvider(video.author.avatarUrl),
+                              backgroundColor: Colors.grey[800],
+                              onBackgroundImageError: (exception, stackTrace) {
+                                // Error will show backgroundColor
+                              },
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            video.author.displayName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       Text(
@@ -428,21 +424,10 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
       children: [
         GestureDetector(
           onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.6),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.2),
-                width: 1,
-              ),
-            ),
-            child: Icon(
-              icon,
-              color: isActive ? Colors.red : Colors.white,
-              size: 24,
-            ),
+          child: Icon(
+            icon,
+            color: isActive ? Colors.red : Colors.white,
+            size: 28,
           ),
         ),
         if (count != null) ...[

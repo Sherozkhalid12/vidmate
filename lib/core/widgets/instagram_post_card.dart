@@ -302,10 +302,13 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.share_outlined,
-                        size: 28,
-                        color: ThemeHelper.getTextPrimary(context),
+                      Transform.rotate(
+                        angle: -0.785398,
+                        child: Icon(
+                          Icons.send,
+                          size: 28,
+                          color: ThemeHelper.getTextPrimary(context),
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(

@@ -659,18 +659,13 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
-                      ClipOval(
-                        child: CachedNetworkImage(
-                          imageUrl: user.avatarUrl,
-                          width: 40,
-                          height: 40,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            width: 40,
-                            height: 40,
-                            color: Colors.grey,
-                          ),
-                        ),
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundImage: CachedNetworkImageProvider(user.avatarUrl),
+                        backgroundColor: Colors.grey,
+                        onBackgroundImageError: (exception, stackTrace) {
+                          // Error will show backgroundColor
+                        },
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -693,6 +688,22 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                      // Close button (X)
+                      GestureDetector(
+                        onTap: _closeViewer,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 24,
+                          ),
                         ),
                       ),
                     ],
@@ -915,3 +926,4 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     }
   }
 }
+

@@ -81,7 +81,7 @@ class _StoryPageState extends State<StoryPage> {
                 ],
               ),
             ),
-            // Grid of story cards - 2 per row for better presentation
+            // Stories layout: "Your story" at top center, then 2 columns below
             Expanded(
               child: _users.isEmpty
                   ? Center(
@@ -113,27 +113,133 @@ class _StoryPageState extends State<StoryPage> {
                         ],
                       ),
                     )
-                  : GridView.builder(
+                  : SingleChildScrollView(
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 24,
-                        mainAxisSpacing: 32,
-                        childAspectRatio: 0.75, // Taller to accommodate name below
+                      child: Column(
+                        children: [
+                          // "Your story" at top center
+                          _buildYourStoryCard(),
+                          const SizedBox(height: 32),
+                          // 2 columns of user stories
+                          _buildStoriesGrid(),
+                        ],
                       ),
-                      itemCount: _users.length,
-                      itemBuilder: (context, index) {
-                        final user = _users[index];
-                        final stories = _userStoriesMap[user.id] ?? [];
-                        if (stories.isEmpty) return const SizedBox.shrink();
-                        
-                        return _buildStoryCard(user, stories, index);
-                      },
                     ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildYourStoryCard() {
+    // Use first mock user as "Your story"
+    final currentUser = MockDataService.mockUsers.first;
+    
+    return GestureDetector(
+      onTap: () {
+        // Handle your story tap - could open story creation or viewer
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Smaller circular story widget
+          Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  ThemeHelper.getAccentColor(context),
+                  ThemeHelper.getAccentColor(context).withOpacity(0.6),
+                ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.all(3),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: ThemeHelper.getBackgroundColor(context),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CircleAvatar(
+                    backgroundImage: CachedNetworkImageProvider(currentUser.avatarUrl),
+                    backgroundColor: ThemeHelper.getSurfaceColor(context),
+                    onBackgroundImageError: (exception, stackTrace) {
+                      // Error will show backgroundColor
+                    },
+                  ),
+                  // Plus icon overlay
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: ThemeHelper.getAccentColor(context),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: ThemeHelper.getBackgroundColor(context),
+                          width: 3,
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.add,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your story',
+            style: TextStyle(
+              color: ThemeHelper.getTextPrimary(context),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStoriesGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 24,
+        mainAxisSpacing: 24,
+        childAspectRatio: 0.75,
+      ),
+      itemCount: _users.length,
+      itemBuilder: (context, index) {
+        final user = _users[index];
+        final stories = _userStoriesMap[user.id] ?? [];
+        if (stories.isEmpty) return const SizedBox.shrink();
+        
+        return _buildStoryCard(user, stories, index);
+      },
     );
   }
 
@@ -145,131 +251,108 @@ class _StoryPageState extends State<StoryPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Circular story widget with shadow and gradient border
-          Expanded(
-            child: AspectRatio(
-              aspectRatio: 1.0,
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      ThemeHelper.getAccentColor(context),
-                      ThemeHelper.getAccentColor(context).withOpacity(0.6),
-                    ],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+          // Smaller circular story widget
+          Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  ThemeHelper.getAccentColor(context),
+                  ThemeHelper.getAccentColor(context).withOpacity(0.6),
+                ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
                 ),
-                padding: const EdgeInsets.all(4), // Border thickness
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: ThemeHelper.getBackgroundColor(context),
-                  ),
-                  padding: const EdgeInsets.all(3),
-                  child: ClipOval(
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        // Story media background
-                        firstStory.isVideo
-                            ? Container(
-                                color: Colors.black,
-                                child: Center(
-                                  child: Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.1),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Icon(
-                                      Icons.play_circle_filled,
-                                      size: 40,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : CachedNetworkImage(
-                                imageUrl: firstStory.mediaUrl,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Container(
-                                  color: ThemeHelper.getSurfaceColor(context),
-                                  child: Center(
-                                    child: CircularProgressIndicator(
-                                      color: ThemeHelper.getAccentColor(context),
-                                      strokeWidth: 3,
-                                    ),
-                                  ),
-                                ),
-                                errorWidget: (context, url, error) => Container(
-                                  color: ThemeHelper.getSurfaceColor(context),
-                                  child: Icon(
-                                    Icons.image_not_supported,
-                                    color: ThemeHelper.getTextSecondary(context),
-                                    size: 32,
-                                  ),
-                                ),
-                              ),
-                        // Story count badge (if multiple stories) - enhanced design
-                        if (stories.length > 1)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    ThemeHelper.getAccentColor(context),
-                                    ThemeHelper.getAccentColor(context).withOpacity(0.8),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.3),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: Text(
-                                '${stories.length}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+              ],
+            ),
+            padding: const EdgeInsets.all(3),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: ThemeHelper.getBackgroundColor(context),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Story media background using CircleAvatar
+                  firstStory.isVideo
+                      ? CircleAvatar(
+                          backgroundColor: Colors.black,
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.play_circle_filled,
+                              size: 30,
+                              color: Colors.white,
                             ),
                           ),
-                      ],
+                        )
+                      : CircleAvatar(
+                          backgroundImage: CachedNetworkImageProvider(firstStory.mediaUrl),
+                          backgroundColor: ThemeHelper.getSurfaceColor(context),
+                          onBackgroundImageError: (exception, stackTrace) {
+                            // Error will show backgroundColor
+                          },
+                        ),
+                  // Story count badge (if multiple stories)
+                  if (stories.length > 1)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              ThemeHelper.getAccentColor(context),
+                              ThemeHelper.getAccentColor(context).withOpacity(0.8),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          '${stories.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          // User name below circle - enhanced typography
+          const SizedBox(height: 8),
+          // User name below circle
           Text(
             user.displayName,
             style: TextStyle(
               color: ThemeHelper.getTextPrimary(context),
-              fontSize: 14,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
             ),
-            maxLines: 2,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
           ),

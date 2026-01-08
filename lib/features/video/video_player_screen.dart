@@ -38,6 +38,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
   int _commentCount = 0;
   Timer? _controlsTimer;
   VideoPlayerNotifier? _cachedNotifier;
+  List<PostModel>? _cachedSuggestedVideos;
 
   @override
   void initState() {
@@ -409,8 +410,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: const Text('Link copied to clipboard!'),
-                        backgroundColor: Colors.black.withOpacity(0.8),
+                        content: Text(
+                          'Link copied to clipboard!',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                          ),
+                        ),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
                       ),
                     );
                   },
@@ -1598,9 +1604,36 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                   ),
                 ),
               ),
+            // Back button at top left - always visible (placed last to ensure it's on top)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: SafeArea(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => Navigator.pop(context),
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.black.withOpacity(0.6),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
-      ),)
+      ),
+      ),
     );
   }
 
@@ -1609,29 +1642,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
       decoration: BoxDecoration(
         gradient: ThemeHelper.getBackgroundGradient(context),
       ),
-      child: SingleChildScrollView(
+          child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top bar with back button
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: ThemeHelper.getSurfaceColor(context),
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      color: ThemeHelper.getTextPrimary(context),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           // Video info section with glass card
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1641,68 +1655,69 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Title
-                  Text(
-                    widget.title,
-                    style: TextStyle(
-                      color: ThemeHelper.getTextPrimary(context),
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      height: 1.3,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // Metadata with icons
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.favorite,
-                        size: 16,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatCount(_likeCount),
-                        style: TextStyle(
-                          color: ThemeHelper.getTextSecondary(context),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 20),
-                      Icon(
-                        Icons.comment,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatCount(_commentCount),
-                        style: TextStyle(
-                          color: ThemeHelper.getTextSecondary(context),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
+                  // Text(
+                  //   widget.title,
+                  //   style: TextStyle(
+                  //     color: ThemeHelper.getTextPrimary(context),
+                  //     fontSize: 20,
+                  //     fontWeight: FontWeight.bold,
+                  //     height: 1.3,
+                  //   ),
+                  // ),
+                  // const SizedBox(height: 12),
+                  // // Metadata with icons
+                  // Row(
+                  //   children: [
+                  //     Icon(
+                  //       Icons.favorite,
+                  //       size: 16,
+                  //       color: Colors.red,
+                  //     ),
+                  //     const SizedBox(width: 4),
+                  //     Text(
+                  //       _formatCount(_likeCount),
+                  //       style: TextStyle(
+                  //         color: ThemeHelper.getTextSecondary(context),
+                  //         fontSize: 14,
+                  //         fontWeight: FontWeight.w600,
+                  //       ),
+                  //     ),
+                  //     const SizedBox(width: 20),
+                  //     Icon(
+                  //       Icons.comment,
+                  //       size: 16,
+                  //       color: Theme.of(context).colorScheme.primary,
+                  //     ),
+                  //     const SizedBox(width: 4),
+                  //     Text(
+                  //       _formatCount(_commentCount),
+                  //       style: TextStyle(
+                  //         color: ThemeHelper.getTextSecondary(context),
+                  //         fontSize: 14,
+                  //         fontWeight: FontWeight.w600,
+                  //       ),
+                  //     ),
+                  //   ],
+                  // ),
+                  // const SizedBox(height: 16),
                   // Divider
-                  Container(
-                    height: 1,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.transparent,
-                          ThemeHelper.getBorderColor(context),
-                          Colors.transparent,
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // Author info
+                  // Container(
+                  //   height: 1,
+                  //   decoration: BoxDecoration(
+                  //     gradient: LinearGradient(
+                  //       colors: [
+                  //         Colors.transparent,
+                  //         ThemeHelper.getBorderColor(context),
+                  //         Colors.transparent,
+                  //       ],
+                  //     ),
+                  //   ),
+                  // ),
+                  // const SizedBox(height: 16),
+                  // Author info and action buttons row
                   Row(
                     children: [
+                      // Author image
                       Container(
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
@@ -1712,11 +1727,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           ),
                         ),
                         child: CircleAvatar(
-                          radius: 22,
+                          radius: 20,
                           backgroundImage: NetworkImage(widget.author.avatarUrl),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
+                      // Author name and followers in column
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1725,43 +1741,138 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                               widget.author.displayName,
                               style: TextStyle(
                                 color: ThemeHelper.getTextPrimary(context),
-                                fontSize: 16,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w700,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 2),
                             Text(
                               '${_formatCount(widget.author.followers)} followers',
                               style: TextStyle(
                                 color: ThemeHelper.getTextSecondary(context),
-                                fontSize: 12,
+                                fontSize: 11,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),
                       ),
+                      const Spacer(),
+                      // Follow button
                       Container(
                         decoration: BoxDecoration(
-                          color:  Theme.of(context).colorScheme.primary,
-                          borderRadius: BorderRadius.circular(12),
+                          color: Theme.of(context).colorScheme.primary,
+                          borderRadius: BorderRadius.circular(10),
                         ),
                         child: Material(
                           color: Colors.transparent,
                           child: InkWell(
                             onTap: () {},
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(10),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                               child: Text(
                                 'Follow',
                                 style: TextStyle(
                                   color: context.buttonTextColor,
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 14,
+                                  fontSize: 12,
                                 ),
                               ),
                             ),
                           ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Share icon
+                      GestureDetector(
+                        onTap: () => _showShareDialog(context),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Transform.rotate(
+                              angle: -0.785398,
+                              child: Icon(
+                                Icons.send,
+                                size: 24,
+                                color: ThemeHelper.getTextPrimary(context),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatCount(widget.post?.shares ?? 0),
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Comments icon
+                      GestureDetector(
+                        onTap: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Comments feature coming soon!',
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextPrimary(context),
+                                ),
+                              ),
+                              backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                            ),
+                          );
+                        },
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.mode_comment_outlined,
+                              size: 24,
+                              color: ThemeHelper.getTextPrimary(context),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatCount(_commentCount),
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Heart icon
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _isLiked = !_isLiked;
+                            _likeCount += _isLiked ? 1 : -1;
+                          });
+                        },
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _isLiked ? Icons.favorite : Icons.favorite_border,
+                              size: 24,
+                              color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatCount(_likeCount),
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -1778,126 +1889,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                   ),
                 ],
               ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Action buttons with glass cards
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: GlassCard(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    onTap: () {
-                      setState(() {
-                        _isLiked = !_isLiked;
-                        _likeCount += _isLiked ? 1 : -1;
-                      });
-                    },
-                    child: Column(
-                      children: [
-                        Icon(
-                          _isLiked ? Icons.favorite : Icons.favorite_border,
-                          color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
-                          size: 24,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _formatCount(_likeCount),
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GlassCard(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Comments feature coming soon!'),
-                          backgroundColor: Colors.black.withOpacity(0.9),
-                        ),
-                      );
-                    },
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.comment_outlined,
-                          color: ThemeHelper.getTextPrimary(context),
-                          size: 24,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _formatCount(_commentCount),
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GlassCard(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    onTap: () => _showShareDialog(context),
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.share_outlined,
-                          color: ThemeHelper.getTextPrimary(context),
-                          size: 24,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Share',
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GlassCard(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    onTap: () {},
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.bookmark_border,
-                          color: ThemeHelper.getTextPrimary(context),
-                          size: 24,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Save',
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
             ),
           ),
           const SizedBox(height: 24),
@@ -1936,7 +1927,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
           _buildSuggestedVideosList(),
           const SizedBox(height: 16),
         ],
-      ),)
+      ),
+      ),
     );
   }
 
@@ -1965,13 +1957,63 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     );
   }
 
-  Widget _buildSuggestedVideosList() {
-    // Get suggested videos from mock data
+  List<PostModel> _getSuggestedVideos() {
+    // Return cached videos if they exist to prevent changing during playback
+    if (_cachedSuggestedVideos != null) {
+      return _cachedSuggestedVideos!;
+    }
+    
+    // Get suggested videos from mock data - show exactly 3 unique videos
     final allPosts = MockDataService.getMockPosts();
-    final suggestedVideos = allPosts
+    var suggestedVideos = allPosts
         .where((p) => p.isVideo && p.id != widget.post?.id)
-        .take(10)
         .toList();
+    
+    // Generate additional videos if needed to ensure we have enough unique videos
+    if (suggestedVideos.length < 3) {
+      final additionalVideos = List.generate(10, (index) {
+        final userIndex = index % MockDataService.mockUsers.length;
+        return PostModel(
+          id: 'suggested_video_${index + 100}',
+          author: MockDataService.mockUsers[userIndex],
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+          thumbnailUrl: 'https://picsum.photos/800/450?random=${index + 200}',
+          caption: 'Suggested video ${index + 1}',
+          createdAt: DateTime.now().subtract(Duration(hours: index)),
+          likes: (index + 1) * 500,
+          comments: (index + 1) * 25,
+          shares: (index + 1) * 10,
+          isLiked: false,
+          videoDuration: Duration(minutes: index % 10 + 1, seconds: (index * 7) % 60),
+          isVideo: true,
+        );
+      });
+      suggestedVideos.addAll(additionalVideos);
+    }
+    
+    // Filter out current video again in case it was in additional videos
+    suggestedVideos = suggestedVideos
+        .where((p) => p.id != widget.post?.id)
+        .toList();
+    
+    // Shuffle to get different videos each time (only once when first loading)
+    suggestedVideos.shuffle();
+    
+    // Take exactly 3 videos
+    suggestedVideos = suggestedVideos.take(3).toList();
+    
+    // Cache the videos so they don't change during playback
+    _cachedSuggestedVideos = suggestedVideos;
+    
+    return suggestedVideos;
+  }
+
+  Widget _buildSuggestedVideosList() {
+    final suggestedVideos = _getSuggestedVideos();
+
+    if (suggestedVideos.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return ListView.builder(
       shrinkWrap: true,

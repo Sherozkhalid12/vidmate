@@ -178,7 +178,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                   const SizedBox(height: 40),
                   // Name field
                   GlassCard(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.only(top: 8),
                     borderRadius: BorderRadius.circular(16),
                     child: TextFormField(
                       controller: _nameController,
@@ -186,8 +186,15 @@ class _SignUpScreenState extends State<SignUpScreen>
                       decoration: InputDecoration(
                         labelText: 'Full Name',
                         labelStyle: TextStyle(color: context.textSecondary),
+                        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                        isDense: false,
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
                         prefixIcon: Icon(Icons.person_outline,
                             color: ThemeHelper.getAccentColor(context)),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         border: InputBorder.none,
                       ),
                       validator: (value) {
@@ -201,7 +208,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                   const SizedBox(height: 16),
                   // Email field
                   GlassCard(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.only(top: 8),
                     borderRadius: BorderRadius.circular(16),
                     child: TextFormField(
                       controller: _emailController,
@@ -210,8 +217,15 @@ class _SignUpScreenState extends State<SignUpScreen>
                       decoration: InputDecoration(
                         labelText: 'Email',
                         labelStyle: TextStyle(color: context.textSecondary),
+                        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                        isDense: false,
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
                         prefixIcon: Icon(Icons.email_outlined,
                             color: ThemeHelper.getAccentColor(context)),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         border: InputBorder.none,
                       ),
                       validator: (value) {
@@ -228,7 +242,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                   const SizedBox(height: 16),
                   // Password field
                   GlassCard(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.only(top: 8),
                     borderRadius: BorderRadius.circular(16),
                     child: TextFormField(
                       controller: _passwordController,
@@ -238,8 +252,15 @@ class _SignUpScreenState extends State<SignUpScreen>
                         labelText: 'Password',
                         labelStyle:
                             TextStyle(color: context.textSecondary),
+                        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                        isDense: false,
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
                         prefixIcon: Icon(Icons.lock_outlined,
                             color: ThemeHelper.getAccentColor(context)),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword
@@ -269,7 +290,7 @@ class _SignUpScreenState extends State<SignUpScreen>
                   const SizedBox(height: 16),
                   // Confirm password field
                   GlassCard(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.only(top: 8),
                     borderRadius: BorderRadius.circular(16),
                     child: TextFormField(
                       controller: _confirmPasswordController,
@@ -279,8 +300,15 @@ class _SignUpScreenState extends State<SignUpScreen>
                         labelText: 'Confirm Password',
                         labelStyle:
                             TextStyle(color: context.textSecondary),
+                        contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                        isDense: false,
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
                         prefixIcon: Icon(Icons.lock_outlined,
                             color: ThemeHelper.getAccentColor(context)),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscureConfirmPassword

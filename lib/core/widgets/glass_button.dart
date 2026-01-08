@@ -67,6 +67,31 @@ class _GlassButtonState extends State<GlassButton>
     _controller.reverse();
   }
 
+  Color _getLoaderColor(BuildContext context) {
+    // If textColor is provided, use it for the loader
+    if (widget.textColor != null) {
+      return widget.textColor!;
+    }
+    
+    // For gradient buttons (no backgroundColor), use white
+    if (widget.backgroundColor == null) {
+      return Colors.white;
+    }
+    
+    // For solid buttons, determine color based on background brightness
+    final backgroundColor = widget.backgroundColor!;
+    final brightness = ThemeData.estimateBrightnessForColor(backgroundColor);
+    
+    // If background is light, use dark color; if dark, use light color
+    if (brightness == Brightness.light) {
+      // Light background - use primary color or dark color for contrast
+      return Theme.of(context).colorScheme.primary;
+    } else {
+      // Dark background - use white for contrast
+      return Colors.white;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -110,18 +135,19 @@ class _GlassButtonState extends State<GlassButton>
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  if (widget.isLoading)
+                  if (widget.isLoading) ...[
                     SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          widget.textColor ?? ThemeHelper.getTextPrimary(context),
+                          _getLoaderColor(context),
                         ),
                       ),
-                    )
-                  else if (widget.icon != null) ...[
+                    ),
+                    const SizedBox(width: 16), // Proper spacing between loader and text
+                  ] else if (widget.icon != null) ...[
                     Icon(
                       widget.icon,
                       color: widget.textColor ?? Theme.of(context).colorScheme.onPrimary, // Theme-aware icon color
