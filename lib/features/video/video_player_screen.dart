@@ -1875,6 +1875,26 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           ],
                         ),
                       ),
+                      const SizedBox(width: 12),
+                      // Views icon
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.visibility_outlined,
+                            size: 24,
+                            color: ThemeHelper.getTextPrimary(context),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatCount((widget.post?.likes ?? _likeCount) * 10),
+                            style: TextStyle(
+                              color: ThemeHelper.getTextSecondary(context),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),

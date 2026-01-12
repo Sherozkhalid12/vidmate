@@ -114,12 +114,12 @@ class _StoryPageState extends State<StoryPage> {
                       ),
                     )
                   : SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       child: Column(
                         children: [
                           // "Your story" at top center
                           _buildYourStoryCard(),
-                          const SizedBox(height: 32),
+                          const SizedBox(height: 12),
                           // 2 columns of user stories
                           _buildStoriesGrid(),
                         ],
@@ -228,9 +228,9 @@ class _StoryPageState extends State<StoryPage> {
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        crossAxisSpacing: 24,
-        mainAxisSpacing: 24,
-        childAspectRatio: 0.75,
+        crossAxisSpacing: 0,
+        mainAxisSpacing: 0,
+        childAspectRatio: 0.95,
       ),
       itemCount: _users.length,
       itemBuilder: (context, index) {
