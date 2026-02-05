@@ -213,7 +213,7 @@ class PostDetailScreen extends StatelessWidget {
                       ),
                       _buildAction(
                         context,
-                        icon: Icons.bookmark_border,
+                        icon: Icons.star_border,
                         label: 'Save',
                         onTap: () {},
                       ),

@@ -2,11 +2,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
+// audioplayers: Run `flutter pub get` to install. Restore import for real audio playback.
+import '../../core/utils/create_content_visibility.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
+import 'select_music_screen.dart';
 
 /// Content type enum for different creation modes
 enum ContentType {
@@ -33,11 +36,16 @@ class MediaItem {
 class CreateContentScreen extends StatefulWidget {
   final Widget? bottomNavigationBar;
   final ContentType initialType;
+  /// When creating a reel, optional pre-selected audio from "Use this audio" flow
+  final String? selectedAudioId;
+  final String? selectedAudioName;
 
   const CreateContentScreen({
     super.key,
     this.bottomNavigationBar,
     this.initialType = ContentType.post,
+    this.selectedAudioId,
+    this.selectedAudioName,
   });
 
   @override
@@ -64,55 +72,125 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
 
   bool _isUploading = false;
   int _currentCarouselIndex = 0;
+  /// Pre-selected audio when opening from "Use this audio" (reel only)
+  String? _selectedAudioId;
+  String? _selectedAudioName;
+  /// Audio URL for playback (from Select Music; fallback for "Use this audio")
+  String? _selectedAudioUrl;
+  /// Play/pause state for audio chip - never auto-play when screen is shown
+  bool _isAudioPlaying = false;
+  /// Selected location, tagged users, feeling (shown on screen when set)
+  String? _selectedLocation;
+  final List<String> _taggedUsers = [];
+  String? _selectedFeeling;
 
   @override
   void initState() {
     super.initState();
+    createContentVisibleNotifier.value = true; // Pause Reels/background media
     _selectedType = widget.initialType;
+    _selectedAudioId = widget.selectedAudioId;
+    _selectedAudioName = widget.selectedAudioName;
+    _selectedAudioUrl = null;
+    // Do not auto-play audio or video in this screen
   }
 
   @override
   void dispose() {
+    createContentVisibleNotifier.value = false;
     _captionController.dispose();
     _carouselController.dispose();
     _videoController?.dispose();
+    _stopAndDisposeAudio();
     super.dispose();
+  }
+
+  void _stopAndDisposeAudio() {
+    if (mounted) setState(() => _isAudioPlaying = false);
+  }
+
+  /// Dispose video when switching content type; dispose audio when navigating to select music
+  void _disposeMediaForTabChange() {
+    _videoController?.dispose();
+    _videoController = null;
+    _videoFile = null;
+    _videoDuration = null;
+    _stopAndDisposeAudio();
+  }
+
+  void _disposeAudioState() {
+    _stopAndDisposeAudio();
+  }
+
+  /// Get URL for playback (from Select Music or demo for "Use this audio")
+  String? get _playbackUrl {
+    if (_selectedAudioUrl != null && _selectedAudioUrl!.isNotEmpty) return _selectedAudioUrl;
+    if (_selectedAudioId != null && MockDataService.getMockMusic().isNotEmpty) {
+      return MockDataService.getMockMusic().first.audioUrl;
+    }
+    return null;
+  }
+
+  /// Play/pause audio. Pause icon stops playback; no auto-play when screen is shown.
+  /// Note: Real audio requires `audioplayers`. Run `flutter pub get` and restore
+  /// the AudioPlayer implementation for actual playback.
+  Future<void> _toggleAudioPlayPause() async {
+    if (_playbackUrl == null) return;
+    if (_isAudioPlaying) {
+      _stopAndDisposeAudio();
+      return;
+    }
+    if (mounted) setState(() => _isAudioPlaying = true);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // MEDIA PICKING METHODS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Show source selection dialog (Gallery/Camera)
+  /// Show source selection dialog (Gallery/Camera) - floating, opacity 1
   Future<ImageSource?> _showSourceDialog() async {
     return await showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: context.surfaceColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(Icons.photo_library, color: context.buttonColor),
-              title: Text(
-                'Choose from Gallery',
-                style: TextStyle(color: context.textPrimary),
-              ),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-            ListTile(
-              leading: Icon(Icons.camera_alt, color: context.buttonColor),
-              title: Text(
-                'Take Photo/Video',
-                style: TextStyle(color: context.textPrimary),
-              ),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
+        margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
           ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary),
+                  title: Text(
+                    'Choose from Gallery',
+                    style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                  ),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+                ListTile(
+                  leading: Icon(Icons.camera_alt, color: Theme.of(context).colorScheme.primary),
+                  title: Text(
+                    'Take Photo/Video',
+                    style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                  ),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -181,35 +259,49 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   /// Pick multiple media items for Story (images + videos, 1-10 max)
   Future<void> _pickStoryMedia() async {
     try {
-      // Show media type selection
+      // Show media type selection - floating, pure white
       final String? mediaType = await showModalBottomSheet<String>(
         context: context,
-        backgroundColor: context.surfaceColor,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
+        backgroundColor: Colors.transparent,
         builder: (context) => Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(Icons.image, color: context.buttonColor),
-                title: Text(
-                  'Add Photos',
-                  style: TextStyle(color: context.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, 'image'),
-              ),
-              ListTile(
-                leading: Icon(Icons.videocam, color: context.buttonColor),
-                title: Text(
-                  'Add Videos',
-                  style: TextStyle(color: context.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, 'video'),
+          margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
               ),
             ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: Icon(Icons.image, color: Theme.of(context).colorScheme.primary),
+                    title: Text(
+                      'Add Photos',
+                      style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                    ),
+                    onTap: () => Navigator.pop(context, 'image'),
+                  ),
+                  ListTile(
+                    leading: Icon(Icons.videocam, color: Theme.of(context).colorScheme.primary),
+                    title: Text(
+                      'Add Videos',
+                      style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                    ),
+                    onTap: () => Navigator.pop(context, 'video'),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       );
@@ -348,9 +440,10 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
         // Dispose previous controller
         _videoController?.dispose();
 
-        // Create new controller for preview
+        // Create new controller for preview - never auto-play
         final controller = VideoPlayerController.file(videoFile);
         await controller.initialize();
+        controller.pause(); // Explicit: do not play in create content screen
 
         setState(() {
           _videoFile = videoFile;
@@ -493,9 +586,376 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
       _videoFile = null;
       _videoDuration = null;
       _currentCarouselIndex = 0;
+      _selectedLocation = null;
+      _taggedUsers.clear();
+      _selectedFeeling = null;
+      _isAudioPlaying = false;
     });
     _videoController?.dispose();
     _videoController = null;
+  }
+
+  /// Show action bottom sheet (Location, Tag People, Feeling) - floating, opacity 1, search for Location/Tag, emoji grid for Feeling
+  void _showActionBottomSheet(IconData icon, String label) {
+    if (label == 'Location') {
+      _showLocationBottomSheet();
+    } else if (label == 'Tag People') {
+      _showTagPeopleBottomSheet();
+    } else if (label == 'Feeling') {
+      _showFeelingBottomSheet();
+    }
+  }
+
+  static const List<String> _locationOptions = [
+    'New York', 'Los Angeles', 'London', 'Tokyo', 'Paris', 'Sydney', 'Berlin', 'Mumbai', 'Dubai', 'Singapore',
+  ];
+  static const List<String> _tagOptions = [
+    '@techcreator', '@designer_life', '@traveler', '@fitness_guru', '@music_producer', '@foodie', '@artist',
+  ];
+  static const List<String> _feelingEmojis = [
+    '😊', '😂', '❤️', '😍', '🔥', '👍', '😢', '😡', '🤔', '😴',
+    '🎉', '🙏', '💪', '✨', '🌟', '💯', '😎', '🥳', '😌', '🤗',
+  ];
+
+  void _showLocationBottomSheet() {
+    final searchController = TextEditingController();
+    String query = '';
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          final filtered = query.isEmpty
+              ? _locationOptions
+              : _locationOptions.where((l) => l.toLowerCase().contains(query.toLowerCase())).toList();
+          void updateQuery(String v) {
+            query = v;
+            setModalState(() {});
+          }
+          return Container(
+            margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                    child: Text('Add Location', style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: TextField(
+                      controller: searchController,
+                      onChanged: updateQuery,
+                      style: const TextStyle(color: Colors.black87),
+                      decoration: InputDecoration(
+                        hintText: 'Search location...',
+                        hintStyle: TextStyle(color: Colors.grey[600]),
+                        prefixIcon: Icon(Icons.search, color: Theme.of(context).colorScheme.primary, size: 22),
+                        filled: true,
+                        fillColor: Colors.grey.shade100,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade300)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: filtered.length,
+                      itemBuilder: (context, i) {
+                        final loc = filtered[i];
+                        return ListTile(
+                          leading: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(Icons.location_on, color: Theme.of(context).colorScheme.primary),
+                          ),
+                          title: Text(loc, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w500)),
+                          onTap: () {
+                            Navigator.pop(context);
+                            setState(() => _selectedLocation = loc);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(() {
+      searchController.dispose();
+    });
+  }
+
+  void _showTagPeopleBottomSheet() {
+    final searchController = TextEditingController();
+    String query = '';
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          void updateQuery(String v) {
+            query = v;
+            setModalState(() {});
+          }
+          final filtered = query.isEmpty
+              ? _tagOptions
+              : _tagOptions.where((u) => u.toLowerCase().contains(query.toLowerCase())).toList();
+          return Container(
+            margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                    child: Text('Tag People', style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: TextField(
+                      controller: searchController,
+                      onChanged: updateQuery,
+                      style: const TextStyle(color: Colors.black87),
+                      decoration: InputDecoration(
+                        hintText: 'Search people...',
+                        hintStyle: TextStyle(color: Colors.grey[600]),
+                        prefixIcon: Icon(Icons.search, color: Theme.of(context).colorScheme.primary, size: 22),
+                        filled: true,
+                        fillColor: Colors.grey.shade100,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade300)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: filtered.length,
+                      itemBuilder: (context, i) {
+                        final user = filtered[i];
+                        final alreadyTagged = _taggedUsers.contains(user);
+                        return ListTile(
+                          leading: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
+                          ),
+                          title: Text(user, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w500)),
+                          trailing: alreadyTagged ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
+                          onTap: () {
+                            setState(() {
+                              if (alreadyTagged) {
+                                _taggedUsers.remove(user);
+                              } else {
+                                _taggedUsers.add(user);
+                              }
+                            });
+                            setModalState(() {});
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(() {
+      searchController.dispose();
+    });
+  }
+
+  void _showFeelingBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: Text('How are you feeling?', style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w700)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 5,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 1,
+                  ),
+                  itemCount: _feelingEmojis.length,
+                  itemBuilder: (context, index) {
+                    final emoji = _feelingEmojis[index];
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.pop(context);
+                        setState(() => _selectedFeeling = emoji);
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Center(
+                          child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Selected location, tagged people, feeling tiles shown on create content screen
+  Widget _buildSelectedTiles() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (_selectedLocation != null)
+            _buildChip(
+              icon: Icons.location_on,
+              label: _selectedLocation!,
+              onRemove: () => setState(() => _selectedLocation = null),
+            ),
+          ..._taggedUsers.map((u) => _buildChip(
+            icon: Icons.person,
+            label: u,
+            onRemove: () => setState(() => _taggedUsers.remove(u)),
+          )),
+          if (_selectedFeeling != null)
+            _buildChip(
+              icon: Icons.mood,
+              label: _selectedFeeling!,
+              onRemove: () => setState(() => _selectedFeeling = null),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChip({required IconData icon, required String label, required VoidCallback onRemove}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: ThemeHelper.getSurfaceColor(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ThemeHelper.getBorderColor(context)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: ThemeHelper.getAccentColor(context)),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(color: ThemeHelper.getTextPrimary(context), fontSize: 14, fontWeight: FontWeight.w500)),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: onRemove,
+            child: Icon(Icons.close, size: 18, color: ThemeHelper.getTextMuted(context)),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Show error snackbar
@@ -526,47 +986,56 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final minMediaHeight = screenHeight * 0.45;
     return Scaffold(
       backgroundColor: Colors.transparent,
-      // appBar:
       body: Container(
         decoration: BoxDecoration(
           gradient: context.backgroundGradient,
         ),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-               _buildAppBar(),
-              // Type selector (segmented control)
-              _buildTypeSelector(),
-              const SizedBox(height: 16),
-
-              // Author info
-              _buildAuthorInfo(),
-
-              // Media preview/selector (type-specific)
-              _buildMediaSection(),
-
-              const SizedBox(height: 20),
-
-              // Caption
-              _buildCaptionField(),
-
-              const SizedBox(height: 20),
-
-              // Action buttons (Location, Tag, Feeling)
-              if (_shouldShowActionButtons()) _buildActionButtons(),
-
+        child: SafeArea(
+          bottom: false,
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(child: _buildAppBar()),
+              SliverToBoxAdapter(child: _buildTypeSelector()),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
+              SliverToBoxAdapter(child: _buildAuthorInfo()),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: minMediaHeight,
+                  child: _buildMediaSection(minMediaHeight),
+                ),
+              ),
+              if (_selectedType == ContentType.reel && _selectedAudioName != null) ...[
+                const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                SliverToBoxAdapter(child: _buildSelectedAudioChip()),
+                const SliverToBoxAdapter(child: SizedBox(height: 8)),
+              ],
+              if (_selectedType == ContentType.reel) ...[
+                const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                SliverToBoxAdapter(child: _buildAddMusicButton()),
+                const SliverToBoxAdapter(child: SizedBox(height: 12)),
+              ],
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              SliverToBoxAdapter(child: _buildCaptionField()),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              SliverToBoxAdapter(child: _buildActionButtons()),
+              if (_selectedLocation != null || _taggedUsers.isNotEmpty || _selectedFeeling != null) ...[
+                const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                SliverToBoxAdapter(child: _buildSelectedTiles()),
+              ],
               if (_isUploading) ...[
-                const SizedBox(height: 20),
-                LinearProgressIndicator(
-                  backgroundColor: context.surfaceColor,
-                  valueColor: AlwaysStoppedAnimation<Color>(context.buttonColor),
+                const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                SliverToBoxAdapter(
+                  child: LinearProgressIndicator(
+                    backgroundColor: context.surfaceColor,
+                    valueColor: AlwaysStoppedAnimation<Color>(context.buttonColor),
+                  ),
                 ),
               ],
-
-              const SizedBox(height: 40), // Bottom padding
+              const SliverToBoxAdapter(child: SizedBox(height: 40)),
             ],
           ),
         ),
@@ -657,16 +1126,11 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
         onTap: () {
           setState(() {
             _selectedType = type;
-            // Clear media when switching types
+            // Clear media when switching types; dispose video/audio correctly
             if (type != ContentType.post) _postImages.clear();
-            if (type != ContentType.story) {
-              _storyMedia.clear();
-            }
+            if (type != ContentType.story) _storyMedia.clear();
             if (type != ContentType.reel && type != ContentType.longVideo) {
-              _videoFile = null;
-              _videoDuration = null;
-              _videoController?.dispose();
-              _videoController = null;
+              _disposeMediaForTabChange();
             }
           });
         },
@@ -697,7 +1161,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   /// Build author info header
   Widget _buildAuthorInfo() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
           ClipOval(
@@ -734,23 +1198,25 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   }
 
   /// Build media section (type-specific)
-  Widget _buildMediaSection() {
+  Widget _buildMediaSection([double? minHeight]) {
+    final h = minHeight ?? 360;
     switch (_selectedType) {
       case ContentType.post:
-        return _buildPostMediaSection();
+        return _buildPostMediaSection(fillHeight: h);
       case ContentType.story:
-        return _buildStoryMediaSection();
+        return _buildStoryMediaSection(fillHeight: h);
       case ContentType.reel:
       case ContentType.longVideo:
-        return _buildVideoMediaSection();
+        return _buildVideoMediaSection(fillHeight: h);
     }
   }
 
   /// Build Post media section (multiple images with carousel)
-  Widget _buildPostMediaSection() {
+  Widget _buildPostMediaSection({double? fillHeight}) {
+    final h = fillHeight ?? 400;
     if (_postImages.isEmpty) {
       return Container(
-        height: 300,
+        height: h,
         margin: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
           color: context.surfaceColor,
@@ -799,7 +1265,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     }
 
     return Container(
-      height: 400,
+      height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
       child: Stack(
         children: [
@@ -830,7 +1296,6 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
               );
             },
           ),
-          
           // Carousel indicators
           if (_postImages.length > 1)
             Positioned(
@@ -909,10 +1374,11 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   }
 
   /// Build Story media section (grid/list preview)
-  Widget _buildStoryMediaSection() {
+  Widget _buildStoryMediaSection({double? fillHeight}) {
+    final h = fillHeight ?? 300;
     if (_storyMedia.isEmpty) {
       return Container(
-        height: 300,
+        height: h,
         margin: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
           color: context.surfaceColor,
@@ -961,20 +1427,22 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     }
 
     return Container(
+      height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Grid preview
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: _storyMedia.length,
+          Expanded(
+            child: GridView.builder(
+              shrinkWrap: false,
+              physics: const ClampingScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: _storyMedia.length,
             itemBuilder: (context, index) {
               final item = _storyMedia[index];
               return Stack(
@@ -1050,11 +1518,11 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
               );
             },
           ),
-          
+          ),
           // Add more button
           if (_storyMedia.length < 10)
             Padding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
               child: Center(
                 child: ElevatedButton.icon(
                   onPressed: _pickStoryMedia,
@@ -1076,10 +1544,11 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   }
 
   /// Build video media section (single video preview)
-  Widget _buildVideoMediaSection() {
+  Widget _buildVideoMediaSection({double? fillHeight}) {
+    final h = fillHeight ?? 400;
     if (_videoFile == null) {
       return Container(
-        height: 300,
+        height: h,
         margin: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
           color: context.surfaceColor,
@@ -1130,7 +1599,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     }
 
     return Container(
-      height: 400,
+      height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
       child: Stack(
         children: [
@@ -1156,7 +1625,6 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                     ),
             ),
           ),
-          
           // Video duration badge
           if (_videoDuration != null)
             Positioned(
@@ -1214,6 +1682,138 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     );
   }
 
+  /// Build Add Music button for reel
+  Widget _buildAddMusicButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () async {
+          _disposeAudioState();
+          final selected = await Navigator.push<Map<String, dynamic>>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const SelectMusicScreen(),
+            ),
+          );
+          if (selected != null && mounted) {
+            setState(() {
+              _selectedAudioId = selected['id'] as String?;
+              _selectedAudioName = selected['name'] as String?;
+              _selectedAudioUrl = selected['audioUrl'] as String?;
+              _isAudioPlaying = false;
+            });
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: context.surfaceColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: context.borderColor,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.add_circle_outline,
+                color: context.buttonColor,
+                size: 26,
+              ),
+              const SizedBox(width: 14),
+              Text(
+                _selectedAudioName != null ? 'Change Music' : 'Add Music',
+                style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Icon(
+                Icons.chevron_right,
+                color: context.textMuted,
+                size: 24,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build chip showing selected audio with play/pause - no auto-play when screen is shown
+  Widget _buildSelectedAudioChip() {
+    if (_selectedAudioName == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: ThemeHelper.getSurfaceColor(context),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: ThemeHelper.getBorderColor(context),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.music_note_rounded,
+              color: ThemeHelper.getAccentColor(context),
+              size: 22,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Using audio',
+                    style: TextStyle(
+                      color: ThemeHelper.getTextMuted(context),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _selectedAudioName!,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextPrimary(context),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            GestureDetector(
+              onTap: () => _toggleAudioPlayPause(),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: ThemeHelper.getAccentColor(context).withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _isAudioPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  color: ThemeHelper.getAccentColor(context),
+                  size: 24,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Build caption field
   Widget _buildCaptionField() {
     final maxLines = _selectedType == ContentType.story ? 3 : 6;
@@ -1261,9 +1861,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   /// Build individual action button
   Widget _buildActionButton(IconData icon, String label) {
     return GestureDetector(
-      onTap: () {
-        // Handle action button tap
-      },
+      onTap: () => _showActionBottomSheet(icon, label),
       child: Column(
         children: [
           Container(

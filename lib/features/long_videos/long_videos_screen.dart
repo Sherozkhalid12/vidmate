@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/video_player_provider.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import '../video/video_player_screen.dart';
 import '../profile/profile_screen.dart';
 import 'providers/long_videos_provider.dart';
@@ -13,6 +14,7 @@ import 'providers/long_video_playback_provider.dart';
 import 'providers/long_video_widget_provider.dart';
 import '../../core/services/mock_data_service.dart';
 import 'dart:async';
+import 'dart:ui';
 
 /// Long Videos Page - YouTube-style video feed with Riverpod state management
 class LongVideosScreen extends ConsumerStatefulWidget {
@@ -29,6 +31,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
   DateTime? _lastPlayActionTime; // Prevent rapid play/pause toggles
   Timer? _scrollThrottleTimer; // Throttle scroll events
   DateTime? _lastScrollCheck; // Last time we checked scroll position
+  final Map<String, bool> _followStates = {}; // Track follow states locally
 
   @override
   void initState() {
@@ -298,7 +301,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
     );
 
     return Scaffold(
-      backgroundColor: ThemeHelper.getBackgroundColor(context),
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(
@@ -380,18 +383,39 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
   }
 
   Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: ThemeHelper.getBackgroundColor(context),
-        border: Border(
-          bottom: BorderSide(
-            color: ThemeHelper.getBorderColor(context),
-            width: 0.5,
-          ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderDecoration = BoxDecoration(
+      border: Border(
+        bottom: BorderSide(
+          color: ThemeHelper.getBorderColor(context),
+          width: 0.5,
         ),
       ),
-      child: Row(
+    );
+    return isDark
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: borderDecoration.copyWith(
+              color: ThemeHelper.getBackgroundColor(context),
+            ),
+            child: _buildHeaderContent(),
+          )
+        : ClipRRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: borderDecoration.copyWith(
+                  color: Colors.white.withOpacity(0.08),
+                ),
+                child: _buildHeaderContent(),
+              ),
+            ),
+          );
+  }
+
+  Widget _buildHeaderContent() {
+    return Row(
         children: [
           // App Logo/Name
           Text(
@@ -404,23 +428,44 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 
   Widget _buildVideoCard(PostModel video, {GlobalKey? key}) {
     final views = video.likes * 10; // Convert likes to views for display
     final formattedViews = _formatViews(views);
     final timeAgo = _formatTimeAgo(video.createdAt);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(
       key: key ?? ValueKey(video.id),
       children: [
-        Container(
-          color: ThemeHelper.getBackgroundColor(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        isDark
+            ? Container(
+                color: ThemeHelper.getBackgroundColor(context),
+                child: _buildVideoCardContent(video, formattedViews, timeAgo),
+              )
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(0),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                    ),
+                    child: _buildVideoCardContent(video, formattedViews, timeAgo),
+                  ),
+                ),
+              ),
+        _buildPostDivider(),
+      ],
+    );
+  }
+
+  Widget _buildVideoCardContent(PostModel video, String formattedViews, String timeAgo) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
           // User Info Section
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -505,38 +550,74 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                     ),
                   ),
                 ),
-                // Follow Button
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: ThemeHelper.getSurfaceColor(context),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: ThemeHelper.getBorderColor(context),
-                      width: 1,
-                    ),
-                  ),
-                  child: Text(
-                    'Follow',
-                    style: TextStyle(
-                      color: ThemeHelper.getTextPrimary(context),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                // Follow Button - same style as instagram_post_card, fully rounded
+                Consumer(
+                  builder: (context, ref, child) {
+                    // Get follow state from posts provider if available, otherwise use local state or video author
+                    final posts = ref.watch(postsListProvider);
+                    PostModel? post;
+                    try {
+                      // Try to find a post by this author
+                      post = posts.firstWhere((p) => p.author.id == video.author.id);
+                    } catch (e) {
+                      // Author not found in posts
+                      post = null;
+                    }
+                    
+                    // Initialize follow state if not set
+                    if (!_followStates.containsKey(video.author.id)) {
+                      _followStates[video.author.id] = post != null 
+                          ? post.author.isFollowing 
+                          : video.author.isFollowing;
+                    }
+                    
+                    // Get current follow state (prefer posts provider, then local state, then video author)
+                    final isFollowing = post != null 
+                        ? post.author.isFollowing 
+                        : (_followStates[video.author.id] ?? video.author.isFollowing);
+                    
+                    return GestureDetector(
+                      onTap: () {
+                        // Toggle follow state through posts provider
+                        ref.read(postsProvider.notifier).toggleFollow(video.author.id);
+                        // Update local state immediately
+                        setState(() {
+                          _followStates[video.author.id] = !isFollowing;
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: isFollowing ? Colors.transparent : ThemeHelper.getAccentColor(context),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: isFollowing 
+                                ? ThemeHelper.getTextPrimary(context)
+                                : ThemeHelper.getAccentColor(context),
+                            width: isFollowing ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Text(
+                          isFollowing ? 'Following' : 'Follow',
+                          style: TextStyle(
+                            color: isFollowing 
+                                ? ThemeHelper.getTextPrimary(context)
+                                : ThemeHelper.getOnAccentColor(context),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
           ),
           // Video Player/Thumbnail
           _buildVideoPlayer(video),
-            ],
-          ),
-        ),
-        // Beautiful divider between posts
-        _buildPostDivider(),
-      ],
-    );
+        ],
+      );
   }
 
   Widget _buildPostDivider() {
@@ -637,18 +718,21 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
           // Video player or thumbnail with tap handler
           GestureDetector(
             onTap: () {
-              // Navigate to embedded view when tapping anywhere (except play button)
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => VideoPlayerScreen(
-                    videoUrl: videoUrl,
-                    title: video.caption,
-                    author: video.author,
-                    post: video,
+              // Only navigate if video is not initialized or if tapping outside play button
+              // Play button will handle its own tap and stop propagation
+              if (!isVideoInitialized || !isThisVideoPlaying) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => VideoPlayerScreen(
+                      videoUrl: videoUrl,
+                      title: video.caption,
+                      author: video.author,
+                      post: video,
+                    ),
                   ),
-                ),
-              );
+                );
+              }
             },
             behavior: HitTestBehavior.opaque,
             child: Container(
@@ -732,7 +816,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                       }
                     });
                   },
-                  behavior: HitTestBehavior.opaque,
+                  behavior: HitTestBehavior.opaque, // Stops event propagation to parent
                   child: AnimatedOpacity(
                     // Show play/pause button when:
                     // 1. Video is playing AND controls are visible (show pause icon)
@@ -773,52 +857,77 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
           else
             // Play button overlay when video not initialized (same as video_tile.dart)
             Positioned.fill(
-              child: Center(
-                child: GestureDetector(
-                  onTap: () {
-                    // Prevent rapid toggles (debounce)
-                    final now = DateTime.now();
-                    if (_lastPlayActionTime != null &&
-                        now.difference(_lastPlayActionTime!) < const Duration(milliseconds: 300)) {
-                      return; // Ignore rapid taps
-                    }
-                    _lastPlayActionTime = now;
-                    
-                    // CRITICAL: Pause ALL other videos FIRST, before playing this one
-                    // This prevents multiple videos from playing simultaneously
-                    _pauseAllOtherVideos(video.id, videoUrl);
-                    
-                    // DISABLE AUTOPLAY when user manually plays a video
-                    ref.read(longVideoPlaybackProvider.notifier).disableAutoplay();
-                    
-                    // Then initialize and play this video (lazy initialization)
-                    final widgetKey = VideoWidgetKey(video.id, videoUrl);
-                    final notifier = ref.read(longVideoWidgetProvider(widgetKey).notifier);
-                    
-                    // Play will trigger lazy initialization if needed
-                    notifier.play().then((_) {
-                      // Set this video as currently playing after initialization
-                      if (mounted) {
-                        ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(video.id);
-                        _showControlsTemporarily(video.id);
-                      }
-                    });
-                  },
-                  behavior: HitTestBehavior.opaque,
-                  child: Container(
-                    width: 70,
-                    height: 70,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      CupertinoIcons.play_fill,
-                      color: Colors.white,
-                      size: 48,
+              child: Stack(
+                children: [
+                  // Background tap area - navigates to fullscreen
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => VideoPlayerScreen(
+                            videoUrl: videoUrl,
+                            title: video.caption,
+                            author: video.author,
+                            post: video,
+                          ),
+                        ),
+                      );
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      color: Colors.transparent,
                     ),
                   ),
-                ),
+                  // Play button - plays video inline, stops propagation
+                  Center(
+                    child: GestureDetector(
+                      onTap: () {
+                        // Prevent rapid toggles (debounce)
+                        final now = DateTime.now();
+                        if (_lastPlayActionTime != null &&
+                            now.difference(_lastPlayActionTime!) < const Duration(milliseconds: 300)) {
+                          return; // Ignore rapid taps
+                        }
+                        _lastPlayActionTime = now;
+                        
+                        // CRITICAL: Pause ALL other videos FIRST, before playing this one
+                        // This prevents multiple videos from playing simultaneously
+                        _pauseAllOtherVideos(video.id, videoUrl);
+                        
+                        // DISABLE AUTOPLAY when user manually plays a video
+                        ref.read(longVideoPlaybackProvider.notifier).disableAutoplay();
+                        
+                        // Then initialize and play this video (lazy initialization)
+                        final widgetKey = VideoWidgetKey(video.id, videoUrl);
+                        final notifier = ref.read(longVideoWidgetProvider(widgetKey).notifier);
+                        
+                        // Play will trigger lazy initialization if needed
+                        notifier.play().then((_) {
+                          // Set this video as currently playing after initialization
+                          if (mounted) {
+                            ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(video.id);
+                            _showControlsTemporarily(video.id);
+                          }
+                        });
+                      },
+                      behavior: HitTestBehavior.opaque, // Stops event propagation
+                      child: Container(
+                        width: 70,
+                        height: 70,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          CupertinoIcons.play_fill,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           

@@ -6,7 +6,11 @@ import 'package:video_player/video_player.dart';
 import '../utils/theme_helper.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/posts_provider_riverpod.dart';
+import '../models/post_model.dart';
+import 'comments_bottom_sheet.dart';
+import 'share_bottom_sheet.dart';
 import 'dart:async';
+import 'dart:ui';
 
 /// Video tile widget redesigned to match Instagram-style post card
 class VideoTile extends ConsumerStatefulWidget {
@@ -191,7 +195,14 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     if (widget.videoUrl == null) return;
     try {
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      // Seek backward without pausing
+      final wasPlaying = playerState.isPlaying;
       notifier.seekBackward();
+      // Ensure video continues playing
+      if (wasPlaying && !playerState.isPlaying) {
+        notifier.play();
+      }
       _showControlsTemporarily();
     } catch (e) {
       debugPrint('Error seeking backward: $e');
@@ -321,11 +332,32 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         : null;
     final isVideoInitialized = playerState?.isInitialized ?? false;
     final isPlaying = playerState?.isPlaying ?? false;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      color: ThemeHelper.getBackgroundColor(context),
-      child: Column(
+      child: isDark
+          ? Container(
+              color: ThemeHelper.getBackgroundColor(context),
+              child: _buildTileContent(isVideoInitialized, isPlaying, playerState),
+            )
+          : ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                  ),
+                  child: _buildTileContent(isVideoInitialized, isPlaying, playerState),
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildTileContent(bool isVideoInitialized, bool isPlaying, VideoPlayerState? playerState) {
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -377,6 +409,65 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                         ),
                       ),
                     ),
+                  // Follow button (rounded style) - same as instagram_post_card, fully rounded
+                  if (widget.channelName != null)
+                    Consumer(
+                      builder: (context, ref, child) {
+                        // Get author from posts if available
+                        final posts = ref.watch(postsListProvider);
+                        PostModel? post;
+                        if (widget.postId != null) {
+                          try {
+                            post = posts.firstWhere((p) => p.id == widget.postId);
+                          } catch (e) {
+                            // Post not found, use first post as fallback
+                            post = posts.isNotEmpty ? posts.first : null;
+                          }
+                        } else {
+                          post = posts.isNotEmpty ? posts.first : null;
+                        }
+                        
+                        // If no post found, we can't determine follow state, so hide button
+                        if (post == null) {
+                          return const SizedBox.shrink();
+                        }
+                        
+                        final isFollowing = post.author.isFollowing;
+                        
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () {
+                              // Handle follow action - toggle follow state
+                              ref.read(postsProvider.notifier).toggleFollow(post!.author.id);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isFollowing ? Colors.transparent : ThemeHelper.getAccentColor(context),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: isFollowing 
+                                      ? ThemeHelper.getTextPrimary(context)
+                                      : ThemeHelper.getAccentColor(context),
+                                  width: isFollowing ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Text(
+                                isFollowing ? 'Following' : 'Follow',
+                                style: TextStyle(
+                                  color: isFollowing 
+                                      ? ThemeHelper.getTextPrimary(context)
+                                      : ThemeHelper.getOnAccentColor(context),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                   Icon(
                     CupertinoIcons.ellipsis,
                     color: ThemeHelper.getTextPrimary(context),
@@ -389,8 +480,17 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
           // Video/Thumbnail - Tap anywhere to open fullscreen, play/pause button for controls
           GestureDetector(
             onTap: () {
-              // Tap anywhere on video opens fullscreen (except play/pause button area)
-              _onVideoTap();
+              // Only navigate if video is not initialized or if tapping outside play button
+              // Play button will handle its own tap and stop propagation
+              if (widget.videoUrl == null || !isVideoInitialized) {
+                _onVideoTap();
+              } else {
+                // If video is initialized, only navigate if not playing
+                // Otherwise let play button handle it
+                if (!isPlaying) {
+                  _onVideoTap();
+                }
+              }
             },
             onDoubleTapDown: (details) {
               if (widget.videoUrl == null || !isVideoInitialized) return;
@@ -443,11 +543,11 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                     child: Center(
                       child: GestureDetector(
                         onTap: () {
-                          // Only toggle play/pause when button is tapped - stops propagation
+                          // Play/pause video - this stops event propagation
                           _togglePlayPause();
                           _showControlsTemporarily();
                         },
-                        behavior: HitTestBehavior.translucent,
+                        behavior: HitTestBehavior.opaque, // Changed to opaque to stop propagation
                         child: AnimatedOpacity(
                           opacity: _showControls ? 1.0 : 0.0,
                           duration: const Duration(milliseconds: 300),
@@ -499,25 +599,43 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                   )
               else
                 Positioned.fill(
-                  child: GestureDetector(
-                    onTap: _onVideoTap,
-                    child: Container(
-                      color: Colors.black.withOpacity(0.1),
-                      child: Center(
+                  child: Stack(
+                    children: [
+                      // Background tap area - navigates to fullscreen
+                      GestureDetector(
+                        onTap: _onVideoTap,
+                        behavior: HitTestBehavior.opaque,
                         child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            CupertinoIcons.play_fill,
-                            color: Colors.white,
-                            size: 48,
+                          color: Colors.transparent,
+                        ),
+                      ),
+                      // Play button - plays video inline, stops propagation
+                      Center(
+                        child: GestureDetector(
+                          onTap: () {
+                            // Initialize and play video inline
+                            if (widget.videoUrl != null) {
+                              _playVideo();
+                            } else {
+                              _onVideoTap();
+                            }
+                          },
+                          behavior: HitTestBehavior.opaque,
+                          child: Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              CupertinoIcons.play_fill,
+                              color: Colors.white,
+                              size: 48,
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               
@@ -558,7 +676,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                        _isSaved ? Icons.star : Icons.star_border,
                         size: 28,
                         color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
                       ),
@@ -603,15 +721,26 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                 // Right side actions - Share, Comment, Like (matching InstagramPostCard)
                 GestureDetector(
                   onTap: () {
-                    // Handle share action
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => ShareBottomSheet(
+                        postId: widget.postId,
+                        videoUrl: widget.videoUrl,
+                      ),
+                    );
                   },
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.share_outlined,
-                        size: 28,
-                        color: ThemeHelper.getTextPrimary(context),
+                      Transform.rotate(
+                        angle: -0.785398,
+                        child: Icon(
+                          Icons.send,
+                          size: 28,
+                          color: ThemeHelper.getTextPrimary(context),
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -626,7 +755,14 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                 ),
                 const SizedBox(width: 16),
                 GestureDetector(
-                  onTap: widget.onTap,
+                  onTap: () {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => CommentsBottomSheet(postId: widget.postId ?? ''),
+                    );
+                  },
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -746,7 +882,6 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
 
           const SizedBox(height: 8),
         ],
-      ),
-    );
+      );
   }
 }

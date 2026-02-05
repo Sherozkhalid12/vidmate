@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/mock_data_service.dart';
 import '../models/post_model.dart';
+import '../models/user_model.dart';
 
 /// Posts state
 class PostsState {
@@ -108,6 +109,45 @@ class PostsNotifier extends StateNotifier<PostsState> {
       likedPosts: newLikedPosts,
       likeCounts: newLikeCounts,
     );
+  }
+
+  /// Toggle follow on a user
+  void toggleFollow(String userId) {
+    // Update posts to reflect follow state change
+    final newPosts = state.posts.map((post) {
+      if (post.author.id == userId) {
+        final updatedAuthor = UserModel(
+          id: post.author.id,
+          username: post.author.username,
+          displayName: post.author.displayName,
+          avatarUrl: post.author.avatarUrl,
+          bio: post.author.bio,
+          followers: post.author.followers,
+          following: post.author.following,
+          posts: post.author.posts,
+          isFollowing: !post.author.isFollowing,
+          isOnline: post.author.isOnline,
+        );
+        return PostModel(
+          id: post.id,
+          author: updatedAuthor,
+          imageUrl: post.imageUrl,
+          videoUrl: post.videoUrl,
+          thumbnailUrl: post.thumbnailUrl,
+          caption: post.caption,
+          createdAt: post.createdAt,
+          likes: post.likes,
+          comments: post.comments,
+          shares: post.shares,
+          isLiked: post.isLiked,
+          videoDuration: post.videoDuration,
+          isVideo: post.isVideo,
+        );
+      }
+      return post;
+    }).toList();
+
+    state = state.copyWith(posts: newPosts);
   }
 }
 

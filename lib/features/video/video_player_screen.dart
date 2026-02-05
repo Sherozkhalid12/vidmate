@@ -10,6 +10,8 @@ import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/widgets/glass_card.dart';
+import '../../core/widgets/comments_bottom_sheet.dart';
+import '../../core/widgets/share_bottom_sheet.dart';
 import '../profile/profile_screen.dart';
 import 'dart:ui';
 
@@ -214,6 +216,23 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
       return '${(count / 1000).toStringAsFixed(1)}K';
     }
     return count.toString();
+  }
+
+  String _formatTimeAgo(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays >= 7) {
+      final weeks = difference.inDays ~/ 7;
+      return '$weeks week${weeks > 1 ? 's' : ''} ago';
+    } else if (difference.inDays > 0) {
+      return '${difference.inDays} day${difference.inDays > 1 ? 's' : ''} ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours} hour${difference.inHours > 1 ? 's' : ''} ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes} min ago';
+    }
+    return 'Just now';
   }
 
   Widget _buildActionButton({
@@ -638,15 +657,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                                         color: Colors.white,
                                         strokeWidth: 3,
                                       ),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        'Buffering...',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
+                                      // Removed "Buffering..." text as per requirements
                                     ],
                                   ),
                                 ),
@@ -661,15 +672,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                             CircularProgressIndicator(
                           color: Theme.of(context).colorScheme.primary,
                             ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Loading video...',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
+                            // Removed "Loading video..." text as per requirements
                           ],
                         ),
                       ),
@@ -879,7 +882,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                                   size: 26,
                                 ),
                                 onPressed: () {
+                                  // Seek backward without pausing
+                                  final wasPlaying = playerState.isPlaying;
                                   notifier.seekBackward();
+                                  // Ensure video continues playing
+                                  if (wasPlaying && !playerState.isPlaying) {
+                                    notifier.play();
+                                  }
                                   _startControlsTimer();
                                 },
                               ),
@@ -1128,11 +1137,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                                   color: Colors.white,
                                   onTap: () {
                                     _startControlsTimer();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: const Text('Comments feature coming soon!'),
-                                        backgroundColor: Colors.black.withValues(alpha: 0.9),
-                                        behavior: SnackBarBehavior.floating,
+                                    showModalBottomSheet(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (context) => CommentsBottomSheet(
+                                        postId: widget.post?.id ?? '',
                                       ),
                                     );
                                   },
@@ -1144,7 +1154,16 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                                   color: Colors.white,
                                   onTap: () {
                                     _startControlsTimer();
-                                    _showShareDialog(context);
+                                    showModalBottomSheet(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (context) => ShareBottomSheet(
+                                        postId: widget.post?.id,
+                                        videoUrl: widget.videoUrl,
+                                        imageUrl: widget.post?.imageUrl,
+                                      ),
+                                    );
                                   },
                                 ),
                                 // Visit profile button
@@ -1473,7 +1492,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                               child: IconButton(
                                 icon: const Icon(Icons.replay_10, color: Colors.white, size: 22),
                                 onPressed: () {
+                                  // Seek backward without pausing
+                                  final wasPlaying = playerState.isPlaying;
                                   notifier.seekBackward();
+                                  // Ensure video continues playing
+                                  if (wasPlaying && !playerState.isPlaying) {
+                                    notifier.play();
+                                  }
                                   _startControlsTimer();
                                 },
                               ),
@@ -1760,18 +1785,17 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           ],
                         ),
                       ),
-                      const Spacer(),
-                      // Follow button
+                      
                       Container(
                         decoration: BoxDecoration(
                           color: Theme.of(context).colorScheme.primary,
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Material(
                           color: Colors.transparent,
                           child: InkWell(
                             onTap: () {},
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(999),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                               child: Text(
@@ -1789,7 +1813,18 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                       const SizedBox(width: 8),
                       // Share icon
                       GestureDetector(
-                        onTap: () => _showShareDialog(context),
+                        onTap: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (context) => ShareBottomSheet(
+                              postId: widget.post?.id,
+                              videoUrl: widget.videoUrl,
+                              imageUrl: widget.post?.imageUrl,
+                            ),
+                          );
+                        },
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -1816,15 +1851,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                       // Comments icon
                       GestureDetector(
                         onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Comments feature coming soon!',
-                                style: TextStyle(
-                                  color: ThemeHelper.getTextPrimary(context),
-                                ),
-                              ),
-                              backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (context) => CommentsBottomSheet(
+                              postId: widget.post?.id ?? '',
                             ),
                           );
                         },
@@ -1875,29 +1907,31 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           ],
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      // Views icon
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.visibility_outlined,
-                            size: 24,
-                            color: ThemeHelper.getTextPrimary(context),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _formatCount((widget.post?.likes ?? _likeCount) * 10),
-                            style: TextStyle(
-                              color: ThemeHelper.getTextSecondary(context),
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
+                  // Views display with eye icon and time ago
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.visibility_outlined,
+                        size: 18,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.post != null
+                            ? ' ${_formatCount((widget.post!.likes) * 10)} views • ${_formatTimeAgo(widget.post!.createdAt)}'
+                            : '${_formatCount((_likeCount) * 10)} views',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   // Description
                   Text(
                     widget.post?.caption ?? widget.title,

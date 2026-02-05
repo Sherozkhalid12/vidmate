@@ -8,7 +8,8 @@ import '../models/post_model.dart';
 import '../theme/app_colors.dart';
 import '../utils/theme_helper.dart';
 import '../providers/posts_provider_riverpod.dart';
-import '../../features/feed/comments_screen.dart';
+import 'comments_bottom_sheet.dart';
+import 'share_bottom_sheet.dart';
 
 class InstagramPostCard extends ConsumerStatefulWidget {
   final PostModel post;
@@ -27,14 +28,23 @@ class InstagramPostCard extends ConsumerStatefulWidget {
 class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with SingleTickerProviderStateMixin {
   bool _isSaved = false;
   late AnimationController _likeAnimationController;
+  bool _isAnimating = false;
 
   @override
   void initState() {
     super.initState();
     _likeAnimationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 600),
     );
+    _likeAnimationController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        setState(() {
+          _isAnimating = false;
+        });
+        _likeAnimationController.reset();
+      }
+    });
   }
 
   String _formatCount(int count) {
@@ -66,10 +76,31 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      color: ThemeHelper.getBackgroundColor(context),
-      child: Column(
+      child: isDark
+          ? Container(
+              color: ThemeHelper.getBackgroundColor(context),
+              child: _buildCardContent(),
+            )
+          : ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                  ),
+                  child: _buildCardContent(),
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildCardContent() {
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -152,37 +183,68 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                     ),
                   ),
                 ),
-                // Follow button (keep in same position)
-                if (!widget.post.author.isFollowing)
-                  GestureDetector(
-                    onTap: () {
-                      // Handle follow action
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: ThemeHelper.getAccentColor(context),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        'Follow',
-                        style: TextStyle(
-                          color: ThemeHelper.getOnAccentColor(context),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                // Follow button (keep in same position) - always show, fully rounded
+                widget.post.author.isFollowing
+                    ? GestureDetector(
+                        onTap: () {
+                          // Handle unfollow action - toggle follow state
+                          ref.read(postsProvider.notifier).toggleFollow(widget.post.author.id);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: ThemeHelper.getTextPrimary(context),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Text(
+                            'Following',
+                            style: TextStyle(
+                              color: ThemeHelper.getTextPrimary(context),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      )
+                    : GestureDetector(
+                        onTap: () {
+                          // Handle follow action - toggle follow state
+                          ref.read(postsProvider.notifier).toggleFollow(widget.post.author.id);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: ThemeHelper.getAccentColor(context),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: ThemeHelper.getAccentColor(context),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            'Follow',
+                            style: TextStyle(
+                              color: ThemeHelper.getOnAccentColor(context),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  )
-                else
-                  GestureDetector(
-                    onTap: () => _showMoreMenu(context),
-                    child: Icon(
-                      CupertinoIcons.ellipsis,
-                      color: ThemeHelper.getTextPrimary(context),
-                      size: 20,
-                    ),
+                const SizedBox(width: 8),
+                // More menu icon (always visible)
+                GestureDetector(
+                  onTap: () => _showMoreMenu(context),
+                  child: Icon(
+                    CupertinoIcons.ellipsis,
+                    color: ThemeHelper.getTextPrimary(context),
+                    size: 20,
                   ),
+                ),
               ],
             ),
           ),
@@ -193,6 +255,9 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
               final isLiked = ref.read(postLikedProvider(widget.post.id));
               ref.read(postsProvider.notifier).toggleLike(widget.post.id);
               if (!isLiked) {
+                setState(() {
+                  _isAnimating = true;
+                });
                 _likeAnimationController.forward(from: 0);
               }
             },
@@ -242,29 +307,30 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                       ),
                     ),
                   // Like animation overlay
-                  Consumer(
-                    builder: (context, ref, child) {
-                      final isLiked = ref.watch(postLikedProvider(widget.post.id));
-                      if (isLiked) {
-                        return Center(
-                          child: ScaleTransition(
-                            scale: Tween<double>(begin: 0.8, end: 1.2).animate(
-                              CurvedAnimation(
-                                parent: _likeAnimationController,
-                                curve: Curves.elasticOut,
-                              ),
-                            ),
-                            child: Icon(
-                              CupertinoIcons.heart_fill,
-                              color: Colors.red,
-                              size: 80,
+                  if (_isAnimating)
+                    Center(
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.0, end: 1.2).animate(
+                          CurvedAnimation(
+                            parent: _likeAnimationController,
+                            curve: Curves.elasticOut,
+                          ),
+                        ),
+                        child: FadeTransition(
+                          opacity: Tween<double>(begin: 1.0, end: 0.0).animate(
+                            CurvedAnimation(
+                              parent: _likeAnimationController,
+                              curve: const Interval(0.5, 1.0, curve: Curves.easeOut),
                             ),
                           ),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    },
-                  ),
+                          child: Icon(
+                            CupertinoIcons.heart_fill,
+                            color: Colors.red,
+                            size: 80,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -286,7 +352,7 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                        _isSaved ? Icons.star : Icons.star_border,
                         size: 28,
                         color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
                       ),
@@ -297,7 +363,16 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                 // Right side actions - Share, Comment, Like
                 GestureDetector(
                   onTap: () {
-                    // Handle share action
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => ShareBottomSheet(
+                        postId: widget.post.id,
+                        videoUrl: widget.post.videoUrl,
+                        imageUrl: widget.post.imageUrl,
+                      ),
+                    );
                   },
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -324,11 +399,11 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                 const SizedBox(width: 16),
                 GestureDetector(
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => CommentsScreen(postId: widget.post.id),
-                      ),
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => CommentsBottomSheet(postId: widget.post.id),
                     );
                   },
                   child: Column(
@@ -359,6 +434,9 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                       onTap: () {
                         ref.read(postsProvider.notifier).toggleLike(widget.post.id);
                         if (!isLiked) {
+                          setState(() {
+                            _isAnimating = true;
+                          });
                           _likeAnimationController.forward(from: 0);
                         }
                       },
@@ -411,7 +489,6 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
 
           const SizedBox(height: 8),
         ],
-      ),
     );
   }
 

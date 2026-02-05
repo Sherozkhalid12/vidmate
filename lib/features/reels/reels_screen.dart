@@ -1,40 +1,70 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/widgets/comments_bottom_sheet.dart';
+import '../../core/widgets/share_bottom_sheet.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/models/user_model.dart';
 import 'package:video_player/video_player.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/post_model.dart';
+import '../../core/utils/create_content_visibility.dart';
+import 'audio_detail_screen.dart';
+import 'audio_reels_screen.dart';
 
 /// Reels screen with full-screen vertical swipe videos
-class ReelsScreen extends StatefulWidget {
+class ReelsScreen extends ConsumerStatefulWidget {
   const ReelsScreen({super.key});
 
   @override
-  State<ReelsScreen> createState() => _ReelsScreenState();
+  ConsumerState<ReelsScreen> createState() => _ReelsScreenState();
 }
 
-class _ReelsScreenState extends State<ReelsScreen> {
+class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   final PageController _pageController = PageController();
   final List<PostModel> _reels = [];
   int _currentIndex = 0;
   final Map<int, VideoPlayerController> _controllers = {};
   final Map<String, bool> _likedPosts = {}; // Track liked posts
   final Map<String, int> _likeCounts = {}; // Track like counts
+  final Map<String, bool> _savedReels = {}; // Track saved/bookmarked reels
 
   @override
   void initState() {
     super.initState();
     _loadReels();
+    createContentVisibleNotifier.addListener(_onCreateContentVisibilityChanged);
+  }
+
+  void _onCreateContentVisibilityChanged() {
+    if (createContentVisibleNotifier.value) {
+      _pauseAndDisposeAllVideos();
+      if (mounted) setState(() {});
+    }
   }
 
   @override
   void dispose() {
+    createContentVisibleNotifier.removeListener(_onCreateContentVisibilityChanged);
     _pageController.dispose();
-    for (var controller in _controllers.values) {
-      controller.dispose();
-    }
+    _pauseAndDisposeAllVideos();
     super.dispose();
+  }
+
+  /// Pause and dispose all reel videos (e.g. when opening AudioDetailScreen or CreateContentScreen)
+  void _pauseAndDisposeAllVideos() {
+    for (var entry in _controllers.entries.toList()) {
+      try {
+        final controller = entry.value;
+        if (controller.value.isInitialized && controller.value.isPlaying) {
+          controller.pause();
+        }
+        controller.dispose();
+      } catch (_) {}
+      _controllers.remove(entry.key);
+    }
   }
 
   void _loadReels() {
@@ -270,15 +300,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
                             color: Colors.white,
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Loading...',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
+                        // Removed "Loading..." text as per requirements
                       ],
                     ),
                   ),
@@ -306,7 +328,188 @@ class _ReelsScreenState extends State<ReelsScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Left side - Action buttons
+                // Left side - Author info and caption
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundImage: CachedNetworkImageProvider(reel.author.avatarUrl),
+                            backgroundColor: Colors.grey[800],
+                            onBackgroundImageError: (exception, stackTrace) {
+                              // Error will show backgroundColor
+                            },
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  reel.author.username,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // Follow button - same style as instagram_post_card but fully rounded
+                          Consumer(
+                            builder: (context, ref, child) {
+                              // Get follow state from posts provider if available, otherwise use reel author
+                              final posts = ref.watch(postsListProvider);
+                              final post = posts.firstWhere(
+                                (p) => p.author.id == reel.author.id,
+                                orElse: () => posts.first,
+                              );
+                              final isFollowing = post.author.id == reel.author.id
+                                  ? post.author.isFollowing
+                                  : reel.author.isFollowing;
+
+                              return GestureDetector(
+                                onTap: () {
+                                  // Toggle follow state through provider
+                                  ref.read(postsProvider.notifier).toggleFollow(reel.author.id);
+                                  setState(() {
+                                    // Update local reel state
+                                    final updatedAuthor = UserModel(
+                                      id: reel.author.id,
+                                      username: reel.author.username,
+                                      displayName: reel.author.displayName,
+                                      avatarUrl: reel.author.avatarUrl,
+                                      bio: reel.author.bio,
+                                      followers: reel.author.followers,
+                                      following: reel.author.following,
+                                      posts: reel.author.posts,
+                                      isFollowing: !reel.author.isFollowing,
+                                      isOnline: reel.author.isOnline,
+                                    );
+                                    // Create new PostModel with updated author
+                                    final updatedReel = PostModel(
+                                      id: reel.id,
+                                      author: updatedAuthor,
+                                      imageUrl: reel.imageUrl,
+                                      videoUrl: reel.videoUrl,
+                                      thumbnailUrl: reel.thumbnailUrl,
+                                      caption: reel.caption,
+                                      createdAt: reel.createdAt,
+                                      likes: reel.likes,
+                                      comments: reel.comments,
+                                      shares: reel.shares,
+                                      isLiked: reel.isLiked,
+                                      videoDuration: reel.videoDuration,
+                                      isVideo: reel.isVideo,
+                                    );
+                                    // Update in list
+                                    final index = _reels.indexWhere((r) => r.id == reel.id);
+                                    if (index >= 0) {
+                                      _reels[index] = updatedReel;
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: isFollowing ? Colors.transparent : Colors.white,
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                      color: isFollowing ? Colors.white.withOpacity(0.5) : Colors.white,
+                                      width: isFollowing ? 1.5 : 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    isFollowing ? 'Following' : 'Follow',
+                                    style: TextStyle(
+                                      color: isFollowing ? Colors.white : Colors.black,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      // Audio row (Instagram-style) - tappable to see reels with same audio
+                      if (reel.audioName != null || reel.isVideo)
+                        GestureDetector(
+                          onTap: () {
+                            // Pause and dispose ALL reel videos before navigating (stops audio when CreateContentScreen is opened)
+                            _pauseAndDisposeAllVideos();
+                            if (mounted) setState(() {});
+                            final audioId = reel.audioId ?? 'original_${reel.author.id}';
+                            final audioName = reel.audioName ?? 'Original sound - ${reel.author.username}';
+                            final sameAudioReels = _reels.where((r) => (r.audioId ?? 'original_${r.author.id}') == audioId).toList();
+                            if (sameAudioReels.isEmpty) return;
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AudioDetailScreen(
+                                  audioId: audioId,
+                                  audioName: audioName,
+                                  reels: sameAudioReels,
+                                ),
+                              ),
+                            ).then((_) {
+                              // Re-initialize current video when returning from audio/create content screen
+                              if (mounted) {
+                                _initializeVideo(_currentIndex);
+                                if (_currentIndex + 1 < _reels.length) _initializeVideo(_currentIndex + 1);
+                                if (_currentIndex + 2 < _reels.length) _initializeVideo(_currentIndex + 2);
+                              }
+                            });
+                          },
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.music_note_rounded, color: Colors.white, size: 18),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  reel.audioName ?? 'Original sound - ${reel.author.username}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      Text(
+                        reel.caption,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.left,
+                        style: TextStyle(
+                          // Caption on dark overlay - use white for visibility in both modes
+                          color: Colors.white,
+                          fontSize: 14,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withOpacity(0.6),
+                              blurRadius: 4,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Right side - Action buttons
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -318,43 +521,73 @@ class _ReelsScreenState extends State<ReelsScreen> {
                         setState(() {
                           final currentLiked = _likedPosts[reel.id] ?? reel.isLiked;
                           final currentCount = _likeCounts[reel.id] ?? reel.likes;
-                          
+
                           _likedPosts[reel.id] = !currentLiked;
-                          _likeCounts[reel.id] = currentLiked 
+                          _likeCounts[reel.id] = currentLiked
                               ? (currentCount - 1).clamp(0, double.infinity).toInt()
                               : currentCount + 1;
                         });
                       },
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 14),
                     _buildActionButton(
                       icon: Icons.comment,
                       count: reel.comments,
                       onTap: () {
-                        // Navigate to comments
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Opening comments...'),
-                            backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
-                            duration: const Duration(seconds: 1),
-                          ),
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (context) => CommentsBottomSheet(postId: reel.id),
                         );
                       },
                     ),
-                    const SizedBox(height: 20),
-                    _buildActionButton(
-                      icon: Icons.share,
-                      count: reel.shares,
+                    const SizedBox(height: 14),
+                    GestureDetector(
                       onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Share feature coming soon'),
-                            backgroundColor: Theme.of(context).colorScheme.primary, // Theme-aware background
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (context) => ShareBottomSheet(
+                            postId: reel.id,
+                            videoUrl: reel.videoUrl,
+                            imageUrl: reel.imageUrl,
                           ),
                         );
                       },
+                      child: Column(
+                        children: [
+                          Transform.rotate(
+                            angle: -0.785398,
+                            child: Icon(
+                              Icons.send,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatCount(reel.shares),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 14),
+                    _buildActionButton(
+                      icon: (_savedReels[reel.id] ?? false) ? Icons.star : Icons.star_border,
+                      onTap: () {
+                        setState(() {
+                          _savedReels[reel.id] = !(_savedReels[reel.id] ?? false);
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 14),
                     _buildActionButton(
                       icon: isPlaying ? Icons.pause : Icons.play_arrow,
                       onTap: () {
@@ -370,78 +603,46 @@ class _ReelsScreenState extends State<ReelsScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(width: 20),
-                // Right side - Author info and caption
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          // Follow button on the left
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Text(
-                              'Follow',
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          CircleAvatar(
-                            radius: 20,
-                            backgroundImage: CachedNetworkImageProvider(reel.author.avatarUrl),
-                            backgroundColor: Colors.grey[800],
-                            onBackgroundImageError: (exception, stackTrace) {
-                              // Error will show backgroundColor
-                            },
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            reel.author.username,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        reel.caption,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          color: context.textPrimary,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
         ),
-        // Progress indicator on left edge
+        // Three-dot menu (vertical) top right
         Positioned(
-          left: 8,
-          top: 0,
-          bottom: 0,
-          child: _buildProgressIndicator(),
+          top: MediaQuery.of(context).padding.top + 8,
+          right: 12,
+          child: GestureDetector(
+            onTap: () => _showReelMoreMenu(context, reel),
+            child: Icon(
+              Icons.more_vert,
+              color: Colors.white,
+              size: 28,
+            ),
+          ),
         ),
       ],
+    );
+  }
+
+  void _showReelMoreMenu(BuildContext context, PostModel reel) {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        actions: [
+          CupertinoActionSheetAction(
+            child: const Text('Report'),
+            onPressed: () => Navigator.pop(context),
+          ),
+          CupertinoActionSheetAction(
+            child: const Text('Copy Link'),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          child: const Text('Cancel'),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
     );
   }
 
@@ -457,7 +658,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
           onTap: onTap,
           child: Icon(
             icon,
-            color: isActive ? AppColors.warning : Colors.white,
+            color: isActive ? Colors.red : Colors.white,
             size: 28,
           ),
         ),
@@ -473,24 +674,6 @@ class _ReelsScreenState extends State<ReelsScreen> {
           ),
         ],
       ],
-    );
-  }
-
-  Widget _buildProgressIndicator() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: List.generate(_reels.length, (index) {
-        return Container(
-          width: 3,
-          height: 40,
-          decoration: BoxDecoration(
-            color: index == _currentIndex
-                ? context.buttonColor
-                : context.textMuted.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        );
-      }),
     );
   }
 

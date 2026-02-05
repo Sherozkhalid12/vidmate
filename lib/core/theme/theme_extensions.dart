@@ -50,7 +50,7 @@ extension ThemeColors on BuildContext {
   // Background colors (for compatibility - returns first gradient color)
   Color get backgroundColor {
     final isDark = Theme.of(this).brightness == Brightness.dark;
-    return isDark ? AppColors.backgroundTop1 : AppColors.lightBackgroundTop1;
+    return isDark ? AppColors.backgroundTop1 : Colors.transparent;
   }
   
   // Secondary background (for compatibility - returns middle gradient color)

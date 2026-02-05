@@ -123,19 +123,20 @@ class _SignUpScreenState extends State<SignUpScreen>
                   AnimatedBuilder(
                     animation: _glowAnimation,
                     builder: (context, child) {
+                      final isDark = Theme.of(context).brightness == Brightness.dark;
                       return Center(
                         child: Container(
                           padding: const EdgeInsets.all(20),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            boxShadow: [
+                            boxShadow: isDark ? [
                               BoxShadow(
                                 color: ThemeHelper.getAccentColor(context) // Theme-aware accent color
                                     .withOpacity(_glowAnimation.value * 0.5),
                                 blurRadius: 40,
                                 spreadRadius: 10,
                               ),
-                            ],
+                            ] : null, // No shadow in light mode
                           ),
                           child: Container(
                             padding: const EdgeInsets.all(24),

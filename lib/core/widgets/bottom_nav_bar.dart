@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 /// Modern full-width glass bottom nav bar – white circle on selected (dark mode)
-/// Icons updated to: Home → Reels → Story → Long Videos → Notifications
+/// Icons updated to: Home → Reels → Story → Long Videos → Music
 class BottomNavBar extends StatelessWidget {
   final int currentIndex;
   final Function(int) onTap;
@@ -61,7 +61,7 @@ class BottomNavBar extends StatelessWidget {
       Icons.movie_outlined,         // 1: Reels
       Icons.access_time_outlined,   // 2: Story
       Icons.play_circle_outline,    // 3: Long Videos
-      Icons.notifications_outlined, // 4: Notifications
+      Icons.music_note_outlined,    // 4: Music
     ];
 
     final selectedIcons = [
@@ -69,7 +69,7 @@ class BottomNavBar extends StatelessWidget {
       Icons.movie_rounded,
       Icons.access_time_rounded,
       Icons.play_circle_rounded,
-      Icons.notifications_rounded,
+      Icons.music_note,
     ];
 
     final icon = isSelected ? selectedIcons[index] : icons[index];

@@ -39,6 +39,9 @@ dependencies:
   video_player: ^2.8.2
   youtube_player_flutter: ^9.0.0
 
+  # Audio playback for create content reel audio (play/pause/stop)
+  audioplayers: ^6.1.0
+
   # UI Widgets
   # Animations
   animations: ^2.0.11

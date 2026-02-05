@@ -135,24 +135,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ],
               ),
             ),
-            // Server Load
-            _buildSectionTitle('Server Performance'),
-            GlassCard(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(16),
-              borderRadius: BorderRadius.circular(16),
-              child: Column(
-                children: [
-                  _buildAnalyticsRow('CPU Usage', '45%'),
-                  Divider(color: context.borderColor),
-                  _buildAnalyticsRow('Memory Usage', '62%'),
-                  Divider(color: context.borderColor),
-                  _buildAnalyticsRow('Storage Used', '1.2 TB / 5 TB'),
-                  Divider(color: context.borderColor),
-                  _buildAnalyticsRow('Requests/min', '1,234'),
-                ],
-              ),
-            ),
             const SizedBox(height: 40),
           ],
         ),

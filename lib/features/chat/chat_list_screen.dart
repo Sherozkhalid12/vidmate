@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
+import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
@@ -91,22 +92,40 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Material(
+      color: ThemeHelper.getBackgroundColor(context),
+      child: Container(
+      width: double.infinity,
+      height: double.infinity,
       decoration: BoxDecoration(
-        gradient: context.backgroundGradient,
+        gradient: ThemeHelper.getBackgroundGradient(context),
       ),
       child: Column(
         children: [
           AppBar(
-          title: Text('Messages'),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: Text(
+            'Messages',
+            style: TextStyle(
+              color: ThemeHelper.getTextPrimary(context),
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+          actionsIconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
           actions: [
             IconButton(
               icon: Icon(Icons.search),
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Search conversations feature coming soon'),
-                    backgroundColor: context.surfaceColor,
+                    content: Text(
+                      'Search conversations feature coming soon',
+                      style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                    ),
+                    backgroundColor: ThemeHelper.getSurfaceColor(context),
                   ),
                 );
               },
@@ -118,16 +137,22 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   // Navigate to user selection for one-to-one chat
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Select a user to start chatting'),
-                      backgroundColor: context.surfaceColor,
+                      content: Text(
+                        'Select a user to start chatting',
+                        style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                      ),
+                      backgroundColor: ThemeHelper.getSurfaceColor(context),
                     ),
                   );
                 } else if (value == 'group') {
                   // Navigate to group chat creation
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Create group chat feature coming soon'),
-                      backgroundColor: context.surfaceColor,
+                      content: Text(
+                        'Create group chat feature coming soon',
+                        style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                      ),
+                      backgroundColor: ThemeHelper.getSurfaceColor(context),
                     ),
                   );
                 }
@@ -166,13 +191,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   Icon(
                     Icons.chat_bubble_outline,
                     size: 64,
-                    color: context.textMuted,
+                    color: ThemeHelper.getTextMuted(context),
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'No messages yet',
                     style: TextStyle(
-                      color: context.textMuted,
+                      color: ThemeHelper.getTextMuted(context),
                       fontSize: 16,
                     ),
                   ),
@@ -199,7 +224,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
         ),
       ],
-      ),
+    ),
+    ),
     );
   }
 
@@ -207,7 +233,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(24),
       onTap: () {
         Navigator.push(
           context,
@@ -231,10 +257,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     return Container(
                       width: 60,
                       height: 60,
-                      color: context.surfaceColor,
+                      color: ThemeHelper.getSurfaceColor(context),
                       child: Icon(
                         Icons.person,
-                        color: context.textSecondary,
+                        color: ThemeHelper.getTextSecondary(context),
                         size: 30,
                       ),
                     );
@@ -249,15 +275,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: context.buttonColor,
+                      color: ThemeHelper.getAccentColor(context),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: context.backgroundGradient.colors.first,
+                        color: ThemeHelper.getBackgroundColor(context),
                         width: 2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: context.buttonColor.withOpacity(0.3),
+                          color: ThemeHelper.getAccentColor(context).withOpacity(0.3),
                           blurRadius: 4,
                           spreadRadius: 1,
                         ),
@@ -280,8 +306,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         conversation.user.displayName,
                         style: TextStyle(
                           color: conversation.unreadCount > 0
-                              ? context.textPrimary
-                              : context.textSecondary,
+                              ? ThemeHelper.getTextPrimary(context)
+                              : ThemeHelper.getTextSecondary(context),
                           fontSize: 16,
                           fontWeight: conversation.unreadCount > 0
                               ? FontWeight.w600
@@ -292,7 +318,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     Text(
                       _formatTime(conversation.lastMessageTime),
                       style: TextStyle(
-                        color: context.textMuted,
+                        color: ThemeHelper.getTextMuted(context),
                         fontSize: 12,
                       ),
                     ),
@@ -314,8 +340,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: conversation.unreadCount > 0
-                              ? context.textPrimary
-                              : context.textMuted,
+                              ? ThemeHelper.getTextPrimary(context)
+                              : ThemeHelper.getTextMuted(context),
                           fontSize: 14,
                           fontWeight: conversation.unreadCount > 0
                               ? FontWeight.w500
@@ -330,7 +356,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: context.buttonColor,
+                          color: ThemeHelper.getAccentColor(context),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
@@ -338,7 +364,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               ? '99+'
                               : conversation.unreadCount.toString(),
                           style: TextStyle(
-                            color: context.textPrimary,
+                            color: ThemeHelper.getOnAccentColor(context),
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),

@@ -10,6 +10,7 @@ import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
 import '../../core/utils/theme_helper.dart';
 import '../settings/settings_screen.dart';
+import '../chat/chat_list_screen.dart';
 import 'followers_list_screen.dart';
 import 'edit/edit_profile_screen.dart';
 
@@ -111,9 +112,15 @@ class _ProfileScreenState extends State<ProfileScreen>
               actions: [
                 IconButton(
                   icon: Icon(Icons.menu),
-                 onPressed: (){
-                   _showMenuBottomSheet();
-                 },
+                  onPressed: () {
+                    // Navigate directly to settings
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const SettingsScreen(),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -202,9 +209,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                             },
                             style: OutlinedButton.styleFrom(
                               side: BorderSide(
-                                color: context.borderColor,
-                                width: 1,
+                                color: ThemeHelper.getTextPrimary(context),
+                                width: 1.5,
                               ),
+                              backgroundColor: Colors.transparent,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
@@ -213,7 +221,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                             child: Text(
                               'Following',
                               style: TextStyle(
-                                color: context.textPrimary,
+                                color: ThemeHelper.getTextPrimary(context),
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -225,8 +233,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                               });
                             },
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: context.buttonColor,
-                              foregroundColor: context.buttonTextColor,
+                              backgroundColor: ThemeHelper.getAccentColor(context),
+                              foregroundColor: ThemeHelper.getOnAccentColor(context),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
@@ -245,28 +253,29 @@ class _ProfileScreenState extends State<ProfileScreen>
                         Expanded(
                           child: OutlinedButton(
                             onPressed: () {
-                              // Navigate to chat with this user
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Opening chat with ${_user.username}...'),
-                                  backgroundColor: context.surfaceColor,
+                              // Navigate to messages screen
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ChatListScreen(),
                                 ),
                               );
                             },
                             style: OutlinedButton.styleFrom(
                               side: BorderSide(
-                                color: context.borderColor,
-                                width: 1,
+                                color: ThemeHelper.getTextPrimary(context),
+                                width: 1.5,
                               ),
+                              backgroundColor: Colors.transparent,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 8),
                             ),
                             child: Text(
-                              'Massage',
+                              'Message',
                               style: TextStyle(
-                                color: context.textPrimary,
+                                color: ThemeHelper.getTextPrimary(context),
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -306,15 +315,29 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ),
               ),
             ),
-            // Tab bar
+            // Tab bar - theme-responsive: white (dark mode), black (light mode)
             SliverPersistentHeader(
               pinned: true,
               delegate: _SliverAppBarDelegate(
                 TabBar(
                   controller: _tabController,
-                  indicatorColor: context.textPrimary,
-                  labelColor: context.textPrimary,
-                  unselectedLabelColor: context.textMuted,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicatorColor: ThemeHelper.getAccentColor(context),
+                  indicatorWeight: 3,
+                  dividerColor: Colors.transparent,
+                  dividerHeight: 0,
+                  labelColor: ThemeHelper.getHighContrastIconColor(context),
+                  unselectedLabelColor: ThemeHelper.getTextMuted(context),
+                  labelStyle: TextStyle(
+                    color: ThemeHelper.getHighContrastIconColor(context),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                  unselectedLabelStyle: TextStyle(
+                    color: ThemeHelper.getTextMuted(context),
+                    fontWeight: FontWeight.w400,
+                    fontSize: 14,
+                  ),
                   tabs: const [
                     Tab(text: 'Post.'),
                     Tab(text: 'Reels.'),
@@ -344,27 +367,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget _buildStatColumn(int value, String label) {
     return GestureDetector(
       onTap: () {
-        if (label == 'followers') {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => FollowersListScreen(
-                userId: _user.id,
-                isFollowers: true,
-              ),
-            ),
-          );
-        } else if (label == 'following') {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => FollowersListScreen(
-                userId: _user.id,
-                isFollowers: false,
-              ),
-            ),
-          );
-        }
+        _showFollowersFollowingSheet(label.toLowerCase().contains('follower'));
       },
       child: Column(
         children: [
@@ -385,6 +388,124 @@ class _ProfileScreenState extends State<ProfileScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showFollowersFollowingSheet(bool isFollowers) {
+    final users = MockDataService.mockUsers.take(10).toList();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: ThemeHelper.getBorderColor(context),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      isFollowers ? 'Followers' : 'Following',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.close,
+                      color: ThemeHelper.getTextPrimary(context),
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                itemCount: users.length,
+                itemBuilder: (context, index) {
+                  final user = users[index];
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundImage: NetworkImage(user.avatarUrl),
+                      backgroundColor: ThemeHelper.getSurfaceColor(context),
+                    ),
+                    title: Text(
+                      user.username,
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      user.displayName,
+                      style: TextStyle(
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
+                    ),
+                    trailing: user.isFollowing
+                        ? OutlinedButton(
+                            onPressed: () {},
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(
+                                color: ThemeHelper.getTextPrimary(context),
+                                width: 1.5,
+                              ),
+                              backgroundColor: Colors.transparent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            child: Text(
+                              'Following',
+                              style: TextStyle(
+                                color: ThemeHelper.getTextPrimary(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          )
+                        : ElevatedButton(
+                            onPressed: () {},
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: ThemeHelper.getAccentColor(context),
+                              foregroundColor: ThemeHelper.getOnAccentColor(context),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            child: Text(
+                              'Follow',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -742,7 +863,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ),
             child: Icon(
-              Icons.bookmark_border,
+              Icons.star_border,
               size: 40,
               color: context.textMuted,
             ),
@@ -770,87 +891,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  void _showMenuBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true, // Allow bottom sheet to appear above bottom navbar
-      backgroundColor: ThemeHelper.getBackgroundColor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom +
-              MediaQuery.of(context).padding.bottom + 78, // Add bottom nav height + safe area
-        ),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(
-                  Icons.settings,
-                  color: ThemeHelper.getAccentColor(context),
-                ),
-                title: Text(
-                  'Settings',
-                  style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsScreen(),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  Icons.archive,
-                  color: ThemeHelper.getAccentColor(context),
-                ),
-                title: Text(
-                  'Archive',
-                  style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text('Archive feature coming soon'),
-                      backgroundColor: ThemeHelper.getAccentColor(context),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  Icons.qr_code,
-                  color: ThemeHelper.getAccentColor(context),
-                ),
-                title: Text(
-                  'QR Code',
-                  style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text('QR Code feature coming soon'),
-                      backgroundColor: ThemeHelper.getAccentColor(context),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ), // closes Column
-        ), // closes Container
-      ), // closes Padding
-    ); // closes showModalBottomSheet
-  }
 
 
   String _formatCount(int count) {

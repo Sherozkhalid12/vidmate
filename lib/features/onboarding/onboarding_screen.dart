@@ -251,13 +251,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           AnimatedBuilder(
             animation: _iconController,
             builder: (context, child) {
+              final isDark = Theme.of(context).brightness == Brightness.dark;
               return Container(
                 width: 140,
                 height: 140,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: page.gradient,
-                  boxShadow: [
+                  boxShadow: isDark ? [
                     BoxShadow(
                       color: accentColor.withOpacity(0.4),
                       blurRadius: 40,
@@ -268,7 +269,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       blurRadius: 60,
                       spreadRadius: 20,
                     ),
-                  ],
+                  ] : null, // No shadow in light mode
                 ),
                 child: Stack(
                   alignment: Alignment.center,
@@ -353,7 +354,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ? accentColor 
             : (isDark ? context.textMuted : ThemeHelper.getTextMuted(context)),
         borderRadius: BorderRadius.circular(4),
-        boxShadow: isActive
+        boxShadow: isActive && isDark
             ? [
                 BoxShadow(
                   color: accentColor.withOpacity(0.5),
@@ -361,7 +362,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   spreadRadius: 2,
                 ),
               ]
-            : null,
+            : null, // No shadow in light mode
       ),
     );
   }

@@ -15,6 +15,10 @@ class PostModel {
   final bool isLiked;
   final Duration? videoDuration;
   final bool isVideo;
+  /// Optional audio track id for reels (e.g. "original_sound_authorId")
+  final String? audioId;
+  /// Display name for audio (e.g. "Original sound - username")
+  final String? audioName;
 
   PostModel({
     required this.id,
@@ -30,6 +34,8 @@ class PostModel {
     this.isLiked = false,
     this.videoDuration,
     this.isVideo = false,
+    this.audioId,
+    this.audioName,
   });
 }
 

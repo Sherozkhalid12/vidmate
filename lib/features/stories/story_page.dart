@@ -5,6 +5,7 @@ import '../../core/utils/theme_helper.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/story_model.dart';
 import '../../core/models/user_model.dart';
+import '../feed/create_content_screen.dart';
 
 /// Story Page - Grid layout like WhatsApp Status
 class StoryPage extends StatefulWidget {
@@ -135,10 +136,25 @@ class _StoryPageState extends State<StoryPage> {
   Widget _buildYourStoryCard() {
     // Use first mock user as "Your story"
     final currentUser = MockDataService.mockUsers.first;
+    final currentUserStories = _userStoriesMap[currentUser.id] ?? [];
+    final hasStories = currentUserStories.isNotEmpty;
     
     return GestureDetector(
       onTap: () {
-        // Handle your story tap - could open story creation or viewer
+        if (hasStories) {
+          // Show bottom sheet with View Story or Add Story options
+          _showYourStoryOptions();
+        } else {
+          // No story - navigate to create content screen with stories tab
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => CreateContentScreen(
+                initialType: ContentType.story,
+              ),
+            ),
+          );
+        }
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -198,7 +214,7 @@ class _StoryPageState extends State<StoryPage> {
                       ),
                       child: Icon(
                         Icons.add,
-                        color: Colors.white,
+                        color: ThemeHelper.getOnAccentColor(context),
                         size: 20,
                       ),
                     ),
@@ -323,7 +339,7 @@ class _StoryPageState extends State<StoryPage> {
                           borderRadius: BorderRadius.circular(10),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
+                              color: ThemeHelper.getAccentColor(context).withOpacity(0.4),
                               blurRadius: 4,
                               offset: const Offset(0, 2),
                             ),
@@ -331,8 +347,8 @@ class _StoryPageState extends State<StoryPage> {
                         ),
                         child: Text(
                           '${stories.length}',
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: ThemeHelper.getOnAccentColor(context),
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
                           ),
@@ -357,6 +373,73 @@ class _StoryPageState extends State<StoryPage> {
             textAlign: TextAlign.center,
           ),
         ],
+      ),
+    );
+  }
+
+  void _showYourStoryOptions() {
+    final currentUser = MockDataService.mockUsers.first;
+    final currentUserStories = _userStoriesMap[currentUser.id] ?? [];
+    final userIndex = _users.indexWhere((u) => u.id == currentUser.id);
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                Icons.visibility,
+                color: ThemeHelper.getAccentColor(context),
+              ),
+              title: Text(
+                'View Story',
+                style: TextStyle(
+                  color: ThemeHelper.getTextPrimary(context),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                if (userIndex >= 0) {
+                  _openStoryViewer(userIndex, 0);
+                }
+              },
+            ),
+            Divider(color: ThemeHelper.getBorderColor(context)),
+            ListTile(
+              leading: Icon(
+                Icons.add_circle_outline,
+                color: ThemeHelper.getAccentColor(context),
+              ),
+              title: Text(
+                'Add Story',
+                style: TextStyle(
+                  color: ThemeHelper.getTextPrimary(context),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => CreateContentScreen(
+                      initialType: ContentType.story,
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }

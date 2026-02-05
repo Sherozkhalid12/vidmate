@@ -106,31 +106,65 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: context.backgroundColor,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      color: ThemeHelper.getBackgroundColor(context),
+      child: Scaffold(
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
+        backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(isDark ? 0.4 : 0.85),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shape: Border(
+          bottom: BorderSide(
+            color: ThemeHelper.getBorderColor(context).withOpacity(0.5),
+            width: 0.5,
+          ),
+        ),
+        iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+        titleSpacing: 0,
         title: Row(
           children: [
             Stack(
               children: [
-                ClipOval(
-                  child: Image.network(
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: ThemeHelper.getBorderColor(context),
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.3 : 0.1),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Image.network(
                     _chatUser.avatarUrl,
-                    width: 40,
-                    height: 40,
+                    width: 44,
+                    height: 44,
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) {
                       return Container(
-                        width: 40,
-                        height: 40,
-                        color: context.surfaceColor,
+                        width: 44,
+                        height: 44,
+                        color: ThemeHelper.getSurfaceColor(context),
                         child: Icon(
                           Icons.person,
-                          color: context.textSecondary,
+                          color: ThemeHelper.getTextSecondary(context),
                         ),
                       );
                     },
                   ),
+                ),
                 ),
                 if (_chatUser.isOnline)
                   Positioned(
@@ -143,7 +177,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: context.backgroundColor,
+                          color: ThemeHelper.getSurfaceColor(context),
                           width: 2,
                         ),
                         boxShadow: [
@@ -166,6 +200,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Text(
                     _chatUser.displayName,
                     style: TextStyle(
+                      color: ThemeHelper.getTextPrimary(context),
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -175,8 +210,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: TextStyle(
                       fontSize: 12,
                       color: _chatUser.isOnline
-                          ? ThemeHelper.getAccentColor(context) // Theme-aware accent color
-                          : context.textMuted,
+                          ? ThemeHelper.getAccentColor(context)
+                          : ThemeHelper.getTextMuted(context),
                     ),
                   ),
                 ],
@@ -186,7 +221,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.videocam_outlined),
+            icon: Icon(Icons.videocam_outlined, color: ThemeHelper.getTextPrimary(context)),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -197,7 +232,7 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
           IconButton(
-            icon: Icon(Icons.call_outlined),
+            icon: Icon(Icons.call_outlined, color: ThemeHelper.getTextPrimary(context)),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -209,7 +244,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
+        ),
+        child: Column(
         children: [
           // Messages list
           Expanded(
@@ -236,122 +277,191 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
-          // Input bar
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: context.secondaryBackgroundColor,
-              border: Border(
-                top: BorderSide(
-                  color: context.borderColor,
-                  width: 1,
+          // Modern sleek input bar
+          _buildModernInputBar(),
+        ],
+        ),
+      ),
+    ),
+    );
+  }
+
+  Widget _buildModernInputBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        decoration: BoxDecoration(
+          color: isDark
+              ? ThemeHelper.getSecondaryBackgroundColor(context)
+              : ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+          border: Border(
+            top: BorderSide(
+              color: ThemeHelper.getBorderColor(context).withOpacity(0.3),
+              width: 0.5,
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
+              blurRadius: isDark ? 16 : 20,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Attach button
+            IconButton(
+              icon: Icon(
+                Icons.add_circle_outline,
+                color: ThemeHelper.getAccentColor(context),
+                size: 28,
+              ),
+              onPressed: () {
+                showModalBottomSheet(
+                  context: context,
+                  backgroundColor: ThemeHelper.getSurfaceColor(context),
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  ),
+                  builder: (context) => Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: ThemeHelper.getBorderColor(context),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        _buildAttachmentOption(Icons.photo, 'Photo'),
+                        _buildAttachmentOption(Icons.videocam, 'Video'),
+                        _buildAttachmentOption(Icons.location_on, 'Location'),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 4),
+            // TextField in pill-shaped container
+            Expanded(
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 48, maxHeight: 120),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? ThemeHelper.getBackgroundColor(context).withOpacity(0.6)
+                      : ThemeHelper.getSurfaceColor(context),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: ThemeHelper.getBorderColor(context).withOpacity(isDark ? 0.4 : 0.5),
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(isDark ? 0.15 : 0.04),
+                      blurRadius: isDark ? 4 : 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: TextField(
+                  controller: _messageController,
+                  maxLines: null,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: TextStyle(
+                    color: ThemeHelper.getTextPrimary(context),
+                    fontSize: 16,
+                    height: 1.4,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Type a message...',
+                    hintStyle: TextStyle(
+                      color: ThemeHelper.getTextMuted(context),
+                      fontSize: 16,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                  ),
+                  onSubmitted: (_) => _sendMessage(),
                 ),
               ),
             ),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(Icons.add_circle_outline),
-                  onPressed: () {
-                    showModalBottomSheet(
-                      context: context,
-                      backgroundColor: context.secondaryBackgroundColor,
-                      builder: (context) => Container(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ListTile(
-                              leading: Icon(
-                                Icons.photo,
-                                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                              ),
-                              title: Text('Photo', style: TextStyle(color: context.textPrimary)),
-                              onTap: () {
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Photo sharing coming soon'),
-                                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                                  ),
-                                );
-                              },
-                            ),
-                            ListTile(
-                              leading: Icon(
-                                Icons.videocam,
-                                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                              ),
-                              title: Text('Video', style: TextStyle(color: context.textPrimary)),
-                              onTap: () {
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Video sharing coming soon'),
-                                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                                  ),
-                                );
-                              },
-                            ),
-                            ListTile(
-                              leading: Icon(
-                                Icons.location_on,
-                                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                              ),
-                              title: Text('Location', style: TextStyle(color: context.textPrimary)),
-                              onTap: () {
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Location sharing coming soon'),
-                                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
+            const SizedBox(width: 8),
+            // Send button
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _sendMessage,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    gradient: ThemeHelper.getAccentGradient(context),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: ThemeHelper.getAccentColor(context).withOpacity(0.35),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
                       ),
-                    );
-                  },
-                ),
-                Expanded(
-                  child: GlassCard(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    borderRadius: BorderRadius.circular(24),
-                    child: TextField(
-                      controller: _messageController,
-                      style: TextStyle(color: context.textPrimary),
-                      decoration: InputDecoration(
-                        hintText: 'Type a message...',
-                        hintStyle: TextStyle(color: context.textMuted),
-                        border: InputBorder.none,
-                      ),
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.send_rounded,
+                    color: ThemeHelper.getOnAccentColor(context),
+                    size: 22,
                   ),
                 ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: _sendMessage,
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.send,
-                      color: context.textPrimary,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildAttachmentOption(IconData icon, String label) {
+    return ListTile(
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: ThemeHelper.getAccentColor(context).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: ThemeHelper.getAccentColor(context), size: 22),
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: ThemeHelper.getTextPrimary(context),
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      onTap: () {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$label sharing coming soon',
+              style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+            ),
+            backgroundColor: ThemeHelper.getAccentColor(context),
+          ),
+        );
+      },
     );
   }
 
@@ -376,10 +486,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   return Container(
                     width: 32,
                     height: 32,
-                    color: context.surfaceColor,
+                    color: ThemeHelper.getSurfaceColor(context),
                     child: Icon(
                       Icons.person,
-                      color: context.textSecondary,
+                      color: ThemeHelper.getTextSecondary(context),
                       size: 16,
                     ),
                   );
@@ -399,7 +509,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               backgroundColor: isMe
                   ? ThemeHelper.getAccentColor(context).withOpacity(0.2) // Theme-aware accent with opacity
-                  : context.surfaceColor,
+                  : ThemeHelper.getSurfaceColor(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -414,10 +524,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           return Container(
                             width: 200,
                             height: 200,
-                            color: context.surfaceColor,
+                            color: ThemeHelper.getSurfaceColor(context),
                             child: Icon(
                               Icons.broken_image,
-                              color: context.textMuted,
+                              color: ThemeHelper.getTextMuted(context),
                             ),
                           );
                         },
@@ -428,7 +538,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Text(
                       message.text,
                       style: TextStyle(
-                        color: context.textPrimary,
+                        color: ThemeHelper.getTextPrimary(context),
                         fontSize: 14,
                       ),
                     ),
@@ -437,7 +547,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Text(
                     _formatTime(message.timestamp),
                     style: TextStyle(
-                      color: context.textMuted,
+                      color: ThemeHelper.getTextMuted(context),
                       fontSize: 10,
                     ),
                   ),
@@ -452,7 +562,7 @@ class _ChatScreenState extends State<ChatScreen> {
               size: 16,
               color: message.isRead
                   ? ThemeHelper.getAccentColor(context) // Theme-aware accent color
-                  : context.textMuted,
+                  : ThemeHelper.getTextMuted(context),
             ),
           ],
         ],
@@ -475,7 +585,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 return Container(
                   width: 32,
                   height: 32,
-                  color: context.surfaceColor,
+                  color: ThemeHelper.getSurfaceColor(context),
                 );
               },
             ),
@@ -517,7 +627,7 @@ class _ChatScreenState extends State<ChatScreen> {
           width: 8,
           height: 8,
           decoration: BoxDecoration(
-            color: context.textMuted.withOpacity(
+            color: ThemeHelper.getTextMuted(context).withOpacity(
               0.3 + (animatedValue * 0.7),
             ),
             shape: BoxShape.circle,

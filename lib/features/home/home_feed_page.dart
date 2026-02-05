@@ -11,6 +11,7 @@ import '../../core/providers/posts_provider_riverpod.dart';
 import '../search/explore_screen.dart';
 import '../profile/profile_screen.dart';
 import '../chat/chat_list_screen.dart';
+import '../notifications/notifications_screen.dart';
 import 'home_reels_viewer_screen.dart';
 
 class HomeFeedPage extends ConsumerStatefulWidget {
@@ -137,6 +138,29 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
               fontWeight: FontWeight.bold,
             ),
           ),
+          // Messages icon on left of search bar
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ChatListScreen(),
+                ),
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.only(left: 10, right: 8),
+              padding: const EdgeInsets.all(6),
+              child: Transform.rotate(
+                angle: -0.785398,
+                child: Icon(
+                  Icons.send,
+                  color: ThemeHelper.getTextPrimary(context),
+                  size: 24,
+                ),
+              ),
+            ),
+          ),
           Expanded(
             child: GestureDetector(
               onTap: () {
@@ -182,24 +206,22 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
               ),
             ),
           ),
+          // Notification icon where messages was
           GestureDetector(
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ChatListScreen(),
+                  builder: (context) => const NotificationsScreen(),
                 ),
               );
             },
             child: Container(
               padding: const EdgeInsets.all(6),
-              child: Transform.rotate(
-                angle: -0.785398,
-                child: Icon(
-                  Icons.send,
-                  color: ThemeHelper.getTextPrimary(context),
-                  size: 24,
-                ),
+              child: Icon(
+                Icons.notifications_outlined,
+                color: ThemeHelper.getTextPrimary(context),
+                size: 24,
               ),
             ),
           ),

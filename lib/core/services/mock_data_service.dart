@@ -2,6 +2,7 @@ import '../models/user_model.dart';
 import '../models/post_model.dart';
 import '../models/story_model.dart';
 import '../models/message_model.dart';
+import '../models/music_model.dart';
 
 /// Mock data service for frontend development
 class MockDataService {
@@ -92,6 +93,8 @@ class MockDataService {
         isLiked: true,
         videoDuration: const Duration(minutes: 3, seconds: 45),
         isVideo: true,
+        audioId: 'original_track_1',
+        audioName: 'Original sound - Designer Life',
       ),
       PostModel(
         id: '3',
@@ -118,6 +121,8 @@ class MockDataService {
         isLiked: true,
         videoDuration: const Duration(minutes: 5, seconds: 30),
         isVideo: true,
+        audioId: 'original_track_1',
+        audioName: 'Original sound - Designer Life',
       ),
       PostModel(
         id: '5',
@@ -307,6 +312,136 @@ class MockDataService {
         'timestamp': DateTime.now().subtract(const Duration(hours: 2)),
         'isRead': true,
       },
+    ];
+  }
+
+  // Mock reel sounds (for create reel audio picker)
+  static List<Map<String, String>> getMockReelSounds() {
+    return [
+      {'id': 'original_track_1', 'name': 'Original sound - Designer Life'},
+      {'id': 'trending_1', 'name': 'Viral Beat 2024'},
+      {'id': 'trending_2', 'name': 'Summer Vibes'},
+      {'id': 'trending_3', 'name': 'Chill Lo-Fi'},
+      {'id': 'trending_4', 'name': 'Upbeat Pop'},
+      {'id': 'trending_5', 'name': 'Acoustic Mood'},
+    ];
+  }
+
+  // Mock music tracks
+  static List<MusicModel> getMockMusic() {
+    return [
+      MusicModel(
+        id: '1',
+        title: 'Midnight Dreams',
+        artist: 'Aurora Lights',
+        album: 'Night Vibes',
+        coverUrl: 'https://picsum.photos/400/400?random=50',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        duration: const Duration(minutes: 3, seconds: 45),
+        plays: 1250000,
+        likes: 45000,
+        isLiked: false,
+        releaseDate: DateTime.now().subtract(const Duration(days: 30)),
+        genre: 'Electronic',
+      ),
+      MusicModel(
+        id: '2',
+        title: 'Electric Pulse',
+        artist: 'Neon Waves',
+        album: 'Digital Dreams',
+        coverUrl: 'https://picsum.photos/400/400?random=51',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+        duration: const Duration(minutes: 4, seconds: 12),
+        plays: 980000,
+        likes: 32000,
+        isLiked: true,
+        releaseDate: DateTime.now().subtract(const Duration(days: 15)),
+        genre: 'Electronic',
+      ),
+      MusicModel(
+        id: '3',
+        title: 'Ocean Breeze',
+        artist: 'Coastal Sounds',
+        album: 'Summer Collection',
+        coverUrl: 'https://picsum.photos/400/400?random=52',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
+        duration: const Duration(minutes: 3, seconds: 28),
+        plays: 2100000,
+        likes: 89000,
+        isLiked: false,
+        releaseDate: DateTime.now().subtract(const Duration(days: 60)),
+        genre: 'Pop',
+      ),
+      MusicModel(
+        id: '4',
+        title: 'City Lights',
+        artist: 'Urban Beats',
+        album: 'Metropolitan',
+        coverUrl: 'https://picsum.photos/400/400?random=53',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
+        duration: const Duration(minutes: 5, seconds: 5),
+        plays: 1560000,
+        likes: 67000,
+        isLiked: true,
+        releaseDate: DateTime.now().subtract(const Duration(days: 45)),
+        genre: 'Hip Hop',
+      ),
+      MusicModel(
+        id: '5',
+        title: 'Starlight',
+        artist: 'Cosmic Harmony',
+        album: 'Galaxy',
+        coverUrl: 'https://picsum.photos/400/400?random=54',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
+        duration: const Duration(minutes: 4, seconds: 50),
+        plays: 890000,
+        likes: 28000,
+        isLiked: false,
+        releaseDate: DateTime.now().subtract(const Duration(days: 20)),
+        genre: 'Ambient',
+      ),
+      MusicModel(
+        id: '6',
+        title: 'Sunset Drive',
+        artist: 'Highway Melodies',
+        album: 'Road Trip',
+        coverUrl: 'https://picsum.photos/400/400?random=55',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',
+        duration: const Duration(minutes: 3, seconds: 55),
+        plays: 1340000,
+        likes: 56000,
+        isLiked: true,
+        releaseDate: DateTime.now().subtract(const Duration(days: 10)),
+        genre: 'Rock',
+      ),
+      MusicModel(
+        id: '7',
+        title: 'Rainy Day',
+        artist: 'Cloudy Moods',
+        album: 'Weather Patterns',
+        coverUrl: 'https://picsum.photos/400/400?random=56',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',
+        duration: const Duration(minutes: 4, seconds: 33),
+        plays: 1120000,
+        likes: 41000,
+        isLiked: false,
+        releaseDate: DateTime.now().subtract(const Duration(days: 25)),
+        genre: 'Jazz',
+      ),
+      MusicModel(
+        id: '8',
+        title: 'Fire Dance',
+        artist: 'Flame Orchestra',
+        album: 'Heat Wave',
+        coverUrl: 'https://picsum.photos/400/400?random=57',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
+        duration: const Duration(minutes: 3, seconds: 17),
+        plays: 1780000,
+        likes: 72000,
+        isLiked: true,
+        releaseDate: DateTime.now().subtract(const Duration(days: 5)),
+        genre: 'Electronic',
+      ),
     ];
   }
 }

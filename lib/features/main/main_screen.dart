@@ -5,7 +5,7 @@ import '../home/home_feed_page.dart';
 import '../reels/reels_page.dart';
 import '../stories/story_page.dart';
 import '../long_videos/long_videos_page.dart';
-import '../notifications/notifications_page.dart';
+import '../music/music_page.dart';
 /// Root screen with persistent glassmorphic bottom navigation
 /// Uses Stack architecture: PageView for content, BottomNavBar as overlay
 class MainScreen extends StatefulWidget {
@@ -91,6 +91,7 @@ class _MainScreenState extends State<MainScreen> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      resizeToAvoidBottomInset: false,
       body: Container(
         // Apply gradient background at root level - fills entire screen
         decoration: BoxDecoration(
@@ -139,8 +140,8 @@ class _MainScreenState extends State<MainScreen> {
         return StoryPage(bottomPadding: bottomPadding);
       case 3: // Long Videos
         return LongVideosPage(bottomPadding: bottomPadding);
-      case 4: // Notifications
-        return NotificationsPage(bottomPadding: bottomPadding);
+      case 4: // Music
+        return MusicPage(bottomPadding: bottomPadding);
       default:
         return const SizedBox.shrink();
     }

@@ -236,7 +236,13 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
     final targetPosition = newPosition < Duration.zero
         ? Duration.zero
         : newPosition;
+    // Seek without pausing - maintain play state
+    final wasPlaying = state.isPlaying;
     state.controller!.seekTo(targetPosition);
+    // Ensure video continues playing if it was playing before
+    if (wasPlaying && !state.controller!.value.isPlaying) {
+      state.controller!.play();
+    }
     _showSeekFeedback('backward', targetPosition);
   }
 

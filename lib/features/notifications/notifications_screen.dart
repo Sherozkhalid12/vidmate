@@ -3,7 +3,6 @@ import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
 import '../profile/profile_screen.dart';
@@ -60,10 +59,31 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: context.backgroundColor,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      color: ThemeHelper.getBackgroundColor(context),
+      child: Scaffold(
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
+        backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(isDark ? 0.4 : 0.85),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: ThemeHelper.getTextPrimary(context),
+        iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+        titleTextStyle: TextStyle(
+          color: ThemeHelper.getTextPrimary(context),
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        ),
         title: Text('Notifications'),
+        shape: Border(
+          bottom: BorderSide(
+            color: ThemeHelper.getBorderColor(context).withOpacity(0.5),
+            width: 0.5,
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () {
@@ -82,7 +102,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         ],
       ),
-      body: _notifications.isEmpty
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
+        ),
+        child: _notifications.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -90,13 +116,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   Icon(
                     Icons.notifications_none,
                     size: 64,
-                    color: context.textMuted,
+                    color: ThemeHelper.getTextMuted(context),
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'No notifications yet',
                     style: TextStyle(
-                      color: context.textMuted,
+                      color: ThemeHelper.getTextMuted(context),
                       fontSize: 16,
                     ),
                   ),
@@ -122,6 +148,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 },
               ),
             ),
+        ),
+    ),
     );
   }
 
@@ -131,13 +159,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final isRead = notification['isRead'] as bool;
     final text = notification['text'] as String;
 
-    return GlassCard(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      borderRadius: BorderRadius.circular(16),
-      backgroundColor: isRead
-          ? context.surfaceColor
-          : ThemeHelper.getAccentColor(context).withOpacity(0.1), // Theme-aware accent with opacity
+    return InkWell(
       onTap: () {
         Navigator.push(
           context,
@@ -149,94 +171,83 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           notification['isRead'] = true;
         });
       },
-      child: Row(
-        children: [
-          // Icon
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: _getNotificationColor(type).withOpacity(0.2),
-              shape: BoxShape.circle,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            // Profile image on the left
+            ClipOval(
+              child: Image.network(
+                user.avatarUrl,
+                width: 50,
+                height: 50,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    width: 50,
+                    height: 50,
+                    color: ThemeHelper.getSurfaceColor(context),
+                    child: Icon(
+                      Icons.person,
+                      color: ThemeHelper.getTextSecondary(context),
+                    ),
+                  );
+                },
+              ),
             ),
-            child: Icon(
+            const SizedBox(width: 12),
+            // Notification type icon (right of image, left of text)
+            Icon(
               _getNotificationIcon(type),
               color: _getNotificationColor(type),
-              size: 24,
+              size: 28,
             ),
-          ),
-          const SizedBox(width: 16),
-          // Avatar
-          ClipOval(
-            child: Image.network(
-              user.avatarUrl,
-              width: 50,
-              height: 50,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  width: 50,
-                  height: 50,
-                  color: context.surfaceColor,
-                  child: Icon(
-                    Icons.person,
-                    color: context.textSecondary,
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Content
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                RichText(
-                  text: TextSpan(
-                    style: TextStyle(
-                      color: context.textPrimary,
-                      fontSize: 14,
-                    ),
-                    children: [
-                      TextSpan(
-                        text: user.displayName,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                        ),
+            const SizedBox(width: 12),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  RichText(
+                    text: TextSpan(
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontSize: 14,
                       ),
-                      TextSpan(text: ' $text'),
-                    ],
+                      children: [
+                        TextSpan(
+                          text: user.displayName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        TextSpan(text: ' $text'),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _formatTime(notification['timestamp'] as DateTime),
-                  style: TextStyle(
-                    color: context.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Unread indicator
-          if (!isRead)
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: ThemeHelper.getAccentColor(context).withOpacity(0.5), // Theme-aware shadow
-                    blurRadius: 4,
-                    spreadRadius: 1,
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatTime(notification['timestamp'] as DateTime),
+                    style: TextStyle(
+                      color: ThemeHelper.getTextMuted(context),
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
             ),
-        ],
+            // Unread indicator
+            if (!isRead)
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: ThemeHelper.getAccentColor(context),
+                  shape: BoxShape.circle,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
