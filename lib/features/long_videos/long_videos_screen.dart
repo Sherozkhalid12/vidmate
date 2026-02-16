@@ -87,42 +87,13 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
   void dispose() {
     _scrollController.dispose();
     _scrollThrottleTimer?.cancel();
-    // Cancel all timers
     for (var timer in _controlsTimers.values) {
       timer.cancel();
     }
     _controlsTimers.clear();
     _videoKeys.clear();
-    
-    // Pause any playing video using Riverpod state
-    final playbackState = ref.read(longVideoPlaybackProvider);
-    if (playbackState.currentlyPlayingVideoId != null) {
-      // Find and pause the currently playing video
-      final videos = ref.read(longVideosListProvider);
-      final playingVideo = videos.firstWhere(
-        (v) => v.id == playbackState.currentlyPlayingVideoId,
-        orElse: () => videos.isNotEmpty ? videos.first : PostModel(
-          id: '',
-          author: MockDataService.mockUsers.first,
-          caption: '',
-          createdAt: DateTime.now(),
-        ),
-      );
-      
-      if (playingVideo.videoUrl != null) {
-        try {
-          final key = VideoWidgetKey(playingVideo.id, playingVideo.videoUrl!);
-          final notifier = ref.read(longVideoWidgetProvider(key).notifier);
-          notifier.pause();
-        } catch (e) {
-          // Ignore errors
-        }
-      }
-      
-      // Clear the currently playing video
-      ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
-    }
-    
+    // Do not use ref in dispose() — Riverpod invalidates ref when the widget is torn down.
+    // Playback state is cleared when providers are no longer watched (e.g. autoDispose).
     super.dispose();
   }
 

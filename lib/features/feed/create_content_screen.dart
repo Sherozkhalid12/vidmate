@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 // audioplayers: Run `flutter pub get` to install. Restore import for real audio playback.
@@ -9,6 +10,7 @@ import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import 'select_music_screen.dart';
 
 /// Content type enum for different creation modes
@@ -33,7 +35,7 @@ class MediaItem {
 }
 
 /// Multi-type content creation screen supporting Post, Story, Reel, and Long Video
-class CreateContentScreen extends StatefulWidget {
+class CreateContentScreen extends ConsumerStatefulWidget {
   final Widget? bottomNavigationBar;
   final ContentType initialType;
   /// When creating a reel, optional pre-selected audio from "Use this audio" flow
@@ -49,18 +51,21 @@ class CreateContentScreen extends StatefulWidget {
   });
 
   @override
-  State<CreateContentScreen> createState() => _CreateContentScreenState();
+  ConsumerState<CreateContentScreen> createState() => _CreateContentScreenState();
 }
 
-class _CreateContentScreenState extends State<CreateContentScreen> {
+class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   final _captionController = TextEditingController();
   final _picker = ImagePicker();
   final PageController _carouselController = PageController();
 
   ContentType _selectedType = ContentType.post;
   
-  // Post: multiple images
+  // Post: multiple images + optional single video
   List<File> _postImages = [];
+  File? _postVideo;
+  Duration? _postVideoDuration;
+  VideoPlayerController? _postVideoController;
   
   // Story: multiple media items (images + videos)
   List<MediaItem> _storyMedia = [];
@@ -100,6 +105,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     createContentVisibleNotifier.value = false;
     _captionController.dispose();
     _carouselController.dispose();
+    _postVideoController?.dispose();
     _videoController?.dispose();
     _stopAndDisposeAudio();
     super.dispose();
@@ -111,6 +117,10 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
 
   /// Dispose video when switching content type; dispose audio when navigating to select music
   void _disposeMediaForTabChange() {
+    _postVideoController?.dispose();
+    _postVideoController = null;
+    _postVideo = null;
+    _postVideoDuration = null;
     _videoController?.dispose();
     _videoController = null;
     _videoFile = null;
@@ -194,6 +204,39 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
         ),
       ),
     );
+  }
+
+  /// Pick video for Post (max 1)
+  Future<void> _pickPostVideo() async {
+    try {
+      if (_postVideo != null) {
+        _showErrorSnackBar('Post can only have one video. Remove the existing video first.');
+        return;
+      }
+      final source = await _showSourceDialog();
+      if (source == null) return;
+
+      final pickedFile = await _picker.pickVideo(source: source);
+      if (pickedFile != null) {
+        final videoFile = File(pickedFile.path);
+        final duration = await _getVideoDuration(videoFile);
+
+        _postVideoController?.dispose();
+        final controller = VideoPlayerController.file(videoFile);
+        await controller.initialize();
+        controller.pause();
+
+        setState(() {
+          _postVideo = videoFile;
+          _postVideoDuration = duration;
+          _postVideoController = controller;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        _showErrorSnackBar('Error picking video: ${e.toString()}');
+      }
+    }
   }
 
   /// Pick multiple images for Post (1-10 max)
@@ -479,12 +522,12 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   bool _validateContent() {
     switch (_selectedType) {
       case ContentType.post:
-        if (_postImages.isEmpty && _captionController.text.trim().isEmpty) {
-          _showErrorSnackBar('Please add at least one image or a caption.');
+        if (_postImages.isEmpty && _postVideo == null && _captionController.text.trim().isEmpty) {
+          _showErrorSnackBar('Please add at least one image, a video, or a caption.');
           return false;
         }
-        if (_postImages.isEmpty) {
-          _showErrorSnackBar('Post requires at least one image.');
+        if (_postImages.isEmpty && _postVideo == null) {
+          _showErrorSnackBar('Post requires at least one image or a video.');
           return false;
         }
         break;
@@ -528,15 +571,50 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     return true;
   }
 
-  /// Publish content (simulated)
+  /// Publish content. Post tab uses real API; others simulated for now.
   Future<void> _publishContent() async {
     if (!_validateContent()) return;
+
+    if (_selectedType == ContentType.post) {
+      final notifier = ref.read(createPostProvider.notifier);
+      final success = await notifier.createPost(
+        images: _postImages,
+        video: _postVideo,
+        caption: _captionController.text.trim().isEmpty
+            ? null
+            : _captionController.text.trim(),
+        locations: _selectedLocation != null ? [_selectedLocation!] : [],
+        taggedUsers: _taggedUsers.isEmpty ? [] : List.from(_taggedUsers),
+        feelings: _selectedFeeling != null ? [_selectedFeeling!] : [],
+      );
+      if (!mounted) return;
+      ref.read(createPostProvider.notifier).clearError();
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Post shared successfully!'),
+            backgroundColor: context.surfaceColor,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+        _resetForm();
+      } else {
+        final error =
+            ref.read(createPostProvider).error ?? 'Failed to create post';
+        _showErrorSnackBar(error);
+      }
+      return;
+    }
 
     setState(() {
       _isUploading = true;
     });
 
-    // Simulate upload
+    // Simulate upload for Story / Reel / Long Video
     await Future.delayed(const Duration(seconds: 2));
 
     if (mounted) {
@@ -572,7 +650,6 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
         ),
       );
 
-      // Reset form
       _resetForm();
     }
   }
@@ -582,6 +659,8 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     _captionController.clear();
     setState(() {
       _postImages.clear();
+      _postVideo = null;
+      _postVideoDuration = null;
       _storyMedia.clear();
       _videoFile = null;
       _videoDuration = null;
@@ -591,6 +670,8 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
       _selectedFeeling = null;
       _isAudioPlaying = false;
     });
+    _postVideoController?.dispose();
+    _postVideoController = null;
     _videoController?.dispose();
     _videoController = null;
   }
@@ -986,6 +1067,9 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final createPostState = ref.watch(createPostProvider);
+    final isPostUploading = _selectedType == ContentType.post && createPostState.isCreating;
+    final isUploading = isPostUploading || _isUploading;
     final screenHeight = MediaQuery.of(context).size.height;
     final minMediaHeight = screenHeight * 0.45;
     return Scaffold(
@@ -998,7 +1082,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
           bottom: false,
           child: CustomScrollView(
             slivers: [
-              SliverToBoxAdapter(child: _buildAppBar()),
+              SliverToBoxAdapter(child: _buildAppBar(isUploading)),
               SliverToBoxAdapter(child: _buildTypeSelector()),
               const SliverToBoxAdapter(child: SizedBox(height: 12)),
               SliverToBoxAdapter(child: _buildAuthorInfo()),
@@ -1026,7 +1110,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                 const SliverToBoxAdapter(child: SizedBox(height: 16)),
                 SliverToBoxAdapter(child: _buildSelectedTiles()),
               ],
-              if (_isUploading) ...[
+              if (isUploading) ...[
                 const SliverToBoxAdapter(child: SizedBox(height: 20)),
                 SliverToBoxAdapter(
                   child: LinearProgressIndicator(
@@ -1044,7 +1128,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
   }
 
   /// Build AppBar with dynamic title and action button
-  PreferredSizeWidget _buildAppBar() {
+  PreferredSizeWidget _buildAppBar(bool isUploading) {
     String title;
     String actionText;
     
@@ -1084,11 +1168,11 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
       ),
       actions: [
         TextButton(
-          onPressed: _isUploading ? null : _publishContent,
+          onPressed: isUploading ? null : _publishContent,
           child: Text(
             actionText,
             style: TextStyle(
-              color: _isUploading
+              color: isUploading
                   ? context.textMuted
                   : context.buttonColor,
               fontWeight: FontWeight.w600,
@@ -1127,7 +1211,13 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
           setState(() {
             _selectedType = type;
             // Clear media when switching types; dispose video/audio correctly
-            if (type != ContentType.post) _postImages.clear();
+            if (type != ContentType.post) {
+              _postImages.clear();
+              _postVideoController?.dispose();
+              _postVideoController = null;
+              _postVideo = null;
+              _postVideoDuration = null;
+            }
             if (type != ContentType.story) _storyMedia.clear();
             if (type != ContentType.reel && type != ContentType.longVideo) {
               _disposeMediaForTabChange();
@@ -1211,10 +1301,12 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     }
   }
 
-  /// Build Post media section (multiple images with carousel)
+  /// Build Post media section (multiple images + optional video with carousel)
   Widget _buildPostMediaSection({double? fillHeight}) {
     final h = fillHeight ?? 400;
-    if (_postImages.isEmpty) {
+    final hasMedia = _postImages.isNotEmpty || _postVideo != null;
+    
+    if (!hasMedia) {
       return Container(
         height: h,
         margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -1238,7 +1330,7 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Add Photos (1-10)',
+                'Add Photos (1-10) or Video (1)',
                 style: TextStyle(
                   color: context.textPrimary,
                   fontSize: 16,
@@ -1246,95 +1338,14 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              ElevatedButton.icon(
-                onPressed: _pickPostImages,
-                icon: Icon(Icons.image, color: context.buttonTextColor),
-                label: Text(
-                  'Select Images',
-                  style: TextStyle(color: context.buttonTextColor),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: context.buttonColor,
-                  foregroundColor: context.buttonTextColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      height: h,
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      child: Stack(
-        children: [
-          // Carousel preview
-          PageView.builder(
-            controller: _carouselController,
-            onPageChanged: (index) {
-              setState(() {
-                _currentCarouselIndex = index;
-              });
-            },
-            itemCount: _postImages.length,
-            itemBuilder: (context, index) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 50),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  color: Colors.black,
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Image.file(
-                    _postImages[index],
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                  ),
-                ),
-              );
-            },
-          ),
-          // Carousel indicators
-          if (_postImages.length > 1)
-            Positioned(
-              bottom: 60,
-              left: 0,
-              right: 0,
-              child: Row(
+              Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _postImages.length,
-                  (index) => Container(
-                    width: 8,
-                    height: 8,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _currentCarouselIndex == index
-                          ? context.buttonColor
-                          : context.buttonColor.withOpacity(0.3),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          
-          // Action buttons
-          Positioned(
-            bottom: 16,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (_postImages.length < 10)
+                children: [
                   ElevatedButton.icon(
                     onPressed: _pickPostImages,
-                    icon: Icon(Icons.add, color: context.buttonTextColor),
+                    icon: Icon(Icons.image, color: context.buttonTextColor),
                     label: Text(
-                      'Add More (${_postImages.length}/10)',
+                      'Images',
                       style: TextStyle(color: context.buttonTextColor),
                     ),
                     style: ElevatedButton.styleFrom(
@@ -1342,29 +1353,228 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                       foregroundColor: context.buttonTextColor,
                     ),
                   ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: () {
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: _pickPostVideo,
+                    icon: Icon(Icons.videocam, color: context.buttonTextColor),
+                    label: Text(
+                      'Video',
+                      style: TextStyle(color: context.buttonTextColor),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: context.buttonColor,
+                      foregroundColor: context.buttonTextColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final totalItems = _postImages.length + (_postVideo != null ? 1 : 0);
+    return Container(
+      height: h,
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Carousel preview
+          Expanded(
+            child: Stack(
+              children: [
+                PageView.builder(
+                  controller: _carouselController,
+                  onPageChanged: (index) {
                     setState(() {
-                      _postImages.removeAt(_currentCarouselIndex);
-                      if (_currentCarouselIndex >= _postImages.length) {
-                        _currentCarouselIndex = _postImages.length - 1;
-                      }
-                      if (_postImages.isEmpty) {
-                        _currentCarouselIndex = 0;
-                      }
+                      _currentCarouselIndex = index;
                     });
                   },
-                  icon: Icon(Icons.delete_outline, color: context.textPrimary),
-                  label: Text(
-                    'Remove',
-                    style: TextStyle(color: context.textPrimary),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black.withOpacity(0.7),
-                    foregroundColor: context.textPrimary,
-                  ),
+                  itemCount: totalItems,
+                  itemBuilder: (context, index) {
+                    final isVideo = _postVideo != null && index == _postImages.length;
+                    return Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        color: Colors.black,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: isVideo
+                            ? Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  _postVideoController != null &&
+                                          _postVideoController!.value.isInitialized
+                                      ? AspectRatio(
+                                          aspectRatio: _postVideoController!.value.aspectRatio,
+                                          child: VideoPlayer(_postVideoController!),
+                                        )
+                                      : Container(
+                                          color: Colors.black,
+                                          child: Center(
+                                            child: Icon(
+                                              Icons.play_circle_filled,
+                                              size: 64,
+                                              color: context.textPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                  if (_postVideoDuration != null)
+                                    Positioned(
+                                      top: 16,
+                                      right: 16,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.8),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          _formatDuration(_postVideoDuration!),
+                                          style: TextStyle(
+                                            color: context.textPrimary,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              )
+                            : Image.file(
+                                _postImages[index],
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                              ),
+                      ),
+                    );
+                  },
                 ),
+                if (totalItems > 1)
+                  Positioned(
+                    bottom: 12,
+                    left: 0,
+                    right: 0,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(
+                        totalItems,
+                        (index) => Container(
+                          width: 8,
+                          height: 8,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _currentCarouselIndex == index
+                                ? context.buttonColor
+                                : context.buttonColor.withOpacity(0.3),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // Buttons below preview (column)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Column(
+              children: [
+                if (_postImages.length < 10)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _pickPostImages,
+                      icon: Icon(Icons.add, color: context.buttonTextColor, size: 20),
+                      label: Text(
+                        'Add Images (${_postImages.length}/10)',
+                        style: TextStyle(color: context.buttonTextColor, fontWeight: FontWeight.w600),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: context.buttonColor,
+                        foregroundColor: context.buttonTextColor,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_postVideo == null && _postImages.length < 10) const SizedBox(height: 8),
+                if (_postVideo == null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _pickPostVideo,
+                      icon: Icon(Icons.videocam, color: context.buttonTextColor, size: 20),
+                      label: Text(
+                        'Add Video',
+                        style: TextStyle(color: context.buttonTextColor, fontWeight: FontWeight.w600),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: context.buttonColor,
+                        foregroundColor: context.buttonTextColor,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_postImages.isNotEmpty || _postVideo != null) const SizedBox(height: 8),
+                if (_postImages.isNotEmpty || _postVideo != null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        final isVideo = _postVideo != null && _currentCarouselIndex == _postImages.length;
+                        setState(() {
+                          if (isVideo) {
+                            _postVideoController?.dispose();
+                            _postVideoController = null;
+                            _postVideo = null;
+                            _postVideoDuration = null;
+                          } else {
+                            _postImages.removeAt(_currentCarouselIndex);
+                          }
+                          if (_currentCarouselIndex >= totalItems - 1) {
+                            _currentCarouselIndex = (totalItems - 2).clamp(0, double.infinity).toInt();
+                          }
+                          if (_postImages.isEmpty && _postVideo == null) {
+                            _currentCarouselIndex = 0;
+                          }
+                        });
+                      },
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        'Remove',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1466,7 +1676,6 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                             fit: BoxFit.cover,
                           ),
                   ),
-                  // Remove button
                   Positioned(
                     top: 4,
                     right: 4,
@@ -1479,13 +1688,17 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.7),
+                          color: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                          border: Border.all(
+                            color: ThemeHelper.getBorderColor(context),
+                            width: 1,
+                          ),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
                           Icons.close,
                           size: 16,
-                          color: context.textPrimary,
+                          color: ThemeHelper.getTextPrimary(context),
                         ),
                       ),
                     ),
@@ -1519,25 +1732,69 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
             },
           ),
           ),
-          // Add more button
-          if (_storyMedia.length < 10)
-            Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 8),
-              child: Center(
-                child: ElevatedButton.icon(
-                  onPressed: _pickStoryMedia,
-                  icon: Icon(Icons.add, color: context.buttonTextColor),
-                  label: Text(
-                    'Add More (${_storyMedia.length}/10)',
-                    style: TextStyle(color: context.buttonTextColor),
+          // Buttons below grid (column)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Column(
+              children: [
+                if (_storyMedia.length < 10)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _pickStoryMedia,
+                      icon: Icon(Icons.add, color: context.buttonTextColor, size: 20),
+                      label: Text(
+                        'Add More (${_storyMedia.length}/10)',
+                        style: TextStyle(color: context.buttonTextColor, fontWeight: FontWeight.w600),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: context.buttonColor,
+                        foregroundColor: context.buttonTextColor,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: context.buttonColor,
-                    foregroundColor: context.buttonTextColor,
+                if (_storyMedia.isNotEmpty) const SizedBox(height: 8),
+                if (_storyMedia.isNotEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          if (_storyMedia.isNotEmpty) {
+                            _storyMedia.removeLast();
+                          }
+                        });
+                      },
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        'Remove last',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+              ],
             ),
+          ),
         ],
       ),
     );
@@ -1601,80 +1858,119 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
     return Container(
       height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: Colors.black,
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: _videoController != null &&
-                      _videoController!.value.isInitialized
-                  ? AspectRatio(
-                      aspectRatio: _videoController!.value.aspectRatio,
-                      child: VideoPlayer(_videoController!),
-                    )
-                  : Center(
-                      child: Icon(
-                        Icons.play_circle_filled,
-                        size: 64,
-                        color: context.textPrimary,
-                      ),
-                    ),
-            ),
-          ),
-          // Video duration badge
-          if (_videoDuration != null)
-            Positioned(
-              top: 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _formatDuration(_videoDuration!),
-                  style: TextStyle(
-                    color: context.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+          Expanded(
+            child: Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: Colors.black,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: _videoController != null &&
+                            _videoController!.value.isInitialized
+                        ? AspectRatio(
+                            aspectRatio: _videoController!.value.aspectRatio,
+                            child: VideoPlayer(_videoController!),
+                          )
+                        : Center(
+                            child: Icon(
+                              Icons.play_circle_filled,
+                              size: 64,
+                              color: context.textPrimary,
+                            ),
+                          ),
                   ),
                 ),
-              ),
+                if (_videoDuration != null)
+                  Positioned(
+                    top: 16,
+                    right: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.8),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _formatDuration(_videoDuration!),
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          
-          // Remove button
-          Positioned(
-            bottom: 16,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _videoFile = null;
-                    _videoDuration = null;
-                  });
-                  _videoController?.dispose();
-                  _videoController = null;
-                },
-                icon: Icon(Icons.delete_outline, color: context.textPrimary),
-                label: Text(
-                  'Remove',
-                  style: TextStyle(color: context.textPrimary),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _pickVideo,
+                    icon: Icon(Icons.video_library, color: context.buttonTextColor, size: 20),
+                    label: Text(
+                      'Change Video',
+                      style: TextStyle(color: context.buttonTextColor, fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: context.buttonColor,
+                      foregroundColor: context.buttonTextColor,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black.withOpacity(0.7),
-                  foregroundColor: context.textPrimary,
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _videoFile = null;
+                        _videoDuration = null;
+                      });
+                      _videoController?.dispose();
+                      _videoController = null;
+                    },
+                    icon: Icon(
+                      Icons.delete_outline,
+                      color: ThemeHelper.getTextPrimary(context),
+                      size: 20,
+                    ),
+                    label: Text(
+                      'Remove',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                      backgroundColor: ThemeHelper.getSurfaceColor(context),
+                      foregroundColor: ThemeHelper.getTextPrimary(context),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ],

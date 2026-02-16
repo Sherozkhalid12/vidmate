@@ -38,6 +38,8 @@ dependencies:
   # Video player for long-form videos and reels
   video_player: ^2.8.2
   youtube_player_flutter: ^9.0.0
+  # HLS and adaptive streaming (backend videos)
+  better_player: ^0.0.84
 
   # Audio playback for create content reel audio (play/pause/stop)
   audioplayers: ^6.1.0
@@ -76,6 +78,10 @@ dependencies:
   
   # Permissions
   permission_handler: ^11.1.0
+
+  # HTTP client for API calls
+  http: ^1.2.0
+  dio: ^5.4.0
 
 dev_dependencies:
   flutter_test:

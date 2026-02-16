@@ -2,13 +2,14 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player/better_player.dart';
 import '../utils/theme_helper.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/posts_provider_riverpod.dart';
 import '../models/post_model.dart';
 import 'comments_bottom_sheet.dart';
 import 'share_bottom_sheet.dart';
+import 'safe_better_player.dart';
 import 'dart:async';
 import 'dart:ui';
 
@@ -83,7 +84,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       if (mounted && widget.videoUrl != null) {
         try {
           final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
-          if (playerState.isPlaying) {
+          if (playerState.hasValidController && playerState.isPlaying) {
             setState(() {
               _showControls = false;
             });
@@ -110,15 +111,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     _visibilityCheckTimer?.cancel();
     _playPauseAnimationController.dispose();
     WidgetsBinding.instance.removeObserver(this);
-    // Pause video when disposing
-    if (widget.videoUrl != null) {
-      try {
-        final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
-        notifier.pause();
-      } catch (e) {
-        // Ignore errors during dispose
-      }
-    }
+    // Do not use ref in dispose() — it is invalid once the widget is torn down.
     super.dispose();
   }
 
@@ -135,13 +128,18 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     if (widget.videoUrl == null || !mounted) return;
     
     try {
+      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      if (!playerState.hasValidController) return;
+      
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.play();
       // YouTube style: Show controls briefly, then hide when playing
-      setState(() {
-        _showControls = true;
-      });
-      _startControlsTimer();
+      if (mounted) {
+        setState(() {
+          _showControls = true;
+        });
+        _startControlsTimer();
+      }
     } catch (e) {
       debugPrint('Error playing video: $e');
     }
@@ -154,9 +152,14 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     }
 
     try {
+      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      if (!playerState.hasValidController) return;
+      
       // Animate button press for smooth feedback
       _playPauseAnimationController.forward(from: 0.0).then((_) {
-        _playPauseAnimationController.reverse();
+        if (mounted) {
+          _playPauseAnimationController.reverse();
+        }
       });
       
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
@@ -183,6 +186,9 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
   void _seekForward() {
     if (widget.videoUrl == null) return;
     try {
+      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      if (!playerState.hasValidController) return;
+      
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.seekForward();
       _showControlsTemporarily();
@@ -194,8 +200,10 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
   void _seekBackward() {
     if (widget.videoUrl == null) return;
     try {
-      final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      if (!playerState.hasValidController) return;
+      
+      final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       // Seek backward without pausing
       final wasPlaying = playerState.isPlaying;
       notifier.seekBackward();
@@ -237,8 +245,11 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         if (_isVideoVisible && widget.videoUrl != null) {
           _isVideoVisible = false;
           try {
-            final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
-            notifier.pause();
+            final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+            if (playerState.hasValidController) {
+              final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+              notifier.pause();
+            }
           } catch (e) {
             // Ignore pause errors
           }
@@ -251,8 +262,11 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         if (_isVideoVisible && widget.videoUrl != null) {
           _isVideoVisible = false;
           try {
-            final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
-            notifier.pause();
+            final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+            if (playerState.hasValidController) {
+              final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+              notifier.pause();
+            }
           } catch (e) {
             // Ignore pause errors
           }
@@ -283,8 +297,11 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
           // Pause immediately when video goes out of view
           if (widget.videoUrl != null) {
             try {
-              final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
-              notifier.pause();
+              final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+              if (playerState.hasValidController) {
+                final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+                notifier.pause();
+              }
             } catch (e) {
               // Ignore pause errors
             }
@@ -295,7 +312,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         // Double-check: if not visible but playing, pause immediately
         try {
           final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
-          if (playerState.isPlaying) {
+          if (playerState.hasValidController && playerState.isPlaying) {
             final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
             notifier.pause();
           }
@@ -308,8 +325,11 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       if (_isVideoVisible && widget.videoUrl != null) {
         _isVideoVisible = false;
         try {
-          final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
-          notifier.pause();
+          final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+          if (playerState.hasValidController) {
+            final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+            notifier.pause();
+          }
         } catch (e) {
           // Ignore pause errors
         }
@@ -330,7 +350,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     final playerState = widget.videoUrl != null 
         ? ref.watch(videoPlayerProvider(widget.videoUrl!))
         : null;
-    final isVideoInitialized = playerState?.isInitialized ?? false;
+    final isVideoInitialized = playerState?.isInitialized ?? false && playerState?.hasValidController == true;
     final isPlaying = playerState?.isPlaying ?? false;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -506,11 +526,14 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
             behavior: HitTestBehavior.opaque,
             child: Stack(
               children: [
-                // Video player or thumbnail
+                // Video player (HLS) or thumbnail — only build BetterPlayer when we have a valid controller
                 AspectRatio(
                   aspectRatio: 1.0,
-                  child: isVideoInitialized && playerState?.controller != null
-                      ? VideoPlayer(playerState!.controller!)
+                  child: isVideoInitialized && playerState?.hasValidController == true && playerState?.controller != null
+                      ? KeyedSubtree(
+                          key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
+                          child: SafeBetterPlayerWrapper(controller: playerState!.controller!),
+                        )
                       : CachedNetworkImage(
                           imageUrl: widget.thumbnailUrl,
                           fit: BoxFit.cover,
@@ -538,7 +561,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                 ),
                 
                 // Play/Pause button - centered, only handles taps on the button itself
-                if (isVideoInitialized && playerState != null)
+                if (isVideoInitialized && playerState != null && playerState.hasValidController)
                   Positioned.fill(
                     child: Center(
                       child: GestureDetector(

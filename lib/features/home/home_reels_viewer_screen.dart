@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player/better_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/post_model.dart';
 import '../profile/profile_screen.dart';
+import '../../core/widgets/safe_better_player.dart';
 
 /// Reel-style fullscreen viewer for home page videos
 class HomeReelsViewerScreen extends ConsumerStatefulWidget {
@@ -47,8 +48,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
 
   @override
   void dispose() {
-    // Pause all videos before disposing
-    _pauseAllVideos();
+    // Do not use ref in dispose() — it is invalid once the widget is torn down.
     _pageController.dispose();
     super.dispose();
   }
@@ -60,7 +60,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
           final notifier = ref.read(videoPlayerProvider(video.videoUrl!).notifier);
           notifier.pause();
         } catch (e) {
-          // Ignore errors
+          // Ignore
         }
       }
     }
@@ -163,13 +163,13 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
       fit: StackFit.expand,
       children: [
         // Video player
-        if (videoUrl != null && isInitialized && playerState?.controller != null)
+        if (videoUrl != null && isInitialized && playerState?.hasValidController == true && playerState?.controller != null)
           Container(
             color: Colors.black,
             child: Center(
               child: AspectRatio(
-                aspectRatio: playerState!.controller!.value.aspectRatio,
-                child: VideoPlayer(playerState.controller!),
+                aspectRatio: playerState!.controller!.getAspectRatio() ?? 1.0,
+                child: SafeBetterPlayerWrapper(controller: playerState.controller!),
               ),
             ),
           )

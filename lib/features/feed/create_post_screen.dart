@@ -1,29 +1,30 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 
 /// Create post screen (photo/video)
-class CreatePostScreen extends StatefulWidget {
+class CreatePostScreen extends ConsumerStatefulWidget {
   final Widget? bottomNavigationBar;
   
   const CreatePostScreen({super.key, this.bottomNavigationBar});
 
   @override
-  State<CreatePostScreen> createState() => _CreatePostScreenState();
+  ConsumerState<CreatePostScreen> createState() => _CreatePostScreenState();
 }
 
-class _CreatePostScreenState extends State<CreatePostScreen> {
+class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
   final _captionController = TextEditingController();
   final _picker = ImagePicker();
   
   File? _mediaFile;
   bool _isVideo = false;
-  bool _isUploading = false;
 
   Future<void> _pickMedia(bool isVideo) async {
     try {
@@ -115,7 +116,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               fontWeight: FontWeight.w500,
             ),
           ),
-          backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
+          backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -126,18 +127,23 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       return;
     }
 
-    setState(() {
-      _isUploading = true;
-    });
+    final notifier = ref.read(createPostProvider.notifier);
+    final success = await notifier.createPost(
+      images: _isVideo ? [] : (_mediaFile != null ? [_mediaFile!] : []),
+      video: _isVideo ? _mediaFile : null,
+      caption: _captionController.text.trim().isEmpty
+          ? null
+          : _captionController.text.trim(),
+      locations: [],
+      taggedUsers: [],
+      feelings: [],
+    );
 
-    // Simulate upload
-    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    final errorMessage = ref.read(createPostProvider).error;
+    ref.read(createPostProvider.notifier).clearError();
 
-    if (mounted) {
-      setState(() {
-        _isUploading = false;
-      });
-      
+    if (success) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Post created successfully!'),
@@ -149,13 +155,37 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ),
       );
-      
-      // Reset form
       _captionController.clear();
       setState(() {
         _mediaFile = null;
         _isVideo = false;
       });
+    } else {
+      final error = errorMessage ?? 'Failed to create post';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error,
+            style: TextStyle(
+              color: context.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          backgroundColor: context.surfaceColor,
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: context.textPrimary,
+            onPressed: () {},
+          ),
+        ),
+      );
     }
   }
 
@@ -167,6 +197,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final createPostState = ref.watch(createPostProvider);
+    final isUploading = createPostState.isCreating;
     return Scaffold(
       backgroundColor: Colors.transparent,
       bottomNavigationBar: widget.bottomNavigationBar,
@@ -187,11 +219,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: _isUploading ? null : _createPost,
+            onPressed: isUploading ? null : _createPost,
             child: Text(
               'Share',
               style: TextStyle(
-                color: _isUploading
+                color: isUploading
                     ? context.textMuted
                     : context.buttonColor,
                 fontWeight: FontWeight.w600,
@@ -361,7 +393,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 ],
               ),
             ),
-            if (_isUploading) ...[
+            if (isUploading) ...[
               const SizedBox(height: 20),
               LinearProgressIndicator(
                 backgroundColor: context.surfaceColor,

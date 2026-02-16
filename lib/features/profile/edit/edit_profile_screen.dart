@@ -1,25 +1,24 @@
 import 'dart:io';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_extensions.dart';
 import '../../../core/utils/theme_helper.dart';
-import '../../../core/widgets/glass_card.dart';
-import '../../../core/widgets/glass_button.dart';
 import '../../../core/models/user_model.dart';
+import '../../../core/providers/auth_provider_riverpod.dart';
 
-/// Edit profile screen
-class EditProfileScreen extends StatefulWidget {
+/// Edit profile screen – app design, theme-aware, uses updateUser PATCH API.
+class EditProfileScreen extends ConsumerStatefulWidget {
   final UserModel user;
 
   const EditProfileScreen({super.key, required this.user});
 
   @override
-  State<EditProfileScreen> createState() => _EditProfileScreenState();
+  ConsumerState<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
-class _EditProfileScreenState extends State<EditProfileScreen> {
-  final _nameController = TextEditingController();
+class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   final _usernameController = TextEditingController();
   final _bioController = TextEditingController();
   final _picker = ImagePicker();
@@ -30,14 +29,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _nameController.text = widget.user.displayName;
-    _usernameController.text = widget.user.username;
+    _usernameController.text = widget.user.username.isNotEmpty
+        ? widget.user.username
+        : widget.user.displayName;
     _bioController.text = widget.user.bio ?? '';
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
     _usernameController.dispose();
     _bioController.dispose();
     super.dispose();
@@ -45,46 +44,62 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _pickProfilePicture() async {
     try {
-      // Show source selection dialog
       final ImageSource? source = await showModalBottomSheet<ImageSource>(
         context: context,
-        backgroundColor: context.secondaryBackgroundColor,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
+        backgroundColor: Colors.transparent,
         builder: (context) => Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(
-                  Icons.photo_library,
-                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                ),
-                title: Text(
-                  'Choose from Gallery',
-                  style: TextStyle(color: context.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
+          margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+          decoration: BoxDecoration(
+            color: ThemeHelper.getSurfaceColor(context),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: ThemeHelper.getBorderColor(context),
+              width: 1,
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: Icon(
+                      Icons.photo_library,
+                      color: ThemeHelper.getAccentColor(context),
+                    ),
+                    title: Text(
+                      'Choose from Gallery',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    onTap: () => Navigator.pop(context, ImageSource.gallery),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.camera_alt,
+                      color: ThemeHelper.getAccentColor(context),
+                    ),
+                    title: Text(
+                      'Take Photo',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    onTap: () => Navigator.pop(context, ImageSource.camera),
+                  ),
+                ],
               ),
-              ListTile(
-                leading: Icon(
-                  Icons.camera_alt,
-                  color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                ),
-                title: Text(
-                  'Take Photo',
-                  style: TextStyle(color: context.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
-              ),
-            ],
+            ),
           ),
         ),
       );
 
-      if (source == null) return;
+      if (source == null || !mounted) return;
 
       final pickedFile = await _picker.pickImage(
         source: source,
@@ -93,7 +108,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         imageQuality: 85,
       );
 
-      if (pickedFile != null) {
+      if (pickedFile != null && mounted) {
         setState(() {
           _profilePicture = File(pickedFile.path);
         });
@@ -105,22 +120,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             content: Text(
               'Error: ${e.toString()}',
               style: TextStyle(
-                color: context.textPrimary,
+                color: ThemeHelper.getOnAccentColor(context),
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
             ),
-            backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9), // Theme-aware accent color
-            duration: const Duration(seconds: 5),
+            backgroundColor: ThemeHelper.getAccentColor(context),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-            ),
-            action: SnackBarAction(
-              label: 'OK',
-              textColor: context.textPrimary,
-              onPressed: () {},
             ),
           ),
         );
@@ -129,167 +138,304 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
+    if (_isSaving) return;
+
     setState(() {
       _isSaving = true;
     });
 
-    // Simulate profile update (frontend only - no backend)
-    await Future.delayed(const Duration(seconds: 2));
+    final username = _usernameController.text.trim();
+    final value = username.isEmpty
+        ? (widget.user.username.isNotEmpty ? widget.user.username : widget.user.displayName)
+        : username;
+    final bio = _bioController.text.trim();
 
-    if (mounted) {
+    final success = await ref.read(authProvider.notifier).updateUser(
+          userId: widget.user.id,
+          name: value,
+          username: value,
+          bio: bio,
+          profilePicture: _profilePicture,
+        );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSaving = false;
+    });
+
+    if (success) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Profile updated successfully!'),
-          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+          content: Text(
+            'Profile updated successfully!',
+            style: TextStyle(
+              color: ThemeHelper.getOnAccentColor(context),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          backgroundColor: ThemeHelper.getAccentColor(context),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       );
       Navigator.pop(context, true);
+    } else {
+      final err = ref.read(authProvider).error ?? 'Update failed';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            err,
+            style: TextStyle(
+              color: ThemeHelper.getOnAccentColor(context),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          backgroundColor: ThemeHelper.getAccentColor(context),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Edit Profile'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: context.backgroundGradient,
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildAppBar(),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildProfilePicture(),
+                      const SizedBox(height: 32),
+                      _buildField(
+                        controller: _usernameController,
+                        label: 'Username',
+                        icon: Icons.alternate_email,
+                      ),
+                      const SizedBox(height: 16),
+                      _buildField(
+                        controller: _bioController,
+                        label: 'Bio',
+                        icon: Icons.edit_note,
+                        maxLines: 4,
+                      ),
+                      const SizedBox(height: 32),
+                      _buildSaveButton(),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    );
+  }
+
+  Widget _buildAppBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => Navigator.pop(context),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(
+                Icons.arrow_back_ios_new,
+                size: 20,
+                color: ThemeHelper.getTextPrimary(context),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Edit profile',
+              style: TextStyle(
+                color: ThemeHelper.getTextPrimary(context),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfilePicture() {
+    return Center(
+      child: GestureDetector(
+        onTap: _pickProfilePicture,
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            // Profile picture
-            Center(
-              child: GestureDetector(
-                onTap: _pickProfilePicture,
-                child: Stack(
-                  children: [
-                    Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
-                        boxShadow: [
-                          BoxShadow(
-                            color: ThemeHelper.getAccentColor(context).withOpacity(0.3), // Theme-aware accent with opacity
-                            blurRadius: 20,
-                            spreadRadius: 5,
-                          ),
-                        ],
+            Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: ThemeHelper.getBorderColor(context),
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: ThemeHelper.getAccentColor(context).withOpacity(0.2),
+                    blurRadius: 16,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(3),
+              child: ClipOval(
+                child: _profilePicture != null
+                    ? Image.file(
+                        _profilePicture!,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                      )
+                    : Image.network(
+                        widget.user.avatarUrl,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Icon(
+                              Icons.person,
+                              size: 56,
+                              color: ThemeHelper.getTextSecondary(context),
+                            ),
+                          );
+                        },
                       ),
-                      padding: const EdgeInsets.all(4),
-                      child: ClipOval(
-                        child: _profilePicture != null
-                            ? Image.file(
-                                _profilePicture!,
-                                fit: BoxFit.cover,
-                              )
-                            : Image.network(
-                                widget.user.avatarUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    color: context.surfaceColor,
-                                    child: Icon(
-                                      Icons.person,
-                                      size: 60,
-                                      color: context.textSecondary,
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.camera_alt,
-                          size: 20,
-                          color: context.textPrimary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
-            const SizedBox(height: 40),
-            // Name field
-            GlassCard(
-              padding: EdgeInsets.zero,
-              borderRadius: BorderRadius.circular(16),
-              child: TextField(
-                controller: _nameController,
-                style: TextStyle(color: context.textPrimary),
-                decoration: InputDecoration(
-                  labelText: 'Full Name',
-                  labelStyle: TextStyle(color: context.textSecondary),
-                  prefixIcon: Icon(Icons.person, color: context.textSecondary),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.all(16),
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: ThemeHelper.getAccentColor(context),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: ThemeHelper.getBackgroundColor(context),
+                    width: 2,
+                  ),
+                ),
+                child: Icon(
+                  Icons.camera_alt,
+                  size: 20,
+                  color: ThemeHelper.getOnAccentColor(context),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            // Username field
-            GlassCard(
-              padding: EdgeInsets.zero,
-              borderRadius: BorderRadius.circular(16),
-              child: TextField(
-                controller: _usernameController,
-                style: TextStyle(color: context.textPrimary),
-                decoration: InputDecoration(
-                  labelText: 'Username',
-                  labelStyle: TextStyle(color: context.textSecondary),
-                  prefixIcon: Icon(Icons.alternate_email, color: context.textSecondary),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.all(16),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Bio field
-            GlassCard(
-              padding: EdgeInsets.zero,
-              borderRadius: BorderRadius.circular(16),
-              child: TextField(
-                controller: _bioController,
-                maxLines: 4,
-                style: TextStyle(color: context.textPrimary),
-                decoration: InputDecoration(
-                  labelText: 'Bio',
-                  labelStyle: TextStyle(color: context.textSecondary),
-                  prefixIcon: Icon(Icons.edit, color: context.textSecondary),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.all(16),
-                ),
-              ),
-            ),
-            const SizedBox(height: 40),
-            // Save button
-            GlassButton(
-              text: _isSaving ? 'Saving...' : 'Save Changes',
-              onPressed: _isSaving ? null : _saveProfile,
-              isLoading: _isSaving,
-              width: double.infinity,
             ),
           ],
         ),
       ),
     );
   }
-}
 
+  Widget _buildField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    int maxLines = 1,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: ThemeHelper.getSurfaceColor(context),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: ThemeHelper.getBorderColor(context),
+          width: 1,
+        ),
+      ),
+      child: TextField(
+        controller: controller,
+        maxLines: maxLines,
+        style: TextStyle(
+          color: ThemeHelper.getTextPrimary(context),
+          fontSize: 16,
+        ),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(
+            color: ThemeHelper.getTextSecondary(context),
+            fontWeight: FontWeight.w500,
+          ),
+          prefixIcon: Icon(
+            icon,
+            color: ThemeHelper.getTextSecondary(context),
+            size: 22,
+          ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton() {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: _isSaving ? null : _saveProfile,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: ThemeHelper.getAccentColor(context),
+          foregroundColor: ThemeHelper.getOnAccentColor(context),
+          disabledBackgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.5),
+          disabledForegroundColor: ThemeHelper.getOnAccentColor(context).withOpacity(0.7),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        child: _isSaving
+            ? SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: ThemeHelper.getOnAccentColor(context),
+                ),
+              )
+            : Text(
+                'Save changes',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+      ),
+    );
+  }
+}

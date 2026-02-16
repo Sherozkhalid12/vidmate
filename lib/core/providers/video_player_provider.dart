@@ -1,11 +1,12 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player/better_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Video player state
+/// Video player state (HLS/network via BetterPlayer).
 class VideoPlayerState {
-  final VideoPlayerController? controller;
+  final BetterPlayerController? controller;
   final bool isPlaying;
   final bool isInitialized;
   final Duration duration;
@@ -18,6 +19,7 @@ class VideoPlayerState {
   final double playbackSpeed;
   final bool isBuffering;
   final bool showPlaybackSpeedMenu;
+  final bool isDisposed; // Track disposal state
 
   VideoPlayerState({
     this.controller,
@@ -33,10 +35,14 @@ class VideoPlayerState {
     this.playbackSpeed = 1.0,
     this.isBuffering = false,
     this.showPlaybackSpeedMenu = false,
+    this.isDisposed = false,
   });
 
+  /// Check if controller is valid and can be used
+  bool get hasValidController => controller != null && !isDisposed;
+
   VideoPlayerState copyWith({
-    VideoPlayerController? controller,
+    BetterPlayerController? controller,
     bool? isPlaying,
     bool? isInitialized,
     Duration? duration,
@@ -49,9 +55,11 @@ class VideoPlayerState {
     double? playbackSpeed,
     bool? isBuffering,
     bool? showPlaybackSpeedMenu,
+    bool? isDisposed,
+    bool clearController = false, // Special flag to clear controller
   }) {
     return VideoPlayerState(
-      controller: controller ?? this.controller,
+      controller: clearController ? null : (controller ?? this.controller),
       isPlaying: isPlaying ?? this.isPlaying,
       isInitialized: isInitialized ?? this.isInitialized,
       duration: duration ?? this.duration,
@@ -65,97 +73,137 @@ class VideoPlayerState {
       isBuffering: isBuffering ?? this.isBuffering,
       showPlaybackSpeedMenu:
           showPlaybackSpeedMenu ?? this.showPlaybackSpeedMenu,
+      isDisposed: isDisposed ?? this.isDisposed,
     );
   }
 }
 
-/// Video player provider - auto-disposes when not watched
+/// Video player provider - uses BetterPlayer for HLS/network (backend videos).
 final videoPlayerProvider = StateNotifierProvider.autoDispose
     .family<VideoPlayerNotifier, VideoPlayerState, String>((ref, videoUrl) {
-      final notifier = VideoPlayerNotifier(videoUrl);
+  return VideoPlayerNotifier(videoUrl);
+});
 
-      // Ensure proper disposal when provider is no longer watched
-      ref.onDispose(() {
-        // The notifier's dispose will be called automatically, but we can add cleanup here if needed
-      });
-
-      return notifier;
-    });
-
-/// Video player notifier
+/// Video player notifier (BetterPlayer for HLS support).
 class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
   final String videoUrl;
   Timer? _progressSaveTimer;
+  void Function(BetterPlayerEvent)? _eventListener;
+  bool _disposed = false;
 
   VideoPlayerNotifier(this.videoUrl) : super(VideoPlayerState()) {
     _initializePlayer(videoUrl);
   }
 
-  Future<void> _initializePlayer(String videoUrl) async {
+  Future<void> _initializePlayer(String url) async {
     try {
-      // Try to load saved progress
-      final savedPosition = await _loadSavedProgress(videoUrl);
+      final savedPosition = await _loadSavedProgress(url);
 
-      final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+      final dataSource = BetterPlayerDataSource.network(url);
 
-      await controller.initialize();
+      final config = BetterPlayerConfiguration(
+        autoPlay: false,
+        controlsConfiguration: const BetterPlayerControlsConfiguration(
+          showControls: false,
+        ),
+        aspectRatio: 1.0,
+        fit: BoxFit.cover,
+        handleLifecycle: false,
+      );
 
-      // Restore saved position if available
-      if (savedPosition > Duration.zero &&
-          savedPosition < controller.value.duration) {
+      final controller = BetterPlayerController(
+        config,
+        betterPlayerDataSource: dataSource,
+      );
+
+      await controller.setupDataSource(dataSource);
+
+      if (savedPosition > Duration.zero) {
         await controller.seekTo(savedPosition);
       }
 
-      // Set initial playback speed
-      await controller.setPlaybackSpeed(state.playbackSpeed);
+      if (!_disposed) {
+        _eventListener = (BetterPlayerEvent event) {
+          if (_disposed) return;
+          try {
+            if (event.betterPlayerEventType == BetterPlayerEventType.initialized) {
+              final dur = controller.videoPlayerController?.value.duration ?? Duration.zero;
+              if (savedPosition > Duration.zero && savedPosition < dur) {
+                controller.seekTo(savedPosition);
+              }
+              if (!_disposed) {
+                state = state.copyWith(isInitialized: true, duration: dur);
+              }
+            } else if (event.betterPlayerEventType == BetterPlayerEventType.play) {
+              if (!_disposed) {
+                state = state.copyWith(isPlaying: true);
+              }
+            } else if (event.betterPlayerEventType == BetterPlayerEventType.pause) {
+              if (!_disposed) {
+                state = state.copyWith(isPlaying: false);
+              }
+            } else if (event.betterPlayerEventType == BetterPlayerEventType.finished) {
+              // Video completed - pause and reset to beginning
+              if (!_disposed) {
+                try {
+                  controller.pause();
+                  controller.seekTo(Duration.zero);
+                  state = state.copyWith(isPlaying: false, position: Duration.zero);
+                } catch (_) {
+                  // Controller might be disposed
+                }
+              }
+            }
+          } catch (e) {
+            // Event listener error - controller might be disposed
+            if (!_disposed) {
+              state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+            }
+          }
+        };
+        controller.addEventsListener(_eventListener!);
 
-      if (mounted) {
         state = state.copyWith(
           controller: controller,
-          isInitialized: true,
-          duration: controller.value.duration,
-          isPlaying: false, // Don't auto-play - let UI control it
+          isInitialized: controller.isVideoInitialized() ?? false,
+          duration: controller.videoPlayerController?.value.duration ?? Duration.zero,
+          isPlaying: false,
         );
-        controller.addListener(_videoListener);
-        // Don't auto-play - the screen will control when to play
-        // This prevents videos from running in background
 
-        // Start periodic progress saving
         _startProgressSaving();
+        _startPositionSync(controller);
       } else {
-        // If not mounted, dispose immediately to prevent background playback
-        try {
-          controller.pause();
-          controller.dispose();
-        } catch (e) {
-          // Ignore errors
-        }
+        controller.dispose();
       }
     } catch (e) {
-      // Handle initialization error
-      if (mounted) {
+      if (!_disposed) {
         state = state.copyWith(isInitialized: false);
       }
     }
   }
 
-  void _videoListener() {
-    // Only update if mounted and controller exists
-    if (!mounted || state.controller == null) return;
-
-    try {
-      final value = state.controller!.value;
-      if (mounted) {
-        state = state.copyWith(
-          position: value.position,
-          isPlaying: value.isPlaying,
-          isBuffering: value.isBuffering,
-          duration: value.duration,
-        );
+  Timer? _positionSyncTimer;
+  void _startPositionSync(BetterPlayerController ctrl) {
+    _positionSyncTimer?.cancel();
+    _positionSyncTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (_disposed || state.controller == null || state.isDisposed) return;
+      try {
+        // Verify controller is still valid before accessing
+        if (ctrl != state.controller) return;
+        final vc = ctrl.videoPlayerController;
+        if (vc != null && vc.value.initialized && !_disposed) {
+          state = state.copyWith(
+            position: vc.value.position,
+            duration: vc.value.duration,
+            isPlaying: vc.value.isPlaying,
+            isBuffering: vc.value.isBuffering,
+          );
+        }
+      } catch (_) {
+        // Controller might be disposed, stop syncing
+        _positionSyncTimer?.cancel();
       }
-    } catch (e) {
-      // Ignore errors if widget is disposed
-    }
+    });
   }
 
   void _startProgressSaving() {
@@ -167,94 +215,110 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
 
   Future<void> _saveProgress() async {
     if (state.controller == null || !state.isInitialized) return;
-    if (state.position < const Duration(seconds: 5))
-      return; // Don't save if less than 5 seconds
-
+    if (state.position < const Duration(seconds: 5)) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final key = 'video_progress_${videoUrl.hashCode}';
       await prefs.setInt(key, state.position.inSeconds);
-    } catch (e) {
-      // Silently handle save errors
-    }
+    } catch (_) {}
   }
 
-  Future<Duration> _loadSavedProgress(String videoUrl) async {
+  Future<Duration> _loadSavedProgress(String url) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = 'video_progress_${videoUrl.hashCode}';
+      final key = 'video_progress_${url.hashCode}';
       final seconds = prefs.getInt(key);
-      if (seconds != null && seconds > 0) {
-        return Duration(seconds: seconds);
-      }
-    } catch (e) {
-      // Silently handle load errors
-    }
+      if (seconds != null && seconds > 0) return Duration(seconds: seconds);
+    } catch (_) {}
     return Duration.zero;
   }
 
   void togglePlayPause() {
-    if (state.controller == null || !state.isInitialized || !mounted) return;
-    if (state.isPlaying) {
-      state.controller!.pause();
-      state = state.copyWith(isPlaying: false);
-    } else {
-      state.controller!.play();
-      state = state.copyWith(isPlaying: true);
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    try {
+      if (state.isPlaying) {
+        state.controller!.pause();
+        state = state.copyWith(isPlaying: false);
+      } else {
+        state.controller!.play();
+        state = state.copyWith(isPlaying: true);
+      }
+    } catch (e) {
+      // Controller was disposed, clear it from state
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
     }
   }
 
   void play() {
-    if (state.controller == null || !state.isInitialized || !mounted) return;
-    if (!state.isPlaying) {
-      state.controller!.play();
-      state = state.copyWith(isPlaying: true);
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    try {
+      if (!state.isPlaying) {
+        state.controller!.play();
+        state = state.copyWith(isPlaying: true);
+      }
+    } catch (e) {
+      // Controller was disposed, clear it from state
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
     }
   }
 
   void pause() {
-    if (state.controller == null || !state.isInitialized || !mounted) return;
-    if (state.isPlaying) {
-      state.controller!.pause();
-      state = state.copyWith(isPlaying: false);
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    try {
+      if (state.isPlaying) {
+        state.controller!.pause();
+        state = state.copyWith(isPlaying: false);
+      }
+    } catch (e) {
+      // Controller was disposed, clear it from state
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
     }
   }
 
   void seekForward() {
-    if (state.controller == null || !state.isInitialized) return;
-    final newPosition = state.position + const Duration(seconds: 10);
-    final targetPosition = newPosition > state.duration
-        ? state.duration
-        : newPosition;
-    state.controller!.seekTo(targetPosition);
-    _showSeekFeedback('forward', targetPosition);
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    try {
+      final newPosition = state.position + const Duration(seconds: 10);
+      final target = newPosition > state.duration ? state.duration : newPosition;
+      state.controller!.seekTo(target);
+      state = state.copyWith(
+        showSeekIndicator: true,
+        seekDirection: 'forward',
+        seekTarget: target,
+      );
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!_disposed) {
+          state = state.copyWith(showSeekIndicator: false);
+        }
+      });
+    } catch (e) {
+      // Controller was disposed
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+    }
   }
 
   void seekBackward() {
-    if (state.controller == null || !state.isInitialized) return;
-    final newPosition = state.position - const Duration(seconds: 10);
-    final targetPosition = newPosition < Duration.zero
-        ? Duration.zero
-        : newPosition;
-    // Seek without pausing - maintain play state
-    final wasPlaying = state.isPlaying;
-    state.controller!.seekTo(targetPosition);
-    // Ensure video continues playing if it was playing before
-    if (wasPlaying && !state.controller!.value.isPlaying) {
-      state.controller!.play();
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    try {
+      final newPosition = state.position - const Duration(seconds: 10);
+      final target = newPosition < Duration.zero ? Duration.zero : newPosition;
+      final wasPlaying = state.isPlaying;
+      state.controller!.seekTo(target);
+      if (wasPlaying) state.controller!.play();
+      state = state.copyWith(
+        showSeekIndicator: true,
+        seekDirection: 'backward',
+        seekTarget: target,
+      );
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!_disposed) {
+          state = state.copyWith(showSeekIndicator: false);
+        }
+      });
+    } catch (e) {
+      // Controller was disposed
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
     }
-    _showSeekFeedback('backward', targetPosition);
-  }
-
-  void _showSeekFeedback(String direction, Duration target) {
-    state = state.copyWith(
-      showSeekIndicator: true,
-      seekDirection: direction,
-      seekTarget: target,
-    );
-    Future.delayed(const Duration(milliseconds: 800), () {
-      state = state.copyWith(showSeekIndicator: false);
-    });
   }
 
   void toggleControls() {
@@ -266,21 +330,24 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
   }
 
   void seekTo(Duration position) {
-    if (state.controller == null || !state.isInitialized) return;
-    state.controller!.seekTo(position);
-    state = state.copyWith(position: position);
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    try {
+      state.controller!.seekTo(position);
+      state = state.copyWith(position: position);
+    } catch (e) {
+      // Controller was disposed
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+    }
   }
 
-  void setPlaybackSpeed(double speed) async {
-    if (state.controller == null || !state.isInitialized) return;
+  Future<void> setPlaybackSpeed(double speed) async {
+    if (!state.hasValidController || !state.isInitialized || _disposed) return;
     try {
-      await state.controller!.setPlaybackSpeed(speed);
-      state = state.copyWith(
-        playbackSpeed: speed,
-        showPlaybackSpeedMenu: false,
-      );
+      await state.controller!.setSpeed(speed);
+      state = state.copyWith(playbackSpeed: speed, showPlaybackSpeedMenu: false);
     } catch (e) {
-      // Handle error
+      // Controller was disposed
+      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
     }
   }
 
@@ -288,49 +355,57 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
     state = state.copyWith(showPlaybackSpeedMenu: !state.showPlaybackSpeedMenu);
   }
 
-  void clearSavedProgress() async {
+  Future<void> clearSavedProgress() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = 'video_progress_${videoUrl.hashCode}';
-      await prefs.remove(key);
-    } catch (e) {
-      // Silently handle errors
-    }
+      await prefs.remove('video_progress_${videoUrl.hashCode}');
+    } catch (_) {}
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _progressSaveTimer?.cancel();
-    _saveProgress(); // Save one last time before disposing
+    _positionSyncTimer?.cancel();
+    
+    // Save progress before disposing
+    _saveProgress();
 
-    // Properly dispose the video controller
     final controller = state.controller;
+    // Immediately clear controller from state to prevent widgets from using it
+    // This must happen BEFORE disposing the controller to prevent race conditions
+    state = state.copyWith(
+      controller: null,
+      isDisposed: true,
+      isInitialized: false,
+      isPlaying: false,
+      clearController: true,
+    );
+    
     if (controller != null) {
       try {
-        // Remove listener first to prevent callbacks during disposal
-        controller.removeListener(_videoListener);
-
-        // Force pause if playing (critical to stop background playback)
-        if (controller.value.isInitialized) {
+        // Remove event listener first
+        if (_eventListener != null) {
           try {
-            if (controller.value.isPlaying) {
-              controller.pause();
-            }
-          } catch (e) {
-            // Ignore pause errors
+            controller.removeEventsListener(_eventListener!);
+          } catch (_) {
+            // Listener might already be removed
           }
         }
-
-        // Dispose the controller
+        // Pause if playing
+        try {
+          if (controller.isPlaying() == true) {
+            controller.pause();
+          }
+        } catch (_) {
+          // Controller might already be disposed
+        }
+        // Dispose controller
         controller.dispose();
-      } catch (e) {
-        // Ignore errors during disposal
+      } catch (_) {
+        // Controller might already be disposed, ignore
       }
-
-      // Clear controller from state
-      state = state.copyWith(controller: null);
     }
-
     super.dispose();
   }
 }

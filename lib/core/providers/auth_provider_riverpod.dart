@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../api/auth_api.dart';
+
 import '../models/user_model.dart';
+import '../api/dio_client.dart';
+import '../../services/auth/auth_service.dart';
 
 /// Authentication state
 class AuthState {
@@ -30,98 +34,141 @@ class AuthState {
   }
 }
 
-/// Authentication provider using Riverpod StateNotifier for super fast performance
+/// Authentication notifier using AuthService. Riverpod only, no setState.
 class AuthNotifier extends StateNotifier<AuthState> {
-  final AuthApi _authApi = AuthApi();
-
   AuthNotifier() : super(AuthState());
 
-  /// Login
-  Future<bool> login(String email, String password) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+  final AuthService _authService = AuthService();
 
+  /// Restore session from SharedPreferences (token + user). Call from splash so
+  /// user can enter app directly when logged in, including when offline.
+  Future<void> loadFromStorage() async {
+    final token = await _authService.getToken();
+    if (token == null || token.isEmpty) return;
+    final userJson = await _authService.getStoredUser();
+    if (userJson == null) return;
     try {
-      final response = await _authApi.login(email, password);
-
-      if (response['success'] == true) {
-        final user = UserModel.fromJson(response['user']);
-        state = state.copyWith(
-          currentUser: user,
-          isLoading: false,
-        );
-        return true;
-      } else {
-        state = state.copyWith(
-          isLoading: false,
-          error: response['error'] ?? 'Login failed',
-        );
-        return false;
-      }
-    } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
-      return false;
+      final user = UserModel.fromJson(userJson);
+      state = state.copyWith(currentUser: user);
+    } catch (_) {
+      // Invalid stored user; clear auth so user can log in again
+      await _authService.clearAuth();
     }
   }
 
-  /// Sign up
+  Future<bool> login(String email, String password) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final result = await _authService.login(email: email, password: password);
+    if (result.success && result.data != null) {
+      state = state.copyWith(
+        currentUser: result.data!.user,
+        isLoading: false,
+      );
+      return true;
+    }
+    state = state.copyWith(
+      isLoading: false,
+      error: result.errorMessage ?? 'Login failed',
+    );
+    return false;
+  }
+
+  Future<bool> sendEmailOTP(String email) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final result = await _authService.sendEmailOTP(email: email);
+    if (result.success) {
+      state = state.copyWith(isLoading: false);
+      return true;
+    }
+    state = state.copyWith(
+      isLoading: false,
+      error: result.errorMessage ?? 'Failed to send OTP',
+    );
+    return false;
+  }
+
+  Future<bool> verifyEmailOtp({required String email, required String otp}) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final result = await _authService.verifyEmailOtp(email: email, otp: otp);
+    if (result.success) {
+      state = state.copyWith(isLoading: false);
+      return true;
+    }
+    state = state.copyWith(
+      isLoading: false,
+      error: result.errorMessage ?? 'Invalid OTP',
+    );
+    return false;
+  }
+
   Future<bool> signUp({
-    required String name,
     required String username,
     required String email,
     required String password,
   }) async {
     state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
-      final response = await _authApi.signUp(
-        name: name,
-        username: username,
-        email: email,
-        password: password,
-      );
-
-      if (response['success'] == true) {
-        final user = UserModel.fromJson(response['user']);
-        state = state.copyWith(
-          currentUser: user,
-          isLoading: false,
-        );
-        return true;
-      } else {
-        state = state.copyWith(
-          isLoading: false,
-          error: response['error'] ?? 'Sign up failed',
-        );
-        return false;
-      }
-    } catch (e) {
+    final result = await _authService.signup(
+      username: username,
+      email: email,
+      password: password,
+    );
+    if (result.success && result.data != null) {
       state = state.copyWith(
+        currentUser: result.data!.user,
         isLoading: false,
-        error: e.toString(),
       );
-      return false;
+      return true;
     }
+    state = state.copyWith(
+      isLoading: false,
+      error: result.errorMessage ?? 'Sign up failed',
+    );
+    return false;
   }
 
-  /// Logout
   Future<void> logout() async {
-    await _authApi.logout();
+    DioClient.clearAuthToken();
+    await _authService.clearAuth();
     state = state.copyWith(currentUser: null);
   }
 
-  /// Clear error
+  Future<bool> updateUser({
+    required String userId,
+    String? name,
+    String? username,
+    String? bio,
+    File? profilePicture,
+  }) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final result = await _authService.updateUser(
+      userId: userId,
+      name: name,
+      username: username,
+      bio: bio,
+      profilePicture: profilePicture,
+    );
+    if (result.success && result.data != null) {
+      state = state.copyWith(
+        currentUser: result.data!.user,
+        isLoading: false,
+      );
+      return true;
+    }
+    state = state.copyWith(
+      isLoading: false,
+      error: result.errorMessage ?? 'Update failed',
+    );
+    return false;
+  }
+
   void clearError() {
     state = state.copyWith(clearError: true);
   }
 }
 
 /// Auth provider
-final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier();
-});
+final authProvider =
+    StateNotifierProvider<AuthNotifier, AuthState>((ref) => AuthNotifier());
 
 /// Convenience providers
 final currentUserProvider = Provider<UserModel?>((ref) {
@@ -139,4 +186,3 @@ final authLoadingProvider = Provider<bool>((ref) {
 final authErrorProvider = Provider<String?>((ref) {
   return ref.watch(authProvider).error;
 });
-

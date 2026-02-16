@@ -25,11 +25,25 @@ class HomeFeedPage extends ConsumerStatefulWidget {
 
 class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
   final ScrollController _scrollController = ScrollController();
+  bool _hasTriggeredLoad = false;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+  }
+
+  /// Ensure we load posts when this page is shown with empty list (e.g. after re-login).
+  void _ensurePostsLoadedIfEmpty(WidgetRef ref) {
+    if (_hasTriggeredLoad) return;
+    final state = ref.read(postsProvider);
+    if (state.posts.isEmpty && !state.isLoading) {
+      _hasTriggeredLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(postsProvider.notifier).loadPosts();
+      });
+    }
   }
 
   @override
@@ -51,6 +65,9 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
     final postsState = ref.watch(postsProvider);
     final posts = ref.watch(postsListProvider);
     final isLoading = postsState.isLoading;
+    final error = postsState.error;
+
+    _ensurePostsLoadedIfEmpty(ref);
 
     return SafeArea(
       bottom: false,
@@ -60,6 +77,7 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: () async {
+                _hasTriggeredLoad = true;
                 await ref.read(postsProvider.notifier).loadPosts();
               },
               color: context.buttonColor,
@@ -74,6 +92,10 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
                         ),
                       ),
                     )
+                  else if (posts.isEmpty)
+                    SliverFillRemaining(
+                      child: _buildEmptyState(context, error, ref),
+                    )
                   else
                     SliverPadding(
                       padding: EdgeInsets.only(bottom: widget.bottomPadding),
@@ -86,9 +108,7 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
                                 adType: 'banner',
                               );
                             }
-                            
                             final postIndex = index - (index ~/ 5);
-                            
                             if (postIndex < posts.length) {
                               return AnimationConfiguration.staggeredList(
                                 position: postIndex,
@@ -100,7 +120,8 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
                                   ),
                                 ),
                               );
-                            } else if (isLoading) {
+                            }
+                            if (isLoading) {
                               return Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Center(
@@ -121,6 +142,42 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context, String? error, WidgetRef ref) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.feed_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              error ?? 'No posts yet',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 16,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () {
+                _hasTriggeredLoad = true;
+                ref.read(postsProvider.notifier).loadPosts();
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -61,8 +61,10 @@ class AuthProvider with ChangeNotifier {
         email: email,
         password: password,
       );
-      
+      debugPrint(response.toString());
+
       if (response['success'] == true) {
+        debugPrint(response.toString());
         _currentUser = UserModel.fromJson(response['user']);
         _isLoading = false;
         notifyListeners();

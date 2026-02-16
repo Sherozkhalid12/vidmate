@@ -29,6 +29,8 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
   bool _isSaved = false;
   late AnimationController _likeAnimationController;
   bool _isAnimating = false;
+  final PageController _imageCarouselController = PageController();
+  int _currentImageIndex = 0;
 
   @override
   void initState() {
@@ -71,6 +73,7 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
   @override
   void dispose() {
     _likeAnimationController.dispose();
+    _imageCarouselController.dispose();
     super.dispose();
   }
 
@@ -249,7 +252,7 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
             ),
           ),
 
-          // Media - Full width square image
+          // Media - Full width square image with carousel for multiple images
           GestureDetector(
             onDoubleTap: () {
               final isLiked = ref.read(postLikedProvider(widget.post.id));
@@ -266,30 +269,91 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CachedNetworkImage(
-                    imageUrl: widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '',
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: double.infinity,
-                    placeholder: (context, url) => Container(
-                      color: ThemeHelper.getSurfaceColor(context),
-                      child: Center(
-                        child: CupertinoActivityIndicator(
-                          color: ThemeHelper.getTextSecondary(context),
+                  // Carousel for multiple images, or single image/video
+                  widget.post.imageUrls.length > 1
+                      ? PageView.builder(
+                          controller: _imageCarouselController,
+                          onPageChanged: (index) {
+                            setState(() {
+                              _currentImageIndex = index;
+                            });
+                          },
+                          itemCount: widget.post.imageUrls.length,
+                          itemBuilder: (context, index) {
+                            return CachedNetworkImage(
+                              imageUrl: widget.post.imageUrls[index],
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              placeholder: (context, url) => Container(
+                                color: ThemeHelper.getSurfaceColor(context),
+                                child: Center(
+                                  child: CupertinoActivityIndicator(
+                                    color: ThemeHelper.getTextSecondary(context),
+                                  ),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => Container(
+                                color: ThemeHelper.getSurfaceColor(context),
+                                child: Center(
+                                  child: Icon(
+                                    CupertinoIcons.exclamationmark_triangle_fill,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 48,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      : CachedNetworkImage(
+                          imageUrl: widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '',
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          placeholder: (context, url) => Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Center(
+                              child: CupertinoActivityIndicator(
+                                color: ThemeHelper.getTextSecondary(context),
+                              ),
+                            ),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Center(
+                              child: Icon(
+                                CupertinoIcons.exclamationmark_triangle_fill,
+                                color: ThemeHelper.getTextSecondary(context),
+                                size: 48,
+                              ),
+                            ),
+                          ),
+                        ),
+                  // Carousel indicators for multiple images
+                  if (widget.post.imageUrls.length > 1)
+                    Positioned(
+                      top: 8,
+                      left: 0,
+                      right: 0,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(
+                          widget.post.imageUrls.length,
+                          (index) => Container(
+                            width: 6,
+                            height: 6,
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _currentImageIndex == index
+                                  ? Colors.white
+                                  : Colors.white.withOpacity(0.4),
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                    errorWidget: (context, url, error) => Container(
-                      color: ThemeHelper.getSurfaceColor(context),
-                      child: Center(
-                        child: Icon(
-                          CupertinoIcons.exclamationmark_triangle_fill,
-                          color: ThemeHelper.getTextSecondary(context),
-                          size: 48,
-                        ),
-                      ),
-                    ),
-                  ),
                   // Video play icon overlay
                   if (widget.post.isVideo)
                     Center(

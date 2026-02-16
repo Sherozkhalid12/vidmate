@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
 import '../onboarding/onboarding_screen.dart';
+import '../main/main_screen.dart';
 
-/// Elegant splash screen with existing theme colors
-class SplashScreen extends StatefulWidget {
+/// Elegant splash screen with existing theme colors.
+/// Loads stored auth from SharedPreferences; if user is logged in, goes to MainScreen.
+class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen>
+class _SplashScreenState extends ConsumerState<SplashScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
@@ -20,13 +24,11 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
 
-    // Main animation controller
     _controller = AnimationController(
       duration: const Duration(milliseconds: 2000),
       vsync: this,
     );
 
-    // Fade animation for smooth appearance
     _fadeAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -37,7 +39,6 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
 
-    // Scale animation for text entrance
     _scaleAnimation = Tween<double>(
       begin: 0.8,
       end: 1.0,
@@ -48,26 +49,27 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
 
-    // Start animation
     _controller.forward();
 
-    // Navigate to onboarding after delay
-    Future.delayed(const Duration(milliseconds: 2500), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                const OnboardingScreen(),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              return FadeTransition(
-                opacity: animation,
-                child: child,
-              );
-            },
-            transitionDuration: const Duration(milliseconds: 400),
-          ),
-        );
-      }
+    Future.delayed(const Duration(milliseconds: 2500), () async {
+      if (!mounted) return;
+      await ref.read(authProvider.notifier).loadFromStorage();
+      if (!mounted) return;
+      final isLoggedIn = ref.read(isAuthenticatedProvider);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              isLoggedIn ? const MainScreen() : const OnboardingScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 400),
+        ),
+      );
     });
   }
 

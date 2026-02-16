@@ -365,15 +365,18 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                           // Follow button - same style as instagram_post_card but fully rounded
                           Consumer(
                             builder: (context, ref, child) {
-                              // Get follow state from posts provider if available, otherwise use reel author
                               final posts = ref.watch(postsListProvider);
-                              final post = posts.firstWhere(
-                                (p) => p.author.id == reel.author.id,
-                                orElse: () => posts.first,
-                              );
-                              final isFollowing = post.author.id == reel.author.id
-                                  ? post.author.isFollowing
-                                  : reel.author.isFollowing;
+                              bool isFollowing = reel.author.isFollowing;
+                              if (posts.isNotEmpty) {
+                                try {
+                                  final post = posts.firstWhere(
+                                    (p) => p.author.id == reel.author.id,
+                                  );
+                                  isFollowing = post.author.isFollowing;
+                                } catch (_) {
+                                  // Keep reel.author.isFollowing when no matching post
+                                }
+                              }
 
                               return GestureDetector(
                                 onTap: () {

@@ -2,20 +2,23 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/features/feed/create_content_screen.dart';
 import 'package:flutter_application_1/features/feed/create_post_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
 import '../settings/settings_screen.dart';
 import '../chat/chat_list_screen.dart';
 import 'followers_list_screen.dart';
 import 'edit/edit_profile_screen.dart';
+import '../../core/services/mock_data_service.dart';
 
-/// Instagram-style profile screen
-class ProfileScreen extends StatefulWidget {
+/// Instagram-style profile screen. If [user] is null, shows current user's profile (from API).
+class ProfileScreen extends ConsumerStatefulWidget {
   final UserModel? user;
 
   const ProfileScreen({
@@ -24,23 +27,19 @@ class ProfileScreen extends StatefulWidget {
   });
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen>
+class _ProfileScreenState extends ConsumerState<ProfileScreen>
     with SingleTickerProviderStateMixin {
-  late UserModel _user;
-  final List<PostModel> _posts = [];
   bool _isFollowing = false;
+  String? _displayedUserId;
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _user = widget.user ?? MockDataService.mockUsers[0];
-    _isFollowing = _user.isFollowing;
     _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
-    _loadPosts();
   }
 
   @override
@@ -49,15 +48,27 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
-  void _loadPosts() {
-    final allPosts = MockDataService.getMockPosts();
-    setState(() {
-      _posts.addAll(allPosts.where((p) => p.author.id == _user.id));
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
+    final currentUser = ref.watch(currentUserProvider);
+    final user = widget.user ?? currentUser;
+    if (user == null) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Container(
+          decoration: BoxDecoration(gradient: context.backgroundGradient),
+          child: const Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+    if (user.id != _displayedUserId) {
+      _displayedUserId = user.id;
+      _isFollowing = user.isFollowing;
+    }
+    final userPostsState = ref.watch(userPostsProvider(user.id));
+    final posts = userPostsState.posts;
+    final isCurrentUser = currentUser != null && currentUser.id == user.id;
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
@@ -86,25 +97,26 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ),
                     SizedBox(width: 12,),
-                    InkWell(
-                      onTap: (){
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>  CreateContentScreen(),
-                          ),
-                        );
-                      },
-                      child: Icon(
-                        CupertinoIcons.plus,
-                        size: 25,
+                    if (isCurrentUser)
+                      InkWell(
+                        onTap: (){
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>  CreateContentScreen(),
+                            ),
+                          );
+                        },
+                        child: Icon(
+                          CupertinoIcons.plus,
+                          size: 25,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
               title: Text(
-                _user.username,
+                user.username,
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                 ),
@@ -124,6 +136,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ),
               ],
             ),
+
             // Profile header
             SliverToBoxAdapter(
               child: Padding(
@@ -131,26 +144,43 @@ class _ProfileScreenState extends State<ProfileScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Profile picture - centered
+                    // Profile picture - centered (same style as edit profile screen)
                     Center(
-                      child: ClipOval(
-                        child: Image.network(
-                          _user.avatarUrl,
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              width: 100,
-                              height: 100,
-                              color: context.surfaceColor,
-                              child: Icon(
-                                Icons.person,
-                                color: context.textSecondary,
-                                size: 50,
-                              ),
-                            );
-                          },
+                      child: Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: ThemeHelper.getBorderColor(context),
+                            width: 2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: ThemeHelper.getAccentColor(context).withOpacity(0.2),
+                              blurRadius: 16,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        padding: const EdgeInsets.all(3),
+                        child: ClipOval(
+                          child: Image.network(
+                            user.avatarUrl,
+                            width: double.infinity,
+                            height: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: context.surfaceColor,
+                                child: Icon(
+                                  Icons.person,
+                                  color: context.textSecondary,
+                                  size: 50,
+                                ),
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ),
@@ -161,7 +191,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            _user.username,
+                            user.username,
                             style: TextStyle(
                               color: context.textPrimary,
                               fontSize: 16,
@@ -186,108 +216,147 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ),
                     const SizedBox(height: 16),
-                    // Stats - centered
+                    // Stats - centered (posts count from API when loaded)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        _buildStatColumn(_user.followers, "Follower's"),
-                        _buildStatColumn(_user.following, 'Following'),
-                        _buildStatColumn(_user.posts, 'Posts'),
+                        _buildStatColumn(user.followers, "Follower's"),
+                        _buildStatColumn(user.following, 'Following'),
+                        _buildStatColumn(
+                          userPostsState.isLoading && posts.isEmpty
+                              ? user.posts
+                              : posts.length,
+                          'Posts',
+                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    // Action buttons - ABOVE bio
+                    // Action buttons - Edit profile for self, Follow/Message for others
                     Row(
-                      children: [
-                        Expanded(
-                          child: _isFollowing
-                              ? OutlinedButton(
-                            onPressed: () {
-                              setState(() {
-                                _isFollowing = !_isFollowing;
-                              });
-                            },
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(
-                                color: ThemeHelper.getTextPrimary(context),
-                                width: 1.5,
-                              ),
-                              backgroundColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                            ),
-                            child: Text(
-                              'Following',
-                              style: TextStyle(
-                                color: ThemeHelper.getTextPrimary(context),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          )
-                              : ElevatedButton(
-                            onPressed: () {
-                              setState(() {
-                                _isFollowing = !_isFollowing;
-                              });
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: ThemeHelper.getAccentColor(context),
-                              foregroundColor: ThemeHelper.getOnAccentColor(context),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              elevation: 0,
-                            ),
-                            child: Text(
-                              'Follow',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () {
-                              // Navigate to messages screen
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatListScreen(),
+                      children: isCurrentUser
+                          ? [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => EditProfileScreen(
+                                          user: user,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    side: BorderSide(
+                                      color: ThemeHelper.getTextPrimary(context),
+                                      width: 1.5,
+                                    ),
+                                    backgroundColor: Colors.transparent,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                  ),
+                                  child: Text(
+                                    'Edit profile',
+                                    style: TextStyle(
+                                      color: ThemeHelper.getTextPrimary(context),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
-                              );
-                            },
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(
-                                color: ThemeHelper.getTextPrimary(context),
-                                width: 1.5,
                               ),
-                              backgroundColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                            ]
+                          : [
+                              Expanded(
+                                child: _isFollowing
+                                    ? OutlinedButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            _isFollowing = !_isFollowing;
+                                          });
+                                        },
+                                        style: OutlinedButton.styleFrom(
+                                          side: BorderSide(
+                                            color: ThemeHelper.getTextPrimary(context),
+                                            width: 1.5,
+                                          ),
+                                          backgroundColor: Colors.transparent,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(vertical: 8),
+                                        ),
+                                        child: Text(
+                                          'Following',
+                                          style: TextStyle(
+                                            color: ThemeHelper.getTextPrimary(context),
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      )
+                                    : ElevatedButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            _isFollowing = !_isFollowing;
+                                          });
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: ThemeHelper.getAccentColor(context),
+                                          foregroundColor: ThemeHelper.getOnAccentColor(context),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(vertical: 8),
+                                          elevation: 0,
+                                        ),
+                                        child: Text(
+                                          'Follow',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
                               ),
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                            ),
-                            child: Text(
-                              'Message',
-                              style: TextStyle(
-                                color: ThemeHelper.getTextPrimary(context),
-                                fontWeight: FontWeight.w600,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ChatListScreen(),
+                                      ),
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    side: BorderSide(
+                                      color: ThemeHelper.getTextPrimary(context),
+                                      width: 1.5,
+                                    ),
+                                    backgroundColor: Colors.transparent,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                  ),
+                                  child: Text(
+                                    'Message',
+                                    style: TextStyle(
+                                      color: ThemeHelper.getTextPrimary(context),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        ),
-                      ],
+                            ],
                     ),
                     const SizedBox(height: 12),
                     // Bio and link
-                    if (_user.bio != null) ...[
+                    if (user.bio != null) ...[
                       Text(
-                        _user.bio!,
+                        user.bio!,
                         style: TextStyle(
                           color: context.textPrimary,
                           fontSize: 14,
@@ -295,13 +364,13 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ],
                     // Link/Website if available
-                    if (_user.bio != null) ...[
+                    if (user.bio != null) ...[
                       const SizedBox(height: 8),
                       Row(
                         children: [
                           const Text('🔗 '),
                           Text(
-                            'Linktr.ee/${_user.username}',
+                            'Linktr.ee/${user.username}',
                             style: TextStyle(
                               color: Colors.blue,
                               fontSize: 14,
@@ -349,14 +418,16 @@ class _ProfileScreenState extends State<ProfileScreen>
             // Content grid
             SliverFillRemaining(
               hasScrollBody: true,
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildPostsGrid(),
-                  _buildReelsGrid(),
-                  _buildLongVideosGrid(),
-                ],
-              ),
+              child: userPostsState.isLoading && posts.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildPostsGrid(posts),
+                        _buildReelsGrid(posts),
+                        _buildLongVideosGrid(posts),
+                      ],
+                    ),
             ),
           ],
         ),
@@ -510,51 +581,10 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _buildPostsGrid() {
-    if (_posts.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: context.borderColor,
-                  width: 2,
-                ),
-              ),
-              child: Icon(
-                Icons.grid_on,
-                size: 40,
-                color: context.textMuted,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No Posts Yet',
-              style: TextStyle(
-                color: context.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'When you share photos and videos, they\'ll appear here.',
-              style: TextStyle(
-                color: context.textMuted,
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
+  Widget _buildPostsGrid(List<PostModel> posts) {
+    if (posts.isEmpty) {
+      return const SizedBox.shrink();
     }
-
     return AnimationLimiter(
       child: GridView.builder(
         padding: const EdgeInsets.all(2),
@@ -563,7 +593,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           crossAxisSpacing: 2,
           mainAxisSpacing: 2,
         ),
-        itemCount: _posts.length,
+        itemCount: posts.length,
         itemBuilder: (context, index) {
           return AnimationConfiguration.staggeredGrid(
             position: index,
@@ -581,8 +611,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                       fit: StackFit.expand,
                       children: [
                         Image.network(
-                          _posts[index].thumbnailUrl ??
-                              _posts[index].imageUrl ??
+                          posts[index].thumbnailUrl ??
+                              posts[index].imageUrl ??
                               '',
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) {
@@ -595,7 +625,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                             );
                           },
                         ),
-                        if (_posts[index].isVideo)
+                        if (posts[index].isVideo)
                           Positioned(
                             top: 8,
                             right: 8,
@@ -624,52 +654,11 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _buildReelsGrid() {
-    final reels = _posts.where((p) => p.isVideo).toList();
-
+  Widget _buildReelsGrid(List<PostModel> posts) {
+    final reels = posts.where((p) => p.isVideo).toList();
     if (reels.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: context.borderColor,
-                  width: 2,
-                ),
-              ),
-              child: Icon(
-                Icons.play_circle_outline,
-                size: 40,
-                color: context.textMuted,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No Reels Yet',
-              style: TextStyle(
-                color: context.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Reels you create will appear here.',
-              style: TextStyle(
-                color: context.textMuted,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      );
+      return const SizedBox.shrink();
     }
-
     return AnimationLimiter(
       child: GridView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -724,52 +713,11 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _buildLongVideosGrid() {
-    final longVideos = _posts.where((p) => p.isVideo && (p.videoDuration?.inMinutes ?? 0) >= 1).toList();
-
+  Widget _buildLongVideosGrid(List<PostModel> posts) {
+    final longVideos = posts.where((p) => p.isVideo && (p.videoDuration?.inMinutes ?? 0) >= 1).toList();
     if (longVideos.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: context.borderColor,
-                  width: 2,
-                ),
-              ),
-              child: Icon(
-                Icons.video_library,
-                size: 40,
-                color: context.textMuted,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No Long Videos Yet',
-              style: TextStyle(
-                color: context.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Long videos you upload will appear here.',
-              style: TextStyle(
-                color: context.textMuted,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      );
+      return const SizedBox.shrink();
     }
-
     return AnimationLimiter(
       child: GridView.builder(
         physics: const AlwaysScrollableScrollPhysics(),

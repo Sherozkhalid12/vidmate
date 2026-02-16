@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player/better_player.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/providers/video_player_provider.dart';
@@ -12,6 +12,7 @@ import '../../core/services/mock_data_service.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/comments_bottom_sheet.dart';
 import '../../core/widgets/share_bottom_sheet.dart';
+import '../../core/widgets/safe_better_player.dart';
 import '../profile/profile_screen.dart';
 import 'dart:ui';
 
@@ -80,35 +81,14 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controlsTimer?.cancel();
-    
-    // Use cached notifier to avoid using ref after disposal
     if (_cachedNotifier != null) {
       try {
-        // Force pause first to stop any background playback
         _cachedNotifier!.pause();
       } catch (e) {
-        // Ignore errors
+        // Ignore
       }
     }
-    
-    // Try to pause via controller directly if available (before ref is disposed)
-    try {
-      final state = ref.read(videoPlayerProvider(widget.videoUrl));
-      if (state.controller != null && state.controller!.value.isInitialized) {
-        if (state.controller!.value.isPlaying) {
-          state.controller!.pause();
-        }
-      }
-    } catch (e) {
-      // ref might be disposed, ignore
-    }
-    
-    // Invalidate provider to trigger disposal (this might fail if ref is already disposed)
-    try {
-      ref.invalidate(videoPlayerProvider(widget.videoUrl));
-    } catch (e) {
-      // Ignore if already disposed/invalidated
-    }
+    // Do not use ref or ref.invalidate in dispose() — ref is invalid once the widget is torn down.
     
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -577,8 +557,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
         // Also try to pause via controller directly
         try {
           final state = ref.read(videoPlayerProvider(widget.videoUrl));
-          if (state.controller != null && state.controller!.value.isInitialized) {
-            if (state.controller!.value.isPlaying) {
+          if (state.controller != null && state.isInitialized) {
+            if (state.isPlaying) {
               state.controller!.pause();
             }
           }
@@ -593,6 +573,20 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
         body: playerState.isFullscreen
             ? _buildFullscreenView(playerState, notifier)
             : _buildEmbeddedView(playerState, notifier),
+      ),
+    );
+  }
+
+  Widget _buildProgressBar(BuildContext context, VideoPlayerState playerState) {
+    final durationMs = playerState.duration.inMilliseconds;
+    final positionMs = playerState.position.inMilliseconds;
+    final progress = durationMs > 0 ? (positionMs / durationMs).clamp(0.0, 1.0) : 0.0;
+    return SizedBox(
+      height: 4,
+      child: LinearProgressIndicator(
+        value: progress,
+        backgroundColor: Colors.white.withOpacity(0.2),
+        valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
       ),
     );
   }
@@ -637,12 +631,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
             children: [
               // Video player
               Center(
-                child: playerState.isInitialized && playerState.controller != null
+                child: playerState.isInitialized && playerState.hasValidController && playerState.controller != null
                     ? Stack(
                         children: [
                           AspectRatio(
-                        aspectRatio: playerState.controller!.value.aspectRatio,
-                        child: VideoPlayer(playerState.controller!),
+                        aspectRatio: playerState.controller!.getAspectRatio() ?? 1.0,
+                        child: SafeBetterPlayerWrapper(controller: playerState.controller!),
                           ),
                           // Buffering indicator
                           if (playerState.isBuffering)
@@ -827,16 +821,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           },
                           child: Stack(
                             children: [
-                              if (playerState.controller != null)
-                                VideoProgressIndicator(
-                                  playerState.controller!,
-                                  allowScrubbing: true,
-                                  colors: VideoProgressColors(
-                                    playedColor: Theme.of(context).colorScheme.primary,
-                                    bufferedColor: Colors.white.withOpacity(0.3),
-                                    backgroundColor: Colors.white.withOpacity(0.2),
-                                  ),
-                                ),
+                              _buildProgressBar(context, playerState),
                             ],
                           ),
                         ),
@@ -1340,10 +1325,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
             children: [
             // Video player
             Center(
-              child: playerState.isInitialized && playerState.controller != null
+              child: playerState.isInitialized && playerState.hasValidController && playerState.controller != null
                   ? AspectRatio(
-                      aspectRatio: playerState.controller!.value.aspectRatio,
-                      child: VideoPlayer(playerState.controller!),
+                      aspectRatio: playerState.controller!.getAspectRatio() ?? 1.0,
+                      child: SafeBetterPlayerWrapper(controller: playerState.controller!),
                     )
                   : Center(
                       child: CircularProgressIndicator(
@@ -1445,16 +1430,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                           },
                           child: Stack(
                             children: [
-                              if (playerState.controller != null)
-                                VideoProgressIndicator(
-                                  playerState.controller!,
-                                  allowScrubbing: true,
-                                  colors: VideoProgressColors(
-                                    playedColor: Theme.of(context).colorScheme.primary,
-                                    bufferedColor: Colors.white.withOpacity(0.3),
-                                    backgroundColor: Colors.white.withOpacity(0.2),
-                                  ),
-                                ),
+                              _buildProgressBar(context, playerState),
                             ],
                           ),
                         ),

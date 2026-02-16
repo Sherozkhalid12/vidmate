@@ -3,6 +3,8 @@ import '../../core/utils/theme_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/providers/theme_provider_riverpod.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import '../profile/edit/edit_profile_screen.dart';
 import '../../core/services/mock_data_service.dart';
 import 'privacy_security_screen.dart';
@@ -12,6 +14,7 @@ import 'terms_screen.dart';
 import 'privacy_policy_screen.dart';
 import '../analytics/analytics_screen.dart';
 import '../copyright/copyright_screen.dart';
+import '../auth/login_screen.dart';
 
 /// Settings screen with grouped sections
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -329,8 +332,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                         ),
                         TextButton(
-                          onPressed: () {
+                          onPressed: () async {
                             Navigator.pop(context);
+                            await ref.read(authProvider.notifier).logout();
+                            ref.invalidate(postsProvider);
+                            ref.invalidate(userPostsProvider);
+                            if (!context.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
@@ -342,7 +349,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 backgroundColor: ThemeHelper.getAccentColor(context),
                               ),
                             );
-                            // Navigate to login screen
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                builder: (context) => const LoginScreen(),
+                              ),
+                              (route) => false,
+                            );
                           },
                           child: Text(
                             'Log Out',
