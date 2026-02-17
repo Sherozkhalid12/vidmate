@@ -259,24 +259,31 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(14),
-                child: CachedNetworkImage(
-                  imageUrl: track.coverUrl,
-                  width: 72,
-                  height: 72,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(
-                    width: 72,
-                    height: 72,
-                    color: ThemeHelper.getSurfaceColor(context),
-                    child: Icon(CupertinoIcons.music_note_2, color: ThemeHelper.getTextMuted(context)),
-                  ),
-                  errorWidget: (_, __, ___) => Container(
-                    width: 72,
-                    height: 72,
-                    color: ThemeHelper.getSurfaceColor(context),
-                    child: Icon(CupertinoIcons.music_note_2, color: ThemeHelper.getTextMuted(context)),
-                  ),
-                ),
+                child: track.coverUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: track.coverUrl,
+                        width: 72,
+                        height: 72,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          width: 72,
+                          height: 72,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(CupertinoIcons.music_note_2, color: ThemeHelper.getTextMuted(context)),
+                        ),
+                        errorWidget: (_, __, ___) => Container(
+                          width: 72,
+                          height: 72,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(CupertinoIcons.music_note_2, color: ThemeHelper.getTextMuted(context)),
+                        ),
+                      )
+                    : Container(
+                        width: 72,
+                        height: 72,
+                        color: ThemeHelper.getSurfaceColor(context),
+                        child: Icon(CupertinoIcons.music_note_2, color: ThemeHelper.getTextMuted(context)),
+                      ),
               ),
               Positioned.fill(
                 child: Material(

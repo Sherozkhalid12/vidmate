@@ -179,7 +179,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
             child: Stack(
               children: [
                 // Show thumbnail
-                if (video.thumbnailUrl != null)
+                if (video.thumbnailUrl != null && video.thumbnailUrl!.isNotEmpty)
                   Center(
                     child: CachedNetworkImage(
                       imageUrl: video.thumbnailUrl!,
@@ -445,4 +445,3 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
     );
   }
 }
-

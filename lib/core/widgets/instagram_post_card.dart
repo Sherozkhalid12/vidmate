@@ -123,27 +123,38 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                     );
                   },
                   child: ClipOval(
-                    child: CachedNetworkImage(
-                      imageUrl: widget.post.author.avatarUrl,
-                      width: 32,
-                      height: 32,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
-                        width: 32,
-                        height: 32,
-                        color: ThemeHelper.getSurfaceColor(context),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        width: 32,
-                        height: 32,
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Icon(
-                          CupertinoIcons.person_crop_circle,
-                          size: 32,
-                          color: ThemeHelper.getTextSecondary(context),
-                        ),
-                      ),
-                    ),
+                    child: widget.post.author.avatarUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: widget.post.author.avatarUrl,
+                            width: 32,
+                            height: 32,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(
+                              width: 32,
+                              height: 32,
+                              color: ThemeHelper.getSurfaceColor(context),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              width: 32,
+                              height: 32,
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Icon(
+                                CupertinoIcons.person_crop_circle,
+                                size: 32,
+                                color: ThemeHelper.getTextSecondary(context),
+                              ),
+                            ),
+                          )
+                        : Container(
+                            width: 32,
+                            height: 32,
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Icon(
+                              CupertinoIcons.person_crop_circle,
+                              size: 32,
+                              color: ThemeHelper.getTextSecondary(context),
+                            ),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -280,8 +291,21 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                           },
                           itemCount: widget.post.imageUrls.length,
                           itemBuilder: (context, index) {
+                            final imageUrl = widget.post.imageUrls[index];
+                            if (imageUrl.isEmpty) {
+                              return Container(
+                                color: ThemeHelper.getSurfaceColor(context),
+                                child: Center(
+                                  child: Icon(
+                                    CupertinoIcons.exclamationmark_triangle_fill,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 48,
+                                  ),
+                                ),
+                              );
+                            }
                             return CachedNetworkImage(
-                              imageUrl: widget.post.imageUrls[index],
+                              imageUrl: imageUrl,
                               fit: BoxFit.cover,
                               width: double.infinity,
                               height: double.infinity,
@@ -306,30 +330,46 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                             );
                           },
                         )
-                      : CachedNetworkImage(
-                          imageUrl: widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '',
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          placeholder: (context, url) => Container(
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Center(
-                              child: CupertinoActivityIndicator(
-                                color: ThemeHelper.getTextSecondary(context),
+                      : (() {
+                          final mediaUrl =
+                              widget.post.imageUrl ?? widget.post.thumbnailUrl ?? '';
+                          if (mediaUrl.isEmpty) {
+                            return Container(
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
+                                child: Icon(
+                                  CupertinoIcons.exclamationmark_triangle_fill,
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  size: 48,
+                                ),
+                              ),
+                            );
+                          }
+                          return CachedNetworkImage(
+                            imageUrl: mediaUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            placeholder: (context, url) => Container(
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
+                                child: CupertinoActivityIndicator(
+                                  color: ThemeHelper.getTextSecondary(context),
+                                ),
                               ),
                             ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Center(
-                              child: Icon(
-                                CupertinoIcons.exclamationmark_triangle_fill,
-                                color: ThemeHelper.getTextSecondary(context),
-                                size: 48,
+                            errorWidget: (context, url, error) => Container(
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
+                                child: Icon(
+                                  CupertinoIcons.exclamationmark_triangle_fill,
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  size: 48,
+                                ),
                               ),
                             ),
-                          ),
-                        ),
+                          );
+                        })(),
                   // Carousel indicators for multiple images
                   if (widget.post.imageUrls.length > 1)
                     Positioned(

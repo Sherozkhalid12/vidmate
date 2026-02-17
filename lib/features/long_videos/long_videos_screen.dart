@@ -453,37 +453,48 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                     );
                   },
                   child: ClipOval(
-                    child: CachedNetworkImage(
-                      imageUrl: video.author.avatarUrl,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
-                        width: 40,
-                        height: 40,
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Center(
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: ThemeHelper.getAccentColor(context),
+                    child: video.author.avatarUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: video.author.avatarUrl,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(
+                              width: 40,
+                              height: 40,
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: ThemeHelper.getAccentColor(context),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              width: 40,
+                              height: 40,
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Icon(
+                                Icons.person,
+                                color: ThemeHelper.getTextSecondary(context),
+                                size: 20,
+                              ),
+                            ),
+                          )
+                        : Container(
+                            width: 40,
+                            height: 40,
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Icon(
+                              Icons.person,
+                              color: ThemeHelper.getTextSecondary(context),
+                              size: 20,
                             ),
                           ),
-                        ),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        width: 40,
-                        height: 40,
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Icon(
-                          Icons.person,
-                          color: ThemeHelper.getTextSecondary(context),
-                          size: 20,
-                        ),
-                      ),
-                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -718,32 +729,48 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                       widgetState.controller != null && 
                       (isThisVideoPlaying || widgetState.isSeeking))
                   ? VideoPlayer(widgetState.controller!)
-                  : CachedNetworkImage(
-                      imageUrl: video.thumbnailUrl ?? video.imageUrl ?? '',
-                      width: double.infinity,
-                      height: 220,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
+                  : (() {
+                      final thumbnailUrl =
+                          video.thumbnailUrl ?? video.imageUrl ?? '';
+                      if (thumbnailUrl.isEmpty) {
+                        return Container(
+                          width: double.infinity,
+                          height: 220,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(
+                            Icons.video_library,
+                            color: ThemeHelper.getTextSecondary(context),
+                            size: 48,
+                          ),
+                        );
+                      }
+                      return CachedNetworkImage(
+                        imageUrl: thumbnailUrl,
                         width: double.infinity,
                         height: 220,
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: ThemeHelper.getAccentColor(context),
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => Container(
+                          width: double.infinity,
+                          height: 220,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: ThemeHelper.getAccentColor(context),
+                            ),
                           ),
                         ),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        width: double.infinity,
-                        height: 220,
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Icon(
-                          Icons.video_library,
-                          color: ThemeHelper.getTextSecondary(context),
-                          size: 48,
+                        errorWidget: (context, url, error) => Container(
+                          width: double.infinity,
+                          height: 220,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(
+                            Icons.video_library,
+                            color: ThemeHelper.getTextSecondary(context),
+                            size: 48,
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    })(),
             ),
           ),
           
@@ -990,4 +1017,3 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
   }
 
 }
-

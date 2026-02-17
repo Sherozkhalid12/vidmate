@@ -7,6 +7,7 @@ import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 
 /// Create post screen (photo/video)
@@ -144,10 +145,14 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     ref.read(createPostProvider.notifier).clearError();
 
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
         SnackBar(
-          content: const Text('Post created successfully!'),
-          backgroundColor: context.surfaceColor,
+          content: Text(
+            'Post created successfully!',
+            style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+          ),
+          backgroundColor: ThemeHelper.getAccentColor(context),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -155,11 +160,15 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
           ),
         ),
       );
-      _captionController.clear();
-      setState(() {
-        _mediaFile = null;
-        _isVideo = false;
-      });
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context, true);
+      } else {
+        _captionController.clear();
+        setState(() {
+          _mediaFile = null;
+          _isVideo = false;
+        });
+      }
     } else {
       final error = errorMessage ?? 'Failed to create post';
       ScaffoldMessenger.of(context).showSnackBar(
@@ -198,6 +207,17 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
   @override
   Widget build(BuildContext context) {
     final createPostState = ref.watch(createPostProvider);
+    final currentUser = ref.watch(currentUserProvider);
+    final displayName = currentUser != null
+        ? (currentUser.displayName.isNotEmpty
+            ? currentUser.displayName
+            : (currentUser.username.isNotEmpty
+                ? currentUser.username
+                : MockDataService.mockUsers[0].displayName))
+        : MockDataService.mockUsers[0].displayName;
+    final avatarUrl = currentUser != null && currentUser.avatarUrl.isNotEmpty
+        ? currentUser.avatarUrl
+        : null;
     final isUploading = createPostState.isCreating;
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -246,27 +266,37 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
               child: Row(
                 children: [
                   ClipOval(
-                    child: Image.network(
-                      MockDataService.mockUsers[0].avatarUrl,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          width: 40,
-                          height: 40,
-                          color: context.surfaceColor,
-                          child: Icon(
-                            Icons.person,
-                            color: context.textSecondary,
+                    child: avatarUrl == null
+                        ? Container(
+                            width: 40,
+                            height: 40,
+                            color: context.surfaceColor,
+                            child: Icon(
+                              Icons.person,
+                              color: context.textSecondary,
+                            ),
+                          )
+                        : Image.network(
+                            avatarUrl,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                width: 40,
+                                height: 40,
+                                color: context.surfaceColor,
+                                child: Icon(
+                                  Icons.person,
+                                  color: context.textSecondary,
+                                ),
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    MockDataService.mockUsers[0].displayName,
+                    displayName,
                     style: TextStyle(
                       color: context.textPrimary,
                       fontSize: 16,
@@ -465,4 +495,3 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
     );
   }
 }
-

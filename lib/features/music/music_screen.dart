@@ -558,38 +558,52 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
                         tag: 'track_${track.id}',
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(16),
-                          child: CachedNetworkImage(
-                            imageUrl: track.coverUrl,
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(
-                              width: 80,
-                              height: 80,
-                              decoration: BoxDecoration(
-                                color: ThemeHelper.getSurfaceColor(context),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Center(
-                                child: CupertinoActivityIndicator(
-                                  color: ThemeHelper.getTextSecondary(context),
+                          child: track.coverUrl.isNotEmpty
+                              ? CachedNetworkImage(
+                                  imageUrl: track.coverUrl,
+                                  width: 80,
+                                  height: 80,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(
+                                    width: 80,
+                                    height: 80,
+                                    decoration: BoxDecoration(
+                                      color: ThemeHelper.getSurfaceColor(context),
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Center(
+                                      child: CupertinoActivityIndicator(
+                                        color: ThemeHelper.getTextSecondary(context),
+                                      ),
+                                    ),
+                                  ),
+                                  errorWidget: (context, url, error) => Container(
+                                    width: 80,
+                                    height: 80,
+                                    decoration: BoxDecoration(
+                                      color: ThemeHelper.getSurfaceColor(context),
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Icon(
+                                      CupertinoIcons.music_note_2,
+                                      color: ThemeHelper.getTextSecondary(context),
+                                      size: 32,
+                                    ),
+                                  ),
+                                )
+                              : Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    color: ThemeHelper.getSurfaceColor(context),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Icon(
+                                    CupertinoIcons.music_note_2,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 32,
+                                  ),
                                 ),
-                              ),
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              width: 80,
-                              height: 80,
-                              decoration: BoxDecoration(
-                                color: ThemeHelper.getSurfaceColor(context),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Icon(
-                                CupertinoIcons.music_note_2,
-                                color: ThemeHelper.getTextSecondary(context),
-                                size: 32,
-                              ),
-                            ),
-                          ),
                         ),
                       ),
                       // Gradient overlay

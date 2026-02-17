@@ -129,7 +129,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
-      if (!playerState.hasValidController) return;
+      if (!playerState.hasValidController || !playerState.isInitialized) return;
       
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.play();
@@ -153,7 +153,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
 
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
-      if (!playerState.hasValidController) return;
+      if (!playerState.hasValidController || !playerState.isInitialized) return;
       
       // Animate button press for smooth feedback
       _playPauseAnimationController.forward(from: 0.0).then((_) {
@@ -187,7 +187,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     if (widget.videoUrl == null) return;
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
-      if (!playerState.hasValidController) return;
+      if (!playerState.hasValidController || !playerState.isInitialized) return;
       
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.seekForward();
@@ -201,7 +201,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     if (widget.videoUrl == null) return;
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
-      if (!playerState.hasValidController) return;
+      if (!playerState.hasValidController || !playerState.isInitialized) return;
       
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       // Seek backward without pausing
@@ -387,7 +387,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  if (widget.channelAvatar != null)
+                  if (widget.channelAvatar != null && widget.channelAvatar!.isNotEmpty)
                     GestureDetector(
                       onTap: widget.onTap,
                       child: ClipOval(
@@ -414,7 +414,8 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                         ),
                       ),
                     ),
-                  if (widget.channelAvatar != null) const SizedBox(width: 12),
+                  if (widget.channelAvatar != null && widget.channelAvatar!.isNotEmpty)
+                    const SizedBox(width: 12),
                   if (widget.channelName != null)
                     Expanded(
                       child: GestureDetector(
@@ -534,30 +535,41 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                           key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
                           child: SafeBetterPlayerWrapper(controller: playerState!.controller!),
                         )
-                      : CachedNetworkImage(
-                          imageUrl: widget.thumbnailUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          placeholder: (context, url) => Container(
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Center(
-                              child: CupertinoActivityIndicator(
-                                color: ThemeHelper.getTextSecondary(context),
+                      : (widget.thumbnailUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: widget.thumbnailUrl,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              placeholder: (context, url) => Container(
+                                color: ThemeHelper.getSurfaceColor(context),
+                                child: Center(
+                                  child: CupertinoActivityIndicator(
+                                    color: ThemeHelper.getTextSecondary(context),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            color: ThemeHelper.getSurfaceColor(context),
-                            child: Center(
-                              child: Icon(
-                                CupertinoIcons.exclamationmark_triangle_fill,
-                                color: ThemeHelper.getTextSecondary(context),
-                                size: 48,
+                              errorWidget: (context, url, error) => Container(
+                                color: ThemeHelper.getSurfaceColor(context),
+                                child: Center(
+                                  child: Icon(
+                                    CupertinoIcons.exclamationmark_triangle_fill,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 48,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        ),
+                            )
+                          : Container(
+                              color: ThemeHelper.getSurfaceColor(context),
+                              child: Center(
+                                child: Icon(
+                                  CupertinoIcons.exclamationmark_triangle_fill,
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  size: 48,
+                                ),
+                              ),
+                            )),
                 ),
                 
                 // Play/Pause button - centered, only handles taps on the button itself

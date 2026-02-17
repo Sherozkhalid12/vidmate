@@ -98,6 +98,10 @@ dev_dependencies:
   build_runner: ^2.4.13
   riverpod_generator: ^2.6.2
 
+dependency_overrides:
+  better_player:
+    path: third_party/better_player
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 

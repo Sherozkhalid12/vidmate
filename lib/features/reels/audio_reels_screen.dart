@@ -227,7 +227,7 @@ class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
             color: Colors.black,
             child: Stack(
               children: [
-                if (reel.thumbnailUrl != null)
+                if (reel.thumbnailUrl != null && reel.thumbnailUrl!.isNotEmpty)
                   Center(
                     child: CachedNetworkImage(
                       imageUrl: reel.thumbnailUrl!,

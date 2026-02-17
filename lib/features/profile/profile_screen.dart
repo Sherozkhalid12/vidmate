@@ -15,6 +15,7 @@ import '../settings/settings_screen.dart';
 import '../chat/chat_list_screen.dart';
 import 'followers_list_screen.dart';
 import 'edit/edit_profile_screen.dart';
+import 'profile_post_viewer_screen.dart';
 import '../../core/services/mock_data_service.dart';
 
 /// Instagram-style profile screen. If [user] is null, shows current user's profile (from API).
@@ -602,7 +603,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             child: ScaleAnimation(
               child: FadeInAnimation(
                 child: GestureDetector(
-                  onTap: () {},
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProfilePostViewerScreen(
+                          posts: posts,
+                          initialIndex: index,
+                        ),
+                      ),
+                    );
+                  },
                   child: Container(
                     decoration: BoxDecoration(
                       color: context.surfaceColor,
@@ -610,12 +621,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.network(
-                          posts[index].thumbnailUrl ??
-                              posts[index].imageUrl ??
-                              '',
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
+                        (() {
+                          final imageUrl =
+                              posts[index].thumbnailUrl ?? posts[index].imageUrl ?? '';
+                          if (imageUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
                               child: Icon(
@@ -623,8 +632,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                                 color: context.textMuted,
                               ),
                             );
-                          },
-                        ),
+                          }
+                          return Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: context.surfaceColor,
+                                child: Icon(
+                                  Icons.image_not_supported,
+                                  color: context.textMuted,
+                                ),
+                              );
+                            },
+                          );
+                        })(),
                         if (posts[index].isVideo)
                           Positioned(
                             top: 8,
@@ -685,15 +707,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.network(
-                          reels[index].thumbnailUrl ?? '',
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
+                        (() {
+                          final thumbnailUrl = reels[index].thumbnailUrl ?? '';
+                          if (thumbnailUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
                             );
-                          },
-                        ),
+                          }
+                          return Image.network(
+                            thumbnailUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: context.surfaceColor,
+                              );
+                            },
+                          );
+                        })(),
                         Center(
                           child: Icon(
                             Icons.play_circle_outline,
@@ -744,15 +774,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.network(
-                          longVideos[index].thumbnailUrl ?? '',
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
+                        (() {
+                          final thumbnailUrl = longVideos[index].thumbnailUrl ?? '';
+                          if (thumbnailUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
                             );
-                          },
-                        ),
+                          }
+                          return Image.network(
+                            thumbnailUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: context.surfaceColor,
+                              );
+                            },
+                          );
+                        })(),
                         Center(
                           child: Icon(
                             Icons.play_circle_filled,

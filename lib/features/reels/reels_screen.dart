@@ -276,7 +276,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
             child: Stack(
               children: [
                 // Show thumbnail if available
-                if (reel.thumbnailUrl != null)
+                if (reel.thumbnailUrl != null && reel.thumbnailUrl!.isNotEmpty)
                   Center(
                     child: CachedNetworkImage(
                       imageUrl: reel.thumbnailUrl!,
@@ -689,4 +689,3 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     return count.toString();
   }
 }
-

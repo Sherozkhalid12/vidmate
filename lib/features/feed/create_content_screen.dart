@@ -10,6 +10,7 @@ import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 import 'select_music_screen.dart';
 
@@ -112,7 +113,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   }
 
   void _stopAndDisposeAudio() {
-    if (mounted) setState(() => _isAudioPlaying = false);
+    _isAudioPlaying = false;
   }
 
   /// Dispose video when switching content type; dispose audio when navigating to select music
@@ -129,7 +130,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   }
 
   void _disposeAudioState() {
-    _stopAndDisposeAudio();
+    if (mounted) {
+      setState(() => _isAudioPlaying = false);
+    } else {
+      _isAudioPlaying = false;
+    }
   }
 
   /// Get URL for playback (from Select Music or demo for "Use this audio")
@@ -147,10 +152,18 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   Future<void> _toggleAudioPlayPause() async {
     if (_playbackUrl == null) return;
     if (_isAudioPlaying) {
-      _stopAndDisposeAudio();
+      if (mounted) {
+        setState(() => _isAudioPlaying = false);
+      } else {
+        _isAudioPlaying = false;
+      }
       return;
     }
-    if (mounted) setState(() => _isAudioPlaying = true);
+    if (mounted) {
+      setState(() => _isAudioPlaying = true);
+    } else {
+      _isAudioPlaying = true;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -590,10 +603,14 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       if (!mounted) return;
       ref.read(createPostProvider.notifier).clearError();
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(
           SnackBar(
-            content: const Text('Post shared successfully!'),
-            backgroundColor: context.surfaceColor,
+            content: Text(
+              'Post shared successfully!',
+              style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+            ),
+            backgroundColor: ThemeHelper.getAccentColor(context),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
@@ -601,7 +618,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
             ),
           ),
         );
-        _resetForm();
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context, true);
+        } else {
+          _resetForm();
+        }
       } else {
         final error =
             ref.read(createPostProvider).error ?? 'Failed to create post';
@@ -1250,32 +1271,53 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   /// Build author info header
   Widget _buildAuthorInfo() {
+    final currentUser = ref.watch(currentUserProvider);
+    final displayName = currentUser != null
+        ? (currentUser.displayName.isNotEmpty
+            ? currentUser.displayName
+            : (currentUser.username.isNotEmpty
+                ? currentUser.username
+                : MockDataService.mockUsers[0].displayName))
+        : MockDataService.mockUsers[0].displayName;
+    final avatarUrl = currentUser != null && currentUser.avatarUrl.isNotEmpty
+        ? currentUser.avatarUrl
+        : null;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
           ClipOval(
-            child: Image.network(
-              MockDataService.mockUsers[0].avatarUrl,
-              width: 40,
-              height: 40,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  width: 40,
-                  height: 40,
-                  color: context.surfaceColor,
-                  child: Icon(
-                    Icons.person,
-                    color: context.textSecondary,
+            child: avatarUrl == null
+                ? Container(
+                    width: 40,
+                    height: 40,
+                    color: context.surfaceColor,
+                    child: Icon(
+                      Icons.person,
+                      color: context.textSecondary,
+                    ),
+                  )
+                : Image.network(
+                    avatarUrl,
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        width: 40,
+                        height: 40,
+                        color: context.surfaceColor,
+                        child: Icon(
+                          Icons.person,
+                          color: context.textSecondary,
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
           const SizedBox(width: 12),
           Text(
-            MockDataService.mockUsers[0].displayName,
+            displayName,
             style: TextStyle(
               color: context.textPrimary,
               fontSize: 16,
@@ -2201,4 +2243,3 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 }
-

@@ -81,8 +81,8 @@ class VideoPlayerState {
 /// Video player provider - uses BetterPlayer for HLS/network (backend videos).
 final videoPlayerProvider = StateNotifierProvider.autoDispose
     .family<VideoPlayerNotifier, VideoPlayerState, String>((ref, videoUrl) {
-  return VideoPlayerNotifier(videoUrl);
-});
+      return VideoPlayerNotifier(videoUrl);
+    });
 
 /// Video player notifier (BetterPlayer for HLS support).
 class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
@@ -103,6 +103,7 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
 
       final config = BetterPlayerConfiguration(
         autoPlay: false,
+        autoDispose: false,
         controlsConfiguration: const BetterPlayerControlsConfiguration(
           showControls: false,
         ),
@@ -119,36 +120,49 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
       await controller.setupDataSource(dataSource);
 
       if (savedPosition > Duration.zero) {
-        await controller.seekTo(savedPosition);
+        try {
+          if (controller.isVideoInitialized() == true) {
+            await controller.seekTo(savedPosition);
+          }
+        } catch (_) {}
       }
 
       if (!_disposed) {
         _eventListener = (BetterPlayerEvent event) {
           if (_disposed) return;
           try {
-            if (event.betterPlayerEventType == BetterPlayerEventType.initialized) {
-              final dur = controller.videoPlayerController?.value.duration ?? Duration.zero;
+            if (event.betterPlayerEventType ==
+                BetterPlayerEventType.initialized) {
+              final dur =
+                  controller.videoPlayerController?.value.duration ??
+                  Duration.zero;
               if (savedPosition > Duration.zero && savedPosition < dur) {
                 controller.seekTo(savedPosition);
               }
               if (!_disposed) {
                 state = state.copyWith(isInitialized: true, duration: dur);
               }
-            } else if (event.betterPlayerEventType == BetterPlayerEventType.play) {
+            } else if (event.betterPlayerEventType ==
+                BetterPlayerEventType.play) {
               if (!_disposed) {
                 state = state.copyWith(isPlaying: true);
               }
-            } else if (event.betterPlayerEventType == BetterPlayerEventType.pause) {
+            } else if (event.betterPlayerEventType ==
+                BetterPlayerEventType.pause) {
               if (!_disposed) {
                 state = state.copyWith(isPlaying: false);
               }
-            } else if (event.betterPlayerEventType == BetterPlayerEventType.finished) {
+            } else if (event.betterPlayerEventType ==
+                BetterPlayerEventType.finished) {
               // Video completed - pause and reset to beginning
               if (!_disposed) {
                 try {
                   controller.pause();
                   controller.seekTo(Duration.zero);
-                  state = state.copyWith(isPlaying: false, position: Duration.zero);
+                  state = state.copyWith(
+                    isPlaying: false,
+                    position: Duration.zero,
+                  );
                 } catch (_) {
                   // Controller might be disposed
                 }
@@ -157,7 +171,11 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
           } catch (e) {
             // Event listener error - controller might be disposed
             if (!_disposed) {
-              state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+              state = state.copyWith(
+                controller: null,
+                isDisposed: true,
+                clearController: true,
+              );
             }
           }
         };
@@ -166,7 +184,8 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
         state = state.copyWith(
           controller: controller,
           isInitialized: controller.isVideoInitialized() ?? false,
-          duration: controller.videoPlayerController?.value.duration ?? Duration.zero,
+          duration:
+              controller.videoPlayerController?.value.duration ?? Duration.zero,
           isPlaying: false,
         );
 
@@ -233,91 +252,133 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
     return Duration.zero;
   }
 
-  void togglePlayPause() {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+  bool _canUseController() {
+    if (_disposed || state.isDisposed || state.controller == null) return false;
+    if (!state.isInitialized) return false;
+    try {
+      final vc = state.controller!.videoPlayerController;
+      if (vc == null || !vc.value.initialized) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> togglePlayPause() async {
+    if (!_canUseController()) return;
     try {
       if (state.isPlaying) {
-        state.controller!.pause();
+        await state.controller!.pause();
+        if (_disposed || state.isDisposed) return;
         state = state.copyWith(isPlaying: false);
       } else {
-        state.controller!.play();
+        await state.controller!.play();
+        if (_disposed || state.isDisposed) return;
         state = state.copyWith(isPlaying: true);
       }
     } catch (e) {
       // Controller was disposed, clear it from state
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
-  void play() {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+  Future<void> play() async {
+    if (!_canUseController()) return;
     try {
       if (!state.isPlaying) {
-        state.controller!.play();
+        await state.controller!.play();
+        if (_disposed || state.isDisposed) return;
         state = state.copyWith(isPlaying: true);
       }
     } catch (e) {
       // Controller was disposed, clear it from state
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
-  void pause() {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+  Future<void> pause() async {
+    if (!_canUseController()) return;
     try {
       if (state.isPlaying) {
-        state.controller!.pause();
+        await state.controller!.pause();
+        if (_disposed || state.isDisposed) return;
         state = state.copyWith(isPlaying: false);
       }
     } catch (e) {
       // Controller was disposed, clear it from state
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
-  void seekForward() {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+  Future<void> seekForward() async {
+    if (!_canUseController()) return;
     try {
       final newPosition = state.position + const Duration(seconds: 10);
-      final target = newPosition > state.duration ? state.duration : newPosition;
-      state.controller!.seekTo(target);
+      final target = newPosition > state.duration
+          ? state.duration
+          : newPosition;
+      await state.controller!.seekTo(target);
+      if (_disposed || state.isDisposed) return;
       state = state.copyWith(
         showSeekIndicator: true,
         seekDirection: 'forward',
         seekTarget: target,
       );
       Future.delayed(const Duration(milliseconds: 800), () {
-        if (!_disposed) {
+        if (!_disposed && !state.isDisposed) {
           state = state.copyWith(showSeekIndicator: false);
         }
       });
     } catch (e) {
       // Controller was disposed
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
-  void seekBackward() {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+  Future<void> seekBackward() async {
+    if (!_canUseController()) return;
     try {
       final newPosition = state.position - const Duration(seconds: 10);
       final target = newPosition < Duration.zero ? Duration.zero : newPosition;
       final wasPlaying = state.isPlaying;
-      state.controller!.seekTo(target);
-      if (wasPlaying) state.controller!.play();
+      await state.controller!.seekTo(target);
+      if (wasPlaying) {
+        await state.controller!.play();
+      }
+      if (_disposed || state.isDisposed) return;
       state = state.copyWith(
         showSeekIndicator: true,
         seekDirection: 'backward',
         seekTarget: target,
       );
       Future.delayed(const Duration(milliseconds: 800), () {
-        if (!_disposed) {
+        if (!_disposed && !state.isDisposed) {
           state = state.copyWith(showSeekIndicator: false);
         }
       });
     } catch (e) {
       // Controller was disposed
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
@@ -329,25 +390,38 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
     state = state.copyWith(isFullscreen: !state.isFullscreen);
   }
 
-  void seekTo(Duration position) {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+  Future<void> seekTo(Duration position) async {
+    if (!_canUseController()) return;
     try {
-      state.controller!.seekTo(position);
+      await state.controller!.seekTo(position);
+      if (_disposed || state.isDisposed) return;
       state = state.copyWith(position: position);
     } catch (e) {
       // Controller was disposed
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
-    if (!state.hasValidController || !state.isInitialized || _disposed) return;
+    if (!_canUseController()) return;
     try {
       await state.controller!.setSpeed(speed);
-      state = state.copyWith(playbackSpeed: speed, showPlaybackSpeedMenu: false);
+      if (_disposed || state.isDisposed) return;
+      state = state.copyWith(
+        playbackSpeed: speed,
+        showPlaybackSpeedMenu: false,
+      );
     } catch (e) {
       // Controller was disposed
-      state = state.copyWith(controller: null, isDisposed: true, clearController: true);
+      state = state.copyWith(
+        controller: null,
+        isDisposed: true,
+        clearController: true,
+      );
     }
   }
 
@@ -367,7 +441,7 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
     _disposed = true;
     _progressSaveTimer?.cancel();
     _positionSyncTimer?.cancel();
-    
+
     // Save progress before disposing
     _saveProgress();
 
@@ -381,30 +455,24 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
       isPlaying: false,
       clearController: true,
     );
-    
+
     if (controller != null) {
-      try {
-        // Remove event listener first
-        if (_eventListener != null) {
-          try {
-            controller.removeEventsListener(_eventListener!);
-          } catch (_) {
-            // Listener might already be removed
-          }
-        }
-        // Pause if playing
+      final listener = _eventListener;
+      _eventListener = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         try {
-          if (controller.isPlaying() == true) {
-            controller.pause();
+          if (listener != null) {
+            controller.removeEventsListener(listener);
           }
+        } catch (_) {
+          // Listener might already be removed
+        }
+        try {
+          controller.dispose(forceDispose: true);
         } catch (_) {
           // Controller might already be disposed
         }
-        // Dispose controller
-        controller.dispose();
-      } catch (_) {
-        // Controller might already be disposed, ignore
-      }
+      });
     }
     super.dispose();
   }

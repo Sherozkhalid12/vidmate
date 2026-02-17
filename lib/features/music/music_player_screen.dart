@@ -236,35 +236,48 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     return Positioned.fill(
       child: Hero(
         tag: 'track_${track.id}_bg',
-        child: CachedNetworkImage(
-          imageUrl: track.coverUrl,
-          fit: BoxFit.cover,
-          imageBuilder: (context, imageProvider) {
-            return Container(
-              decoration: BoxDecoration(
-                image: DecorationImage(
-                  image: imageProvider,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        ThemeHelper.getBackgroundColor(context).withOpacity(0.6),
-                        ThemeHelper.getBackgroundColor(context).withOpacity(0.9),
-                      ],
+        child: track.coverUrl.isNotEmpty
+            ? CachedNetworkImage(
+                imageUrl: track.coverUrl,
+                fit: BoxFit.cover,
+                imageBuilder: (context, imageProvider) {
+                  return Container(
+                    decoration: BoxDecoration(
+                      image: DecorationImage(
+                        image: imageProvider,
+                        fit: BoxFit.cover,
+                      ),
                     ),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              ThemeHelper.getBackgroundColor(context).withOpacity(0.6),
+                              ThemeHelper.getBackgroundColor(context).withOpacity(0.9),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              )
+            : Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      ThemeHelper.getBackgroundColor(context).withOpacity(0.6),
+                      ThemeHelper.getBackgroundColor(context).withOpacity(0.9),
+                    ],
                   ),
                 ),
               ),
-            );
-          },
-        ),
       ),
     );
   }
@@ -428,26 +441,35 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
                                 child: Container(
                                   width: 200,
                                   height: 200,
-                                  child: CachedNetworkImage(
-                                    imageUrl: track.coverUrl,
-                                    fit: BoxFit.cover,
-                                    placeholder: (context, url) => Container(
-                                      color: ThemeHelper.getSurfaceColor(context),
-                                      child: Center(
-                                        child: CupertinoActivityIndicator(
-                                          color: ThemeHelper.getAccentColor(context),
+                                  child: track.coverUrl.isNotEmpty
+                                      ? CachedNetworkImage(
+                                          imageUrl: track.coverUrl,
+                                          fit: BoxFit.cover,
+                                          placeholder: (context, url) => Container(
+                                            color: ThemeHelper.getSurfaceColor(context),
+                                            child: Center(
+                                              child: CupertinoActivityIndicator(
+                                                color: ThemeHelper.getAccentColor(context),
+                                              ),
+                                            ),
+                                          ),
+                                          errorWidget: (context, url, error) => Container(
+                                            color: ThemeHelper.getSurfaceColor(context),
+                                            child: Icon(
+                                              CupertinoIcons.music_note_2,
+                                              color: ThemeHelper.getTextSecondary(context),
+                                              size: 60,
+                                            ),
+                                          ),
+                                        )
+                                      : Container(
+                                          color: ThemeHelper.getSurfaceColor(context),
+                                          child: Icon(
+                                            CupertinoIcons.music_note_2,
+                                            color: ThemeHelper.getTextSecondary(context),
+                                            size: 60,
+                                          ),
                                         ),
-                                      ),
-                                    ),
-                                    errorWidget: (context, url, error) => Container(
-                                      color: ThemeHelper.getSurfaceColor(context),
-                                      child: Icon(
-                                        CupertinoIcons.music_note_2,
-                                        color: ThemeHelper.getTextSecondary(context),
-                                        size: 60,
-                                      ),
-                                    ),
-                                  ),
                                 ),
                               ),
                             ),
