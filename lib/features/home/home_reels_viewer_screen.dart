@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:better_player/better_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/post_model.dart';
+import '../../core/utils/theme_helper.dart';
 import '../profile/profile_screen.dart';
 import '../../core/widgets/safe_better_player.dart';
 
@@ -25,20 +29,14 @@ class HomeReelsViewerScreen extends ConsumerStatefulWidget {
 class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
   late PageController _pageController;
   int _currentIndex = 0;
-  final Map<String, bool> _likedPosts = {};
-  final Map<String, int> _likeCounts = {};
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
-    
-    // Initialize like states
-    for (var video in widget.videos) {
-      _likedPosts[video.id] = video.isLiked;
-      _likeCounts[video.id] = video.likes;
-    }
+    // Seed provider with incoming reels so counts are synced everywhere.
+    ref.read(reelsProvider.notifier).seedReels(widget.videos);
     
     // Start playing initial video
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -260,21 +258,14 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildActionButton(
-                      icon: Icons.favorite,
-                      count: _likeCounts[video.id] ?? video.likes,
-                      isActive: _likedPosts[video.id] ?? video.isLiked,
-                      onTap: () {
-                        setState(() {
-                          final currentLiked = _likedPosts[video.id] ?? video.isLiked;
-                          final currentCount = _likeCounts[video.id] ?? video.likes;
-                          _likedPosts[video.id] = !currentLiked;
-                          _likeCounts[video.id] = currentLiked 
-                              ? (currentCount - 1).clamp(0, double.infinity).toInt()
-                              : currentCount + 1;
-                        });
-                      },
-                    ),
+                      _buildActionButton(
+                        icon: Icons.favorite,
+                        count: ref.watch(reelLikeCountProvider(video.id)),
+                        isActive: ref.watch(reelLikedProvider(video.id)),
+                        onTap: () {
+                          ref.read(reelsProvider.notifier).toggleLikeWithApi(video.id);
+                        },
+                      ),
                     const SizedBox(height: 20),
                     _buildActionButton(
                       icon: Icons.comment_outlined,
@@ -324,23 +315,42 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
                     children: [
                       Row(
                         children: [
-                          // Follow button on the left
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
+                          // Follow button - hide when author is current user
+                          if (ref.watch(currentUserProvider)?.id != video.author.id)
+                            Consumer(
+                              builder: (context, ref, _) {
+                                final followState = ref.watch(followProvider);
+                                final overrideStatus =
+                                    ref.watch(followStateProvider)[video.author.id];
+                                final isFollowing =
+                                    overrideStatus == FollowRelationshipStatus.following ||
+                                        (overrideStatus == null &&
+                                            (followState.followingIds.isNotEmpty
+                                                ? followState.followingIds
+                                                    .contains(video.author.id)
+                                                : video.author.isFollowing));
+                                return GestureDetector(
+                                  onTap: () => ref.read(followProvider.notifier).toggleFollow(video.author.id),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: isFollowing ? Colors.transparent : Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: isFollowing ? Border.all(color: Colors.white70, width: 1.5) : null,
+                                    ),
+                                    child: Text(
+                                      isFollowing ? 'Following' : 'Follow',
+                                      style: TextStyle(
+                                        color: isFollowing ? Colors.white : Colors.black,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                            child: const Text(
-                              'Follow',
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
+                          if (ref.watch(currentUserProvider)?.id != video.author.id) const SizedBox(width: 12),
                           GestureDetector(
                             onTap: () {
                               Navigator.push(

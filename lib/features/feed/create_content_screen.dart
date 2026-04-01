@@ -1,18 +1,32 @@
 import 'dart:io';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 // audioplayers: Run `flutter pub get` to install. Restore import for real audio playback.
 import '../../core/utils/create_content_visibility.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/stories_provider_riverpod.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../services/posts/stories_service.dart';
+import '../../services/posts/reels_service.dart';
+import '../../services/posts/long_video_service.dart';
+import '../long_videos/providers/long_videos_provider.dart';
 import 'select_music_screen.dart';
+// LiveStreamScreen is kept for legacy/demo; livestream now uses Agora + backend token.
+import 'live_agora_screen.dart';
+import 'post_crop_screen.dart';
+import 'post_edit_screen.dart';
+import 'reel_edit_screen.dart';
+import 'story_edit_screen.dart';
+import 'choose_cover_photo_screen.dart';
+import '../../core/providers/livestream_controller_riverpod.dart';
 
 /// Content type enum for different creation modes
 enum ContentType {
@@ -20,6 +34,7 @@ enum ContentType {
   story,     // Multiple photos/videos (1-10 items)
   reel,      // Single short video (15-180 sec)
   longVideo, // Single longer video (30+ sec, 1-60 min)
+  live,      // Live stream (camera preview + Start Live)
 }
 
 /// Media item model for Story (supports both images and videos)
@@ -75,8 +90,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   File? _videoFile;
   Duration? _videoDuration;
   VideoPlayerController? _videoController;
+  File? _coverPhoto;
 
   bool _isUploading = false;
+  /// True while video is being prepared (duration + controller init) after pick
+  bool _isLoadingVideo = false;
   int _currentCarouselIndex = 0;
   /// Pre-selected audio when opening from "Use this audio" (reel only)
   String? _selectedAudioId;
@@ -89,6 +107,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   String? _selectedLocation;
   final List<String> _taggedUsers = [];
   String? _selectedFeeling;
+
+  /// Live tab: camera for preview (disposed when switching tab or going full screen)
+  CameraController? _liveCameraController;
+  bool _liveCameraReady = false;
+  String? _liveCameraError;
 
   @override
   void initState() {
@@ -108,8 +131,51 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     _carouselController.dispose();
     _postVideoController?.dispose();
     _videoController?.dispose();
+    _disposeLiveCamera();
     _stopAndDisposeAudio();
     super.dispose();
+  }
+
+  Future<void> _initLiveCamera() async {
+    if (_liveCameraController != null) return;
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        if (mounted) setState(() {
+          _liveCameraError = 'No camera found';
+        });
+        return;
+      }
+      final front = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+      final controller = CameraController(
+        front,
+        ResolutionPreset.medium,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await controller.initialize();
+      if (mounted) {
+        setState(() {
+          _liveCameraController = controller;
+          _liveCameraReady = true;
+          _liveCameraError = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() {
+        _liveCameraError = e.toString();
+        _liveCameraReady = false;
+      });
+    }
+  }
+
+  void _disposeLiveCamera() {
+    _liveCameraController?.dispose();
+    _liveCameraController = null;
+    _liveCameraReady = false;
+    _liveCameraError = null;
   }
 
   void _stopAndDisposeAudio() {
@@ -126,6 +192,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     _videoController = null;
     _videoFile = null;
     _videoDuration = null;
+    _coverPhoto = null;
     _stopAndDisposeAudio();
   }
 
@@ -140,9 +207,6 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   /// Get URL for playback (from Select Music or demo for "Use this audio")
   String? get _playbackUrl {
     if (_selectedAudioUrl != null && _selectedAudioUrl!.isNotEmpty) return _selectedAudioUrl;
-    if (_selectedAudioId != null && MockDataService.getMockMusic().isNotEmpty) {
-      return MockDataService.getMockMusic().first.audioUrl;
-    }
     return null;
   }
 
@@ -170,19 +234,24 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   // MEDIA PICKING METHODS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Show source selection dialog (Gallery/Camera) - floating, opacity 1
+  /// Show source selection dialog (Gallery/Camera) - floating, theme-aware
   Future<ImageSource?> _showSourceDialog() async {
+    final bgColor = ThemeHelper.getBackgroundColor(context);
+    final textPrimary = ThemeHelper.getTextPrimary(context);
+    final borderColor = ThemeHelper.getBorderColor(context);
+    final accentColor = ThemeHelper.getAccentColor(context);
     return await showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: bgColor,
           borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: borderColor.withOpacity(0.4)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
+              color: ThemeHelper.getTextPrimary(context).withOpacity(0.15),
               blurRadius: 20,
               offset: const Offset(0, 8),
             ),
@@ -196,18 +265,18 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
-                  leading: Icon(Icons.photo_library, color: Theme.of(context).colorScheme.primary),
+                  leading: Icon(Icons.photo_library, color: accentColor),
                   title: Text(
                     'Choose from Gallery',
-                    style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: textPrimary, fontWeight: FontWeight.w500),
                   ),
                   onTap: () => Navigator.pop(context, ImageSource.gallery),
                 ),
                 ListTile(
-                  leading: Icon(Icons.camera_alt, color: Theme.of(context).colorScheme.primary),
+                  leading: Icon(Icons.camera_alt, color: accentColor),
                   title: Text(
                     'Take Photo/Video',
-                    style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                    style: TextStyle(color: textPrimary, fontWeight: FontWeight.w500),
                   ),
                   onTap: () => Navigator.pop(context, ImageSource.camera),
                 ),
@@ -274,7 +343,9 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       if (pickedFiles.isNotEmpty) {
         final newImages = pickedFiles.map((file) => File(file.path)).toList();
         final totalCount = _postImages.length + newImages.length;
-        
+
+        List<File> toAdd;
+
         if (totalCount > 10) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -292,17 +363,30 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
               ),
             );
           }
-          // Add only up to the limit
           final remaining = 10 - _postImages.length;
-          if (remaining > 0) {
+          toAdd = remaining > 0 ? newImages.take(remaining).toList() : <File>[];
+        } else {
+          toAdd = newImages;
+        }
+
+        if (toAdd.isNotEmpty) {
+          setState(() {
+            _postImages.addAll(toAdd);
+          });
+
+          final cropped = await Navigator.push<List<File>>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PostCropScreen(
+                images: List<File>.from(_postImages),
+              ),
+            ),
+          );
+          if (cropped != null && mounted) {
             setState(() {
-              _postImages.addAll(newImages.take(remaining));
+              _postImages = cropped;
             });
           }
-        } else {
-          setState(() {
-            _postImages.addAll(newImages);
-          });
         }
       }
     } catch (e) {
@@ -315,18 +399,23 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   /// Pick multiple media items for Story (images + videos, 1-10 max)
   Future<void> _pickStoryMedia() async {
     try {
-      // Show media type selection - floating, pure white
+      // Show media type selection - floating, theme-aware
+      final bgColor = ThemeHelper.getBackgroundColor(context);
+      final textPrimary = ThemeHelper.getTextPrimary(context);
+      final borderColor = ThemeHelper.getBorderColor(context);
+      final accentColor = ThemeHelper.getAccentColor(context);
       final String? mediaType = await showModalBottomSheet<String>(
         context: context,
         backgroundColor: Colors.transparent,
         builder: (context) => Container(
           margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: bgColor,
             borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: borderColor.withOpacity(0.4)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: ThemeHelper.getTextPrimary(context).withOpacity(0.15),
                 blurRadius: 20,
                 offset: const Offset(0, 8),
               ),
@@ -340,18 +429,18 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   ListTile(
-                    leading: Icon(Icons.image, color: Theme.of(context).colorScheme.primary),
+                    leading: Icon(Icons.image, color: accentColor),
                     title: Text(
                       'Add Photos',
-                      style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                      style: TextStyle(color: textPrimary, fontWeight: FontWeight.w500),
                     ),
                     onTap: () => Navigator.pop(context, 'image'),
                   ),
                   ListTile(
-                    leading: Icon(Icons.videocam, color: Theme.of(context).colorScheme.primary),
+                    leading: Icon(Icons.videocam, color: accentColor),
                     title: Text(
                       'Add Videos',
-                      style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
+                      style: TextStyle(color: textPrimary, fontWeight: FontWeight.w500),
                     ),
                     onTap: () => Navigator.pop(context, 'video'),
                   ),
@@ -469,25 +558,33 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
       final pickedFile = await _picker.pickVideo(source: source);
       if (pickedFile != null) {
+        if (mounted) setState(() => _isLoadingVideo = true);
+
         final videoFile = File(pickedFile.path);
         final duration = await _getVideoDuration(videoFile);
+
+        if (!mounted) return;
 
         // Validate duration based on type
         if (_selectedType == ContentType.reel) {
           if (duration.inSeconds < 5) {
+            setState(() => _isLoadingVideo = false);
             _showErrorSnackBar('Reel must be at least 5 seconds long.');
             return;
           }
           if (duration.inSeconds > 180) {
+            setState(() => _isLoadingVideo = false);
             _showErrorSnackBar('Reel must be 180 seconds (3 minutes) or less.');
             return;
           }
         } else if (_selectedType == ContentType.longVideo) {
           if (duration.inSeconds < 30) {
+            setState(() => _isLoadingVideo = false);
             _showErrorSnackBar('Long video must be at least 30 seconds long.');
             return;
           }
           if (duration.inMinutes > 60) {
+            setState(() => _isLoadingVideo = false);
             _showErrorSnackBar('Long video must be 60 minutes or less.');
             return;
           }
@@ -499,16 +596,20 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         // Create new controller for preview - never auto-play
         final controller = VideoPlayerController.file(videoFile);
         await controller.initialize();
-        controller.pause(); // Explicit: do not play in create content screen
+        controller.pause();
 
-        setState(() {
-          _videoFile = videoFile;
-          _videoDuration = duration;
-          _videoController = controller;
-        });
+        if (mounted) {
+          setState(() {
+            _videoFile = videoFile;
+            _videoDuration = duration;
+            _videoController = controller;
+            _isLoadingVideo = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isLoadingVideo = false);
         _showErrorSnackBar('Error picking video: ${e.toString()}');
       }
     }
@@ -524,6 +625,79 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       return duration;
     } catch (e) {
       return const Duration(seconds: 0);
+    }
+  }
+
+  /// Replaces the current reel video with the exported file from ReelEditScreen.
+  /// Keeps caption, music, etc.; only the video file is replaced so Share posts the edited reel.
+  Future<void> _replaceReelVideoWithExported(File exportedFile) async {
+    if (_selectedType != ContentType.reel) return;
+    setState(() => _isLoadingVideo = true);
+    _videoController?.dispose();
+    _videoController = null;
+    try {
+      final duration = await _getVideoDuration(exportedFile);
+      if (!mounted) return;
+      if (duration.inSeconds < 5) {
+        setState(() => _isLoadingVideo = false);
+        _showErrorSnackBar('Exported reel must be at least 5 seconds long.');
+        return;
+      }
+      if (duration.inSeconds > 180) {
+        setState(() => _isLoadingVideo = false);
+        _showErrorSnackBar('Exported reel must be 180 seconds or less.');
+        return;
+      }
+      final controller = VideoPlayerController.file(exportedFile);
+      await controller.initialize();
+      controller.pause();
+      if (mounted) {
+        setState(() {
+          _videoFile = exportedFile;
+          _videoDuration = duration;
+          _videoController = controller;
+          _isLoadingVideo = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingVideo = false);
+        _showErrorSnackBar('Error loading exported video: ${e.toString()}');
+      }
+    }
+  }
+
+  /// Replaces the current long video with the exported file from ReelEditScreen.
+  /// Keeps caption, etc.; only the video file is replaced so Share posts the edited video.
+  Future<void> _replaceLongVideoWithExported(File exportedFile) async {
+    if (_selectedType != ContentType.longVideo) return;
+    setState(() => _isLoadingVideo = true);
+    _videoController?.dispose();
+    _videoController = null;
+    try {
+      final duration = await _getVideoDuration(exportedFile);
+      if (!mounted) return;
+      if (duration.inSeconds < 30) {
+        setState(() => _isLoadingVideo = false);
+        _showErrorSnackBar('Video must be at least 30 seconds long.');
+        return;
+      }
+      final controller = VideoPlayerController.file(exportedFile);
+      await controller.initialize();
+      controller.pause();
+      if (mounted) {
+        setState(() {
+          _videoFile = exportedFile;
+          _videoDuration = duration;
+          _videoController = controller;
+          _isLoadingVideo = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingVideo = false);
+        _showErrorSnackBar('Error loading exported video: ${e.toString()}');
+      }
     }
   }
 
@@ -580,6 +754,9 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           return false;
         }
         break;
+      case ContentType.live:
+        // Live creation moved to a dedicated screen.
+        return false;
     }
     return true;
   }
@@ -587,12 +764,14 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   /// Publish content. Post tab uses real API; others simulated for now.
   Future<void> _publishContent() async {
     if (!_validateContent()) return;
+    if (_isUploading) return;
 
     if (_selectedType == ContentType.post) {
       final notifier = ref.read(createPostProvider.notifier);
       final success = await notifier.createPost(
         images: _postImages,
         video: _postVideo,
+        thumbnailFile: _coverPhoto,
         caption: _captionController.text.trim().isEmpty
             ? null
             : _captionController.text.trim(),
@@ -635,19 +814,93 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       _isUploading = true;
     });
 
-    // Simulate upload for Story / Reel / Long Video
-    await Future.delayed(const Duration(seconds: 2));
+    final locations = _selectedLocation != null ? [_selectedLocation!] : <String>[];
+    final taggedUsers = List<String>.from(_taggedUsers);
+    final feelings = _selectedFeeling != null ? [_selectedFeeling!] : <String>[];
+    final caption = _captionController.text.trim().isEmpty ? null : _captionController.text.trim();
 
-    if (mounted) {
-      setState(() {
-        _isUploading = false;
-      });
+    bool success = false;
+    String? errorMessage;
 
+    switch (_selectedType) {
+      case ContentType.story:
+        debugPrint('[CreateContent] Uploading story...');
+        final storyFiles = _storyMedia.map((m) => m.file).toList();
+        final result = await StoriesService().createStory(CreateStoryParams(
+          storyFiles: storyFiles,
+          caption: caption,
+          locations: locations,
+          taggedUsers: taggedUsers,
+          feelings: feelings,
+        ));
+        success = result.success;
+        errorMessage = result.errorMessage;
+        if (success) {
+          debugPrint('[CreateContent] Story uploaded: ${result.data?.id ?? "ok"}');
+          ref.read(storiesProvider.notifier).refresh();
+        } else {
+          debugPrint('[CreateContent] Story upload failed: $errorMessage');
+        }
+        break;
+      case ContentType.reel:
+        if (_videoFile != null) {
+          debugPrint('[CreateContent] Uploading reel...');
+          final result = await ReelsService().createReel(CreateReelParams(
+            video: _videoFile,
+            thumbnailFile: _coverPhoto,
+            caption: caption,
+            locations: locations,
+            taggedUsers: taggedUsers,
+            feelings: feelings,
+            music: _selectedAudioId,
+          ));
+          success = result.success;
+          errorMessage = result.errorMessage;
+          if (success) {
+            debugPrint('[CreateContent] Reel uploaded: ${result.data?.id ?? "ok"}');
+            await ref.read(reelsProvider.notifier).refresh();
+          } else {
+            debugPrint('[CreateContent] Reel upload failed: $errorMessage');
+          }
+        } else {
+          errorMessage = 'Please select a video for your reel.';
+        }
+        break;
+      case ContentType.longVideo:
+        if (_videoFile != null) {
+          debugPrint('[CreateContent] Uploading long video...');
+          final result = await LongVideoService().createLongVideo(CreateLongVideoParams(
+            video: _videoFile,
+            thumbnailFile: _coverPhoto,
+            caption: caption,
+          ));
+          success = result.success;
+          errorMessage = result.errorMessage;
+          if (success) {
+            debugPrint('[CreateContent] Long video uploaded: ${result.data?.id ?? "ok"}');
+            ref.read(longVideosProvider.notifier).loadVideos(refresh: true);
+          } else {
+            debugPrint('[CreateContent] Long video upload failed: $errorMessage');
+          }
+        } else {
+          errorMessage = 'Please select a video.';
+        }
+        break;
+      case ContentType.post:
+        break;
+      case ContentType.live:
+        break;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isUploading = false;
+    });
+
+    if (success) {
+      _resetForm();
       String successMessage;
       switch (_selectedType) {
-        case ContentType.post:
-          successMessage = 'Post shared successfully!';
-          break;
         case ContentType.story:
           successMessage = 'Added to your story!';
           break;
@@ -657,12 +910,20 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         case ContentType.longVideo:
           successMessage = 'Video posted successfully!';
           break;
+        case ContentType.live:
+          successMessage = 'Shared successfully!';
+          break;
+        default:
+          successMessage = 'Shared successfully!';
       }
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(successMessage),
-          backgroundColor: context.surfaceColor,
+          content: Text(
+            successMessage,
+            style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+          ),
+          backgroundColor: ThemeHelper.getAccentColor(context),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -670,31 +931,39 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           ),
         ),
       );
-
-      _resetForm();
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context, true);
+      }
+    } else {
+      _showErrorSnackBar(errorMessage ?? 'Failed to share. Please try again.');
     }
   }
 
-  /// Reset form to initial state
+  /// Reset form to initial state. Clears all media and reel/long-video state so the same content is not posted again.
   void _resetForm() {
     _captionController.clear();
+    _videoFile = null;
+    _videoDuration = null;
+    _coverPhoto = null;
+    _selectedAudioId = null;
+    _selectedAudioName = null;
+    _selectedAudioUrl = null;
+    _postVideoController?.dispose();
+    _postVideoController = null;
+    _videoController?.dispose();
+    _videoController = null;
     setState(() {
       _postImages.clear();
       _postVideo = null;
       _postVideoDuration = null;
       _storyMedia.clear();
-      _videoFile = null;
-      _videoDuration = null;
+      _isLoadingVideo = false;
       _currentCarouselIndex = 0;
       _selectedLocation = null;
       _taggedUsers.clear();
       _selectedFeeling = null;
       _isAudioPlaying = false;
     });
-    _postVideoController?.dispose();
-    _postVideoController = null;
-    _videoController?.dispose();
-    _videoController = null;
   }
 
   /// Show action bottom sheet (Location, Tag People, Feeling) - floating, opacity 1, search for Location/Tag, emoji grid for Feeling
@@ -734,14 +1003,20 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
             query = v;
             setModalState(() {});
           }
+          final bgColor = ThemeHelper.getBackgroundColor(context);
+          final textPrimary = ThemeHelper.getTextPrimary(context);
+          final textSecondary = ThemeHelper.getTextSecondary(context);
+          final surfaceColor = ThemeHelper.getSurfaceColor(context);
+          final borderColor = ThemeHelper.getBorderColor(context);
           return Container(
             margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: bgColor,
               borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: borderColor.withOpacity(0.3)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
+                  color: ThemeHelper.getTextPrimary(context).withOpacity(0.15),
                   blurRadius: 20,
                   offset: const Offset(0, 8),
                 ),
@@ -757,27 +1032,27 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.black26,
+                      color: textSecondary.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                    child: Text('Add Location', style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w700)),
+                    child: Text('Add Location', style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: TextField(
                       controller: searchController,
                       onChanged: updateQuery,
-                      style: const TextStyle(color: Colors.black87),
+                      style: TextStyle(color: textPrimary),
                       decoration: InputDecoration(
                         hintText: 'Search location...',
-                        hintStyle: TextStyle(color: Colors.grey[600]),
-                        prefixIcon: Icon(Icons.search, color: Theme.of(context).colorScheme.primary, size: 22),
+                        hintStyle: TextStyle(color: textSecondary),
+                        prefixIcon: Icon(Icons.search, color: ThemeHelper.getAccentColor(context), size: 22),
                         filled: true,
-                        fillColor: Colors.grey.shade100,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade300)),
+                        fillColor: surfaceColor,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: borderColor)),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       ),
                     ),
@@ -795,15 +1070,18 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                             width: 44,
                             height: 44,
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                              color: ThemeHelper.getAccentColor(context).withOpacity(0.15),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Icon(Icons.location_on, color: Theme.of(context).colorScheme.primary),
+                            child: Icon(Icons.location_on, color: ThemeHelper.getAccentColor(context)),
                           ),
-                          title: Text(loc, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w500)),
+                          title: Text(loc, style: TextStyle(color: textPrimary, fontWeight: FontWeight.w500)),
                           onTap: () {
+                            FocusManager.instance.primaryFocus?.unfocus();
                             Navigator.pop(context);
-                            setState(() => _selectedLocation = loc);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) setState(() => _selectedLocation = loc);
+                            });
                           },
                         );
                       },
@@ -836,14 +1114,21 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           final filtered = query.isEmpty
               ? _tagOptions
               : _tagOptions.where((u) => u.toLowerCase().contains(query.toLowerCase())).toList();
+          final bgColor = ThemeHelper.getBackgroundColor(context);
+          final textPrimary = ThemeHelper.getTextPrimary(context);
+          final textSecondary = ThemeHelper.getTextSecondary(context);
+          final surfaceColor = ThemeHelper.getSurfaceColor(context);
+          final borderColor = ThemeHelper.getBorderColor(context);
+          final accentColor = ThemeHelper.getAccentColor(context);
           return Container(
             margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: bgColor,
               borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: borderColor.withOpacity(0.3)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
+                  color: ThemeHelper.getTextPrimary(context).withOpacity(0.15),
                   blurRadius: 20,
                   offset: const Offset(0, 8),
                 ),
@@ -859,27 +1144,27 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.black26,
+                      color: textSecondary.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                    child: Text('Tag People', style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w700)),
+                    child: Text('Tag People', style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: TextField(
                       controller: searchController,
                       onChanged: updateQuery,
-                      style: const TextStyle(color: Colors.black87),
+                      style: TextStyle(color: textPrimary),
                       decoration: InputDecoration(
                         hintText: 'Search people...',
-                        hintStyle: TextStyle(color: Colors.grey[600]),
-                        prefixIcon: Icon(Icons.search, color: Theme.of(context).colorScheme.primary, size: 22),
+                        hintStyle: TextStyle(color: textSecondary),
+                        prefixIcon: Icon(Icons.search, color: accentColor, size: 22),
                         filled: true,
-                        fillColor: Colors.grey.shade100,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade300)),
+                        fillColor: surfaceColor,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: borderColor)),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       ),
                     ),
@@ -898,22 +1183,24 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                             width: 44,
                             height: 44,
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                              color: accentColor.withOpacity(0.15),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
+                            child: Icon(Icons.person, color: accentColor),
                           ),
-                          title: Text(user, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w500)),
-                          trailing: alreadyTagged ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : null,
+                          title: Text(user, style: TextStyle(color: textPrimary, fontWeight: FontWeight.w500)),
+                          trailing: alreadyTagged ? Icon(Icons.check_circle, color: accentColor) : null,
                           onTap: () {
-                            setState(() {
-                              if (alreadyTagged) {
-                                _taggedUsers.remove(user);
-                              } else {
-                                _taggedUsers.add(user);
-                              }
-                            });
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            if (alreadyTagged) {
+                              _taggedUsers.remove(user);
+                            } else {
+                              _taggedUsers.add(user);
+                            }
                             setModalState(() {});
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) setState(() {});
+                            });
                           },
                         );
                       },
@@ -932,17 +1219,22 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   }
 
   void _showFeelingBottomSheet() {
+    final bgColor = ThemeHelper.getBackgroundColor(context);
+    final textPrimary = ThemeHelper.getTextPrimary(context);
+    final surfaceColor = ThemeHelper.getSurfaceColor(context);
+    final borderColor = ThemeHelper.getBorderColor(context);
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: bgColor,
           borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: borderColor.withOpacity(0.3)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
+              color: textPrimary.withOpacity(0.15),
               blurRadius: 20,
               offset: const Offset(0, 8),
             ),
@@ -958,13 +1250,13 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.black26,
+                  color: ThemeHelper.getTextSecondary(context).withOpacity(0.5),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                child: Text('How are you feeling?', style: TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w700)),
+                child: Text('How are you feeling?', style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -982,14 +1274,17 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                     final emoji = _feelingEmojis[index];
                     return GestureDetector(
                       onTap: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
                         Navigator.pop(context);
-                        setState(() => _selectedFeeling = emoji);
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) setState(() => _selectedFeeling = emoji);
+                        });
                       },
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
+                          color: surfaceColor,
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: Colors.grey.shade300),
+                          border: Border.all(color: borderColor),
                         ),
                         child: Center(
                           child: Text(emoji, style: const TextStyle(fontSize: 28)),
@@ -1067,12 +1362,12 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         content: Text(
           message,
           style: TextStyle(
-            color: context.textPrimary,
+            color: ThemeHelper.getOnAccentColor(context),
             fontSize: 14,
             fontWeight: FontWeight.w500,
           ),
         ),
-        backgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.9),
+        backgroundColor: ThemeHelper.getAccentColor(context),
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.all(16),
         shape: RoundedRectangleBorder(
@@ -1127,7 +1422,9 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
               SliverToBoxAdapter(child: _buildCaptionField()),
               const SliverToBoxAdapter(child: SizedBox(height: 16)),
               SliverToBoxAdapter(child: _buildActionButtons()),
-              if (_selectedLocation != null || _taggedUsers.isNotEmpty || _selectedFeeling != null) ...[
+              if (_selectedLocation != null ||
+                  _taggedUsers.isNotEmpty ||
+                  _selectedFeeling != null) ...[
                 const SliverToBoxAdapter(child: SizedBox(height: 16)),
                 SliverToBoxAdapter(child: _buildSelectedTiles()),
               ],
@@ -1170,6 +1467,10 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         title = 'Upload Video';
         actionText = 'Post';
         break;
+      case ContentType.live:
+        title = 'Create';
+        actionText = '';
+        break;
     }
 
     return AppBar(
@@ -1188,50 +1489,88 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         },
       ),
       actions: [
-        TextButton(
-          onPressed: isUploading ? null : _publishContent,
-          child: Text(
-            actionText,
-            style: TextStyle(
-              color: isUploading
-                  ? context.textMuted
-                  : context.buttonColor,
-              fontWeight: FontWeight.w600,
-            ),
+        if (actionText.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: isUploading
+                ? Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: ThemeHelper.getAccentColor(context),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Sharing...',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextSecondary(context),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : TextButton(
+                    onPressed: _publishContent,
+                    child: Text(
+                      actionText,
+                      style: TextStyle(
+                        color: context.buttonColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
           ),
-        ),
       ],
     );
   }
 
-  /// Build type selector (segmented control)
+  /// Build type selector (segmented control) – scrollable for many options
   Widget _buildTypeSelector() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GlassCard(
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         borderRadius: BorderRadius.circular(16),
-        child: Row(
-          children: [
-            _buildTypeChip(ContentType.post, 'Post'),
-            _buildTypeChip(ContentType.story, 'Story'),
-            _buildTypeChip(ContentType.reel, 'Reel'),
-            _buildTypeChip(ContentType.longVideo, 'Video'),
-          ],
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildTypeChip(ContentType.post, 'Post', Icons.grid_on_outlined),
+              _buildTypeChip(ContentType.story, 'Story', Icons.auto_stories_outlined),
+              _buildTypeChip(ContentType.reel, 'Reel', Icons.video_library_outlined),
+              _buildTypeChip(ContentType.longVideo, 'Video', Icons.movie_outlined),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /// Build individual type chip
-  Widget _buildTypeChip(ContentType type, String label) {
+  /// Build individual type chip – theme-aware, optional icon and live accent
+  Widget _buildTypeChip(ContentType type, String label, IconData icon, {bool isLive = false}) {
     final isSelected = _selectedType == type;
-    return Expanded(
+    final accentColor = isLive && isSelected
+        ? Colors.red
+        : ThemeHelper.getAccentColor(context);
+    final bgColor = isSelected
+        ? (isLive ? Colors.red.withOpacity(0.2) : accentColor.withOpacity(0.2))
+        : Colors.transparent;
+    final textColor = isSelected ? (isLive ? Colors.red : accentColor) : context.textSecondary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: GestureDetector(
         onTap: () {
           setState(() {
             _selectedType = type;
-            // Clear media when switching types; dispose video/audio correctly
             if (type != ContentType.post) {
               _postImages.clear();
               _postVideoController?.dispose();
@@ -1243,26 +1582,33 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
             if (type != ContentType.reel && type != ContentType.longVideo) {
               _disposeMediaForTabChange();
             }
+            _disposeLiveCamera();
           });
         },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected
-                ? context.buttonColor.withOpacity(0.2)
-                : Colors.transparent,
+            color: bgColor,
             borderRadius: BorderRadius.circular(12),
+            border: isSelected && isLive
+                ? Border.all(color: Colors.red.withOpacity(0.6), width: 1.5)
+                : null,
           ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected
-                  ? context.buttonColor
-                  : context.textSecondary,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              fontSize: 14,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: textColor),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: textColor,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  fontSize: 14,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1340,7 +1686,273 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       case ContentType.reel:
       case ContentType.longVideo:
         return _buildVideoMediaSection(fillHeight: h);
+      case ContentType.live:
+        return _buildPostMediaSection(fillHeight: h);
     }
+  }
+
+  /// Build Live tab: camera preview + Start Live button – modern, theme-aware
+  Widget _buildLiveMediaSection({double? fillHeight}) {
+    final h = fillHeight ?? 360;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Go Live header chip
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: ThemeHelper.getSurfaceColor(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: ThemeHelper.getBorderColor(context),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: ThemeHelper.getAccentColor(context),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: ThemeHelper.getAccentColor(context).withOpacity(0.6),
+                              blurRadius: 4,
+                              spreadRadius: 0.5,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Go Live',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Camera preview card
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: ThemeHelper.getBorderColor(context),
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (_liveCameraError != null)
+                      Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.videocam_off_rounded,
+                              size: 56,
+                              color: context.textMuted,
+                            ),
+                            const SizedBox(height: 16),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 32),
+                              child: Text(
+                                _liveCameraError!,
+                                style: TextStyle(
+                                  color: context.textSecondary,
+                                  fontSize: 14,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (!_liveCameraReady || _liveCameraController == null)
+                      Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: CircularProgressIndicator(
+                                color: context.buttonColor,
+                                strokeWidth: 2,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Opening camera...',
+                              style: TextStyle(
+                                color: context.textSecondary,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: _liveCameraController!.value.previewSize?.height ?? 1,
+                          height: _liveCameraController!.value.previewSize?.width ?? 1,
+                          child: CameraPreview(_liveCameraController!),
+                        ),
+                      ),
+                    // Gradient overlay above button
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: 100,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Colors.transparent, Colors.black54],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Start Live button
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 24,
+                      child: Center(
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () async {
+                              _disposeLiveCamera();
+                              if (!mounted) return;
+
+                              // Start livestream on backend first (fetches Agora token).
+                              final uid = ref.read(currentUserProvider)?.id ?? '';
+                              final channelName =
+                                  'stream_${uid.isNotEmpty ? uid : "guest"}_${DateTime.now().millisecondsSinceEpoch}';
+                              final ok = await ref
+                                  .read(livestreamControllerProvider.notifier)
+                                  .startHost(channelName: channelName);
+                              if (!mounted) return;
+                              if (!ok) {
+                                final err = ref.read(livestreamControllerProvider).errorMessage ??
+                                    'Failed to start livestream';
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(err),
+                                    backgroundColor:
+                                        ThemeHelper.getAccentColor(context),
+                                  ),
+                                );
+                                if (mounted) _initLiveCamera();
+                                return;
+                              }
+
+                              await Navigator.of(context).push(
+                                PageRouteBuilder(
+                                  opaque: true,
+                                  barrierColor: Colors.black,
+                                  pageBuilder: (_, __, ___) =>
+                                      const LiveAgoraScreen(),
+                                  transitionsBuilder: (_, a, __, c) {
+                                    return FadeTransition(
+                                      opacity: a,
+                                      child: ScaleTransition(
+                                        scale: Tween<double>(begin: 0.95, end: 1).animate(
+                                          CurvedAnimation(
+                                            parent: a,
+                                            curve: Curves.easeOutCubic,
+                                          ),
+                                        ),
+                                        child: c,
+                                      ),
+                                    );
+                                  },
+                                  transitionDuration: const Duration(milliseconds: 300),
+                                ),
+                              );
+                              if (mounted) _initLiveCamera();
+                            },
+                            borderRadius: BorderRadius.circular(32),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 36,
+                                vertical: 16,
+                              ),
+                              decoration: BoxDecoration(
+                                color: context.buttonColor,
+                                borderRadius: BorderRadius.circular(32),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: context.buttonColor.withOpacity(0.35),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.live_tv_rounded,
+                                    color: context.buttonTextColor,
+                                    size: 24,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'Start Live',
+                                    style: TextStyle(
+                                      color: context.buttonTextColor,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Build Post media section (multiple images + optional video with carousel)
@@ -1570,6 +2182,125 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       ),
                     ),
                   ),
+                if (_postVideo != null) const SizedBox(height: 8),
+                if (_postVideo != null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final file = _postVideo;
+                        if (file == null) return;
+                        await showModalBottomSheet<void>(
+                          context: context,
+                          backgroundColor: ThemeHelper.getSurfaceColor(context),
+                          shape: const RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.vertical(top: Radius.circular(24)),
+                          ),
+                          builder: (ctx) {
+                            return SafeArea(
+                              top: false,
+                              child: Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 4,
+                                      decoration: BoxDecoration(
+                                        color: ThemeHelper.getTextMuted(ctx)
+                                            .withAlpha(60),
+                                        borderRadius: BorderRadius.circular(999),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ListTile(
+                                      leading: Icon(Icons.photo_library_outlined,
+                                          color:
+                                              ThemeHelper.getAccentColor(ctx)),
+                                      title: Text(
+                                        'Choose from gallery',
+                                        style: TextStyle(
+                                          color:
+                                              ThemeHelper.getTextPrimary(ctx),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      onTap: () async {
+                                        Navigator.pop(ctx);
+                                        final picker = ImagePicker();
+                                        final img = await picker.pickImage(
+                                          source: ImageSource.gallery,
+                                          imageQuality: 90,
+                                        );
+                                        if (img != null && mounted) {
+                                          setState(() =>
+                                              _coverPhoto = File(img.path));
+                                        }
+                                      },
+                                    ),
+                                    ListTile(
+                                      leading: Icon(Icons.video_library_outlined,
+                                          color:
+                                              ThemeHelper.getAccentColor(ctx)),
+                                      title: Text(
+                                        'Choose from video',
+                                        style: TextStyle(
+                                          color:
+                                              ThemeHelper.getTextPrimary(ctx),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      onTap: () async {
+                                        Navigator.pop(ctx);
+                                        final selected =
+                                            await Navigator.push<File>(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                ChooseCoverPhotoScreen(
+                                                    videoFile: file),
+                                          ),
+                                        );
+                                        if (selected != null && mounted) {
+                                          setState(() => _coverPhoto = selected);
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                      icon: Icon(
+                        Icons.photo_outlined,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        _coverPhoto != null
+                            ? 'Cover photo selected'
+                            : 'Choose cover photo',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                            color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (_postImages.isNotEmpty || _postVideo != null) const SizedBox(height: 8),
                 if (_postImages.isNotEmpty || _postVideo != null)
                   SizedBox(
@@ -1583,6 +2314,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                             _postVideoController = null;
                             _postVideo = null;
                             _postVideoDuration = null;
+                            _coverPhoto = null;
                           } else {
                             _postImages.removeAt(_currentCarouselIndex);
                           }
@@ -1601,6 +2333,54 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       ),
                       label: Text(
                         'Remove',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_postImages.isNotEmpty) const SizedBox(height: 8),
+                if (_postImages.isNotEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final result = await Navigator.push<Map<String, dynamic>>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => PostEditScreen(
+                              images: List<File>.from(_postImages),
+                              initialAudioId: _selectedAudioId,
+                              initialAudioName: _selectedAudioName,
+                              initialAudioUrl: _selectedAudioUrl,
+                            ),
+                          ),
+                        );
+                        if (result != null && mounted) {
+                          setState(() {
+                            _selectedAudioId = result['audioId'] as String?;
+                            _selectedAudioName = result['audioName'] as String?;
+                            _selectedAudioUrl = result['audioUrl'] as String?;
+                          });
+                        }
+                      },
+                      icon: Icon(
+                        Icons.edit_outlined,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        'Edit post (text & music)',
                         style: TextStyle(
                           color: ThemeHelper.getTextPrimary(context),
                           fontWeight: FontWeight.w600,
@@ -1834,6 +2614,54 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       ),
                     ),
                   ),
+                if (_storyMedia.isNotEmpty) const SizedBox(height: 8),
+                if (_storyMedia.isNotEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final result = await Navigator.push<Map<String, dynamic>>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => StoryEditScreen(
+                              mediaItems: List<MediaItem>.from(_storyMedia),
+                              initialAudioId: _selectedAudioId,
+                              initialAudioName: _selectedAudioName,
+                              initialAudioUrl: _selectedAudioUrl,
+                            ),
+                          ),
+                        );
+                        if (result != null && mounted) {
+                          setState(() {
+                            _selectedAudioId = result['audioId'] as String?;
+                            _selectedAudioName = result['audioName'] as String?;
+                            _selectedAudioUrl = result['audioUrl'] as String?;
+                          });
+                        }
+                      },
+                      icon: Icon(
+                        Icons.edit_outlined,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        'Edit story (text & music)',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1897,6 +2725,9 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       );
     }
 
+    final showVideoLoader = _isLoadingVideo ||
+        (_videoController == null || !_videoController!.value.isInitialized);
+
     return Container(
       height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -1928,6 +2759,39 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                           ),
                   ),
                 ),
+                if (showVideoLoader)
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        color: Colors.black54,
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: ThemeHelper.getAccentColor(context),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Loading video...',
+                              style: TextStyle(
+                                color: ThemeHelper.getTextPrimary(context),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 if (_videoDuration != null)
                   Positioned(
                     top: 16,
@@ -1985,6 +2849,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       setState(() {
                         _videoFile = null;
                         _videoDuration = null;
+                        _coverPhoto = null;
                       });
                       _videoController?.dispose();
                       _videoController = null;
@@ -2012,6 +2877,167 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final file = _videoFile;
+                      if (file == null) return;
+                      await showModalBottomSheet<void>(
+                        context: context,
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        shape: const RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(24)),
+                        ),
+                        builder: (ctx) {
+                          return SafeArea(
+                            top: false,
+                            child: Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      color: ThemeHelper.getTextMuted(ctx)
+                                          .withAlpha(60),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  ListTile(
+                                    leading: Icon(Icons.photo_library_outlined,
+                                        color: ThemeHelper.getAccentColor(ctx)),
+                                    title: Text(
+                                      'Choose from gallery',
+                                      style: TextStyle(
+                                        color: ThemeHelper.getTextPrimary(ctx),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    onTap: () async {
+                                      Navigator.pop(ctx);
+                                      final picker = ImagePicker();
+                                      final img = await picker.pickImage(
+                                        source: ImageSource.gallery,
+                                        imageQuality: 90,
+                                      );
+                                      if (img != null && mounted) {
+                                        setState(() =>
+                                            _coverPhoto = File(img.path));
+                                      }
+                                    },
+                                  ),
+                                  ListTile(
+                                    leading: Icon(Icons.video_library_outlined,
+                                        color: ThemeHelper.getAccentColor(ctx)),
+                                    title: Text(
+                                      'Choose from video',
+                                      style: TextStyle(
+                                        color: ThemeHelper.getTextPrimary(ctx),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    onTap: () async {
+                                      Navigator.pop(ctx);
+                                      final selected =
+                                          await Navigator.push<File>(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              ChooseCoverPhotoScreen(
+                                                  videoFile: file),
+                                        ),
+                                      );
+                                      if (selected != null && mounted) {
+                                        setState(() => _coverPhoto = selected);
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    icon: Icon(
+                      Icons.photo_outlined,
+                      color: ThemeHelper.getTextPrimary(context),
+                      size: 20,
+                    ),
+                    label: Text(
+                      _coverPhoto != null
+                          ? 'Cover photo selected'
+                          : 'Choose cover photo',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                      backgroundColor: ThemeHelper.getSurfaceColor(context),
+                      foregroundColor: ThemeHelper.getTextPrimary(context),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                if (_selectedType == ContentType.reel ||
+                    _selectedType == ContentType.longVideo)
+                  const SizedBox(height: 8),
+                if (_selectedType == ContentType.reel ||
+                    _selectedType == ContentType.longVideo)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final file = _videoFile;
+                        if (file == null) return;
+                        final exportedFile = await Navigator.push<File>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ReelEditScreen(videoFile: file),
+                          ),
+                        );
+                        if (exportedFile != null && mounted) {
+                          if (_selectedType == ContentType.reel) {
+                            _replaceReelVideoWithExported(exportedFile);
+                          } else {
+                            _replaceLongVideoWithExported(exportedFile);
+                          }
+                        }
+                      },
+                      icon: Icon(
+                        Icons.edit_outlined,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        _selectedType == ContentType.reel ? 'Edit reel' : 'Edit video',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

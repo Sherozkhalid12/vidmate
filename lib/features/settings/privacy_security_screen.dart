@@ -1,37 +1,55 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
+import '../../core/providers/user_preferences_provider_riverpod.dart';
 
 /// Privacy & Security settings screen
-class PrivacySecurityScreen extends StatefulWidget {
+class PrivacySecurityScreen extends ConsumerStatefulWidget {
   const PrivacySecurityScreen({super.key});
 
   @override
-  State<PrivacySecurityScreen> createState() => _PrivacySecurityScreenState();
+  ConsumerState<PrivacySecurityScreen> createState() =>
+      _PrivacySecurityScreenState();
 }
 
-class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
-  bool _privateAccount = false;
-  bool _showActivityStatus = true;
-  bool _allowComments = true;
-  bool _allowLikes = true;
-  bool _allowShares = true;
-  bool _allowStoryReplies = true;
+class _PrivacySecurityScreenState extends ConsumerState<PrivacySecurityScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      ref.read(userPreferencesProvider.notifier).loadFromStorage();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final preferences = ref.watch(userPreferencesProvider).preferences;
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Privacy & Security'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-      ),
-      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Privacy & Security',
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+              ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -48,24 +66,26 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                     icon: Icons.lock,
                     title: 'Private Account',
                     subtitle: 'Only approved followers can see your posts',
-                    value: _privateAccount,
-                    onChanged: (value) {
-                      setState(() {
-                        _privateAccount = value;
-                      });
-                    },
+                    value: preferences.privateAccount,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(privateAccount: value),
+                        ),
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.visibility,
                     title: 'Show Activity Status',
                     subtitle: 'Show when you were last active',
-                    value: _showActivityStatus,
-                    onChanged: (value) {
-                      setState(() {
-                        _showActivityStatus = value;
-                      });
-                    },
+                    value: preferences.showActivityStatus,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(showActivityStatus: value),
+                        ),
                   ),
                 ],
               ),
@@ -82,45 +102,48 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                     icon: Icons.comment,
                     title: 'Allow Comments',
                     subtitle: 'Control who can comment on your posts',
-                    value: _allowComments,
-                    onChanged: (value) {
-                      setState(() {
-                        _allowComments = value;
-                      });
-                    },
+                    value: preferences.allowComments,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(allowComments: value),
+                        ),
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.favorite,
                     title: 'Allow Likes',
-                    value: _allowLikes,
-                    onChanged: (value) {
-                      setState(() {
-                        _allowLikes = value;
-                      });
-                    },
+                    value: preferences.allowLikes,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) => current.copyWith(allowLikes: value),
+                        ),
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.share,
                     title: 'Allow Shares',
-                    value: _allowShares,
-                    onChanged: (value) {
-                      setState(() {
-                        _allowShares = value;
-                      });
-                    },
+                    value: preferences.allowShares,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(allowShares: value),
+                        ),
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.reply,
                     title: 'Allow Story Replies',
-                    value: _allowStoryReplies,
-                    onChanged: (value) {
-                      setState(() {
-                        _allowStoryReplies = value;
-                      });
-                    },
+                    value: preferences.allowStoryReplies,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(allowStoryReplies: value),
+                        ),
                   ),
                 ],
               ),
@@ -166,7 +189,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                       _showChangePasswordDialog();
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.security,
                     title: 'Two-Factor Authentication',
@@ -186,16 +209,19 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                       );
                     },
                   ),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
                     icon: Icons.download,
                     title: 'Download Your Data',
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Data download requested'),
-                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                        ),
+                SnackBar(
+                  content: Text(
+                    'Data download requested',
+                    style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+                  ),
+                  backgroundColor: ThemeHelper.getAccentColor(context),
+                ),
                       );
                     },
                   ),
@@ -203,6 +229,10 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               ),
             ),
             const SizedBox(height: 40),
+          ],
+        ),
+              ),
+            ),
           ],
         ),
       ),
@@ -215,7 +245,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
       child: Text(
         title,
         style: TextStyle(
-          color: context.textSecondary,
+          color: ThemeHelper.getTextSecondary(context),
           fontSize: 14,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.5,
@@ -237,7 +267,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
         children: [
           Icon(
             icon,
-            color: context.textSecondary,
+            color: ThemeHelper.getTextSecondary(context),
             size: 24,
           ),
           const SizedBox(width: 16),
@@ -248,7 +278,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                 Text(
                   title,
                   style: TextStyle(
-                    color: context.textPrimary,
+                    color: ThemeHelper.getTextPrimary(context),
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -258,7 +288,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                   Text(
                     subtitle,
                     style: TextStyle(
-                      color: context.textMuted,
+                      color: ThemeHelper.getTextMuted(context),
                       fontSize: 12,
                     ),
                   ),
@@ -290,7 +320,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
           children: [
             Icon(
               icon,
-              color: context.textSecondary,
+              color: ThemeHelper.getTextSecondary(context),
               size: 24,
             ),
             const SizedBox(width: 16),
@@ -298,7 +328,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               child: Text(
                 title,
                 style: TextStyle(
-                  color: context.textPrimary,
+                  color: ThemeHelper.getTextPrimary(context),
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
@@ -308,7 +338,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
             if (trailing == null)
               Icon(
                 Icons.chevron_right,
-                color: context.textMuted,
+                color: ThemeHelper.getTextMuted(context),
                 size: 20,
               ),
           ],
@@ -328,7 +358,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
         backgroundColor: context.secondaryBackgroundColor,
         title: Text(
           'Change Password',
-          style: TextStyle(color: context.textPrimary),
+          style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
         ),
         content: SingleChildScrollView(
           child: Column(
@@ -337,10 +367,10 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               TextField(
                 controller: oldPasswordController,
                 obscureText: true,
-                style: TextStyle(color: context.textPrimary),
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
                 decoration: InputDecoration(
                   labelText: 'Current Password',
-                  labelStyle: TextStyle(color: context.textSecondary),
+                  labelStyle: TextStyle(color: ThemeHelper.getTextSecondary(context)),
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -348,10 +378,10 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               TextField(
                 controller: newPasswordController,
                 obscureText: true,
-                style: TextStyle(color: context.textPrimary),
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
                 decoration: InputDecoration(
                   labelText: 'New Password',
-                  labelStyle: TextStyle(color: context.textSecondary),
+                  labelStyle: TextStyle(color: ThemeHelper.getTextSecondary(context)),
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -359,10 +389,10 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               TextField(
                 controller: confirmPasswordController,
                 obscureText: true,
-                style: TextStyle(color: context.textPrimary),
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
                 decoration: InputDecoration(
                   labelText: 'Confirm New Password',
-                  labelStyle: TextStyle(color: context.textSecondary),
+                  labelStyle: TextStyle(color: ThemeHelper.getTextSecondary(context)),
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -379,8 +409,11 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Password changed successfully'),
-                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                  content: Text(
+                    'Password changed successfully',
+                    style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+                  ),
+                  backgroundColor: ThemeHelper.getAccentColor(context),
                 ),
               );
             },

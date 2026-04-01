@@ -38,15 +38,28 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Copyright Management'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-      ),
-      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Copyright Management',
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+              ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -67,7 +80,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                   Text(
                     'Copyright Protection',
                     style: TextStyle(
-                      color: context.textPrimary,
+                      color: ThemeHelper.getTextPrimary(context),
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -77,7 +90,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     'All uploaded content is automatically checked for copyright violations. You can review and dispute claims here.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: context.textSecondary,
+                      color: ThemeHelper.getTextSecondary(context),
                       fontSize: 14,
                     ),
                   ),
@@ -103,7 +116,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
             Text(
               'Copyright Claims',
               style: TextStyle(
-                color: context.textPrimary,
+                color: ThemeHelper.getTextPrimary(context),
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -124,7 +137,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     Text(
                       'No Copyright Claims',
                       style: TextStyle(
-                        color: context.textPrimary,
+                        color: ThemeHelper.getTextPrimary(context),
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
                       ),
@@ -133,7 +146,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     Text(
                       'All your content is original',
                       style: TextStyle(
-                        color: context.textSecondary,
+                        color: ThemeHelper.getTextSecondary(context),
                         fontSize: 14,
                       ),
                     ),
@@ -143,6 +156,10 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
             else
               ..._copyrightClaims.map((claim) => _buildClaimCard(claim)),
             const SizedBox(height: 40),
+          ],
+        ),
+              ),
+            ),
           ],
         ),
       ),
@@ -176,7 +193,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     Text(
                       claim['contentTitle'] as String,
                       style: TextStyle(
-                        color: context.textPrimary,
+                        color: ThemeHelper.getTextPrimary(context),
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                       ),
@@ -184,7 +201,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
                     Text(
                       claim['contentType'] as String,
                       style: TextStyle(
-                        color: context.textSecondary,
+                        color: ThemeHelper.getTextSecondary(context),
                         fontSize: 12,
                       ),
                     ),
@@ -266,7 +283,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
         Text(
           label,
           style: TextStyle(
-            color: context.textMuted,
+            color: ThemeHelper.getTextMuted(context),
             fontSize: 12,
           ),
         ),
@@ -274,7 +291,7 @@ class _CopyrightScreenState extends State<CopyrightScreen> {
         Text(
           value,
           style: TextStyle(
-            color: context.textPrimary,
+            color: ThemeHelper.getTextPrimary(context),
             fontSize: 14,
             fontWeight: FontWeight.w600,
           ),

@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'dart:async';
 import 'dart:ui';
 import 'dart:math' as math;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
-import '../../core/theme/theme_extensions.dart';
 import '../../core/models/music_model.dart';
-import '../../core/widgets/glass_card.dart';
+import '../../core/providers/music_player_provider_riverpod.dart';
 
 /// Beautiful modern music player screen with theme awareness
-class MusicPlayerScreen extends StatefulWidget {
+class MusicPlayerScreen extends ConsumerStatefulWidget {
   final MusicModel track;
   final List<MusicModel> tracks;
   final int initialIndex;
@@ -23,28 +22,26 @@ class MusicPlayerScreen extends StatefulWidget {
   });
 
   @override
-  State<MusicPlayerScreen> createState() => _MusicPlayerScreenState();
+  ConsumerState<MusicPlayerScreen> createState() => _MusicPlayerScreenState();
 }
 
-class _MusicPlayerScreenState extends State<MusicPlayerScreen>
+class _MusicPlayerScreenState extends ConsumerState<MusicPlayerScreen>
     with TickerProviderStateMixin {
   late AnimationController _rotationController;
   late AnimationController _playPauseController;
   late AnimationController _likeController;
   late AnimationController _waveController;
-  Timer? _progressTimer;
-  Duration _currentPosition = Duration.zero;
-  bool _isPlaying = false;
-  bool _isLiked = false;
-  bool _isRepeat = false;
-  bool _isShuffle = false;
-  int _currentIndex = 0;
+  late final MusicPlayerArgs _playerArgs;
+  bool _playerListenerRegistered = false;
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex;
-    _isLiked = widget.track.isLiked;
+
+    _playerArgs = MusicPlayerArgs(
+      tracks: widget.tracks,
+      initialIndex: widget.initialIndex,
+    );
     
     _rotationController = AnimationController(
       vsync: this,
@@ -65,13 +62,13 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
-    
-    if (_isLiked) _likeController.forward();
+
+    final initial = ref.read(musicPlayerProvider(_playerArgs));
+    if (initial.isLiked) _likeController.forward();
   }
 
   @override
   void dispose() {
-    _progressTimer?.cancel();
     _rotationController.dispose();
     _playPauseController.dispose();
     _likeController.dispose();
@@ -79,103 +76,28 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     super.dispose();
   }
 
-  void _startProgressTimer() {
-    _progressTimer?.cancel();
-    if (_isPlaying) {
-      _progressTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-        if (mounted) {
-          setState(() {
-            _currentPosition = Duration(
-              milliseconds: _currentPosition.inMilliseconds + 100,
-            );
-            if (_currentPosition >= widget.tracks[_currentIndex].duration) {
-              _currentPosition = Duration.zero;
-              if (_isRepeat) {
-                // Repeat current track
-              } else {
-                _nextTrack();
-              }
-            }
-          });
-        }
-      });
-    }
-  }
-
-  void _togglePlayPause() {
-    setState(() {
-      _isPlaying = !_isPlaying;
-    });
-    if (_isPlaying) {
-      _rotationController.repeat();
-      _playPauseController.forward();
-      _startProgressTimer();
-    } else {
-      _rotationController.stop();
-      _playPauseController.reverse();
-      _progressTimer?.cancel();
-    }
+  Future<void> _togglePlayPause() async {
+    await ref
+        .read(musicPlayerProvider(_playerArgs).notifier)
+        .togglePlayPause();
   }
 
   void _toggleLike() {
-    setState(() {
-      _isLiked = !_isLiked;
-    });
-    if (_isLiked) {
-      _likeController.forward();
-    } else {
-      _likeController.reverse();
-    }
+    ref.read(musicPlayerProvider(_playerArgs).notifier).toggleLike();
   }
 
   void _previousTrack() {
-    if (_currentIndex > 0) {
-      setState(() {
-        _currentIndex--;
-        _currentPosition = Duration.zero;
-        _isLiked = widget.tracks[_currentIndex].isLiked;
-        if (_isLiked) {
-          _likeController.forward();
-        } else {
-          _likeController.reverse();
-        }
-      });
-    }
+    final state = ref.read(musicPlayerProvider(_playerArgs));
+    if (state.currentIndex <= 0) return;
+    ref.read(musicPlayerProvider(_playerArgs).notifier).previous();
   }
 
   void _nextTrack() {
-    if (_currentIndex < widget.tracks.length - 1) {
-      setState(() {
-        _currentIndex++;
-        _currentPosition = Duration.zero;
-        _isLiked = widget.tracks[_currentIndex].isLiked;
-        if (_isLiked) {
-          _likeController.forward();
-        } else {
-          _likeController.reverse();
-        }
-      });
-    } else if (_isRepeat) {
-      setState(() {
-        _currentIndex = 0;
-        _currentPosition = Duration.zero;
-        _isLiked = widget.tracks[_currentIndex].isLiked;
-      });
-    } else {
-      setState(() {
-        _currentPosition = Duration.zero;
-        _isPlaying = false;
-        _rotationController.stop();
-        _playPauseController.reverse();
-        _progressTimer?.cancel();
-      });
-    }
+    ref.read(musicPlayerProvider(_playerArgs).notifier).next();
   }
 
   void _seekTo(Duration position) {
-    setState(() {
-      _currentPosition = position;
-    });
+    ref.read(musicPlayerProvider(_playerArgs).notifier).seek(position);
   }
 
   String _formatDuration(Duration duration) {
@@ -187,15 +109,110 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    final currentTrack = widget.tracks[_currentIndex];
-    final progress = currentTrack.duration.inMilliseconds > 0
-        ? _currentPosition.inMilliseconds / currentTrack.duration.inMilliseconds
+    final playerState = ref.watch(musicPlayerProvider(_playerArgs));
+    final currentTrack = playerState.currentTrack;
+    final effectiveDuration = playerState.duration > Duration.zero
+        ? playerState.duration
+        : currentTrack.duration;
+    final progress = effectiveDuration.inMilliseconds > 0
+        ? playerState.position.inMilliseconds / effectiveDuration.inMilliseconds
         : 0.0;
+
+    if (!_playerListenerRegistered) {
+      _playerListenerRegistered = true;
+      ref.listen<MusicPlayerState>(musicPlayerProvider(_playerArgs),
+          (prev, next) {
+        if (prev == null || next == null) return;
+        final prevState = prev!;
+        final nextState = next!;
+        if (prevState == nextState) return;
+
+        if (prevState.isPlaying != nextState.isPlaying) {
+          if (nextState.isPlaying) {
+            _rotationController.repeat();
+            _playPauseController.forward();
+          } else {
+            _rotationController.stop();
+            _playPauseController.reverse();
+          }
+        }
+
+        if (prevState.isLiked != nextState.isLiked) {
+          if (nextState.isLiked) {
+            _likeController.forward();
+          } else {
+            _likeController.reverse();
+          }
+        }
+
+        if (prevState.errorMessage != nextState.errorMessage &&
+            nextState.errorMessage != null &&
+            nextState.errorMessage!.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(nextState.errorMessage!),
+              backgroundColor: ThemeHelper.getAccentColor(context),
+            ),
+          );
+        }
+      });
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       resizeToAvoidBottomInset: false,
+      drawer: Drawer(
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Songs',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextPrimary(context),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: playerState.tracks.length,
+                  itemBuilder: (context, i) {
+                    final t = playerState.tracks[i];
+                    final isCurrent = i == playerState.currentIndex;
+                    return ListTile(
+                      selected: isCurrent,
+                      title: Text(
+                        t.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        t.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: isCurrent && playerState.isPlaying
+                          ? Icon(Icons.equalizer_rounded,
+                              color: ThemeHelper.getAccentColor(context))
+                          : null,
+                      onTap: () {
+                        ref
+                            .read(musicPlayerProvider(_playerArgs).notifier)
+                            .selectTrack(i);
+                        Navigator.pop(context);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
       body: Container(
         decoration: BoxDecoration(
           gradient: ThemeHelper.getBackgroundGradient(context),
@@ -215,13 +232,21 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
                   // Album Art Section
                   Expanded(
                     flex: 2,
-                    child: _buildAlbumArtSection(currentTrack),
+                    child: _buildAlbumArtSection(
+                      currentTrack,
+                      playerState.isPlaying,
+                    ),
                   ),
                   
                   // Controls Section
                   Expanded(
                     flex: 2,
-                    child: _buildControlsSection(currentTrack, progress),
+                    child: _buildControlsSection(
+                      currentTrack,
+                      progress,
+                      playerState,
+                      effectiveDuration,
+                    ),
                   ),
                 ],
               ),
@@ -334,7 +359,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
           ),
           GestureDetector(
             onTap: () {
-              // Show queue/options
+              Scaffold.of(context).openDrawer();
             },
             child: Container(
               width: 44,
@@ -359,7 +384,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     );
   }
 
-  Widget _buildAlbumArtSection(MusicModel track) {
+  Widget _buildAlbumArtSection(MusicModel track, bool isPlaying) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -396,7 +421,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
                 animation: _rotationController,
                 builder: (context, child) {
                   return Transform.rotate(
-                    angle: _isPlaying
+                    angle: isPlaying
                         ? _rotationController.value * 2 * math.pi
                         : 0,
                     child: Container(
@@ -502,7 +527,12 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     );
   }
 
-  Widget _buildControlsSection(MusicModel track, double progress) {
+  Widget _buildControlsSection(
+    MusicModel track,
+    double progress,
+    MusicPlayerState playerState,
+    Duration effectiveDuration,
+  ) {
     return SingleChildScrollView(
       child: Container(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
@@ -544,7 +574,12 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
             const SizedBox(height: 24),
 
             // Progress Bar
-            _buildEnhancedProgressBar(track, progress),
+            _buildEnhancedProgressBar(
+              track,
+              progress,
+              playerState.position,
+              effectiveDuration,
+            ),
             
             const SizedBox(height: 32),
 
@@ -554,27 +589,25 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
               children: [
               _buildActionButton(
                 icon: CupertinoIcons.shuffle,
-                isActive: _isShuffle,
+                isActive: playerState.isShuffle,
                 onTap: () {
-                  setState(() {
-                    _isShuffle = !_isShuffle;
-                  });
+                  ref.read(musicPlayerProvider(_playerArgs).notifier).toggleShuffle();
                 },
               ),
               _buildActionButton(
-                icon: _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
-                isActive: _isLiked,
-                color: _isLiked ? Colors.red : null,
+                icon: playerState.isLiked
+                    ? CupertinoIcons.heart_fill
+                    : CupertinoIcons.heart,
+                isActive: playerState.isLiked,
+                color: playerState.isLiked ? Colors.red : null,
                 onTap: _toggleLike,
                 scale: _likeController,
               ),
               _buildActionButton(
                 icon: CupertinoIcons.repeat,
-                isActive: _isRepeat,
+                isActive: playerState.isRepeat,
                 onTap: () {
-                  setState(() {
-                    _isRepeat = !_isRepeat;
-                  });
+                  ref.read(musicPlayerProvider(_playerArgs).notifier).toggleRepeat();
                 },
               ),
             ],
@@ -583,7 +616,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
           const SizedBox(height: 24),
 
           // Playback Controls
-          _buildPlaybackControls(),
+          _buildPlaybackControls(playerState),
           
           const SizedBox(height: 16),
           
@@ -592,7 +625,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                '${_currentIndex + 1} of ${widget.tracks.length}',
+                '${playerState.currentIndex + 1} of ${playerState.tracks.length}',
                 style: TextStyle(
                   color: ThemeHelper.getTextMuted(context),
                   fontSize: 12,
@@ -606,7 +639,12 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     );
   }
 
-  Widget _buildEnhancedProgressBar(MusicModel track, double progress) {
+  Widget _buildEnhancedProgressBar(
+    MusicModel track,
+    double progress,
+    Duration position,
+    Duration totalDuration,
+  ) {
     return Column(
       children: [
         Stack(
@@ -660,7 +698,8 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
                   value: progress.clamp(0.0, 1.0),
                   onChanged: (value) {
                     final newPosition = Duration(
-                      milliseconds: (value * track.duration.inMilliseconds).round(),
+                      milliseconds:
+                          (value * totalDuration.inMilliseconds).round(),
                     );
                     _seekTo(newPosition);
                   },
@@ -676,7 +715,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                _formatDuration(_currentPosition),
+                _formatDuration(position),
                 style: TextStyle(
                   color: ThemeHelper.getTextSecondary(context),
                   fontSize: 12,
@@ -684,7 +723,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
                 ),
               ),
               Text(
-                _formatDuration(track.duration),
+                _formatDuration(totalDuration),
                 style: TextStyle(
                   color: ThemeHelper.getTextSecondary(context),
                   fontSize: 12,
@@ -744,7 +783,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     return button;
   }
 
-  Widget _buildPlaybackControls() {
+  Widget _buildPlaybackControls(MusicPlayerState playerState) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -752,13 +791,15 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
         _buildControlButton(
           icon: CupertinoIcons.backward_end_fill,
           size: 36,
-          onTap: _currentIndex > 0 ? _previousTrack : null,
+          onTap: playerState.currentIndex > 0 ? _previousTrack : null,
         ),
         const SizedBox(width: 24),
 
         // Play/Pause (Large)
         GestureDetector(
-          onTap: _togglePlayPause,
+          onTap: () {
+            _togglePlayPause();
+          },
           child: Container(
             width: 80,
             height: 80,
@@ -786,7 +827,9 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
               ],
             ),
             child: Icon(
-              _isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
+              playerState.isPlaying
+                  ? CupertinoIcons.pause_fill
+                  : CupertinoIcons.play_fill,
               color: ThemeHelper.getOnAccentColor(context),
               size: 38,
             ),
@@ -798,7 +841,11 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
         _buildControlButton(
           icon: CupertinoIcons.forward_end_fill,
           size: 36,
-          onTap: _currentIndex < widget.tracks.length - 1 ? _nextTrack : null,
+          onTap: playerState.currentIndex < playerState.tracks.length - 1
+              ? () {
+                  _nextTrack();
+                }
+              : null,
         ),
       ],
     );

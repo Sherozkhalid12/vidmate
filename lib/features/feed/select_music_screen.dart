@@ -1,23 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/models/music_model.dart';
-import '../../core/services/mock_data_service.dart';
+import '../../core/providers/music_provider_riverpod.dart';
 import '../../core/widgets/glass_card.dart';
 
 /// Full-screen music selection for reel creation.
 /// Shows genres, search, and music tiles like Music screen with play/pause.
 /// Returns selected audio id and name when user taps a tile.
-class SelectMusicScreen extends StatefulWidget {
+class SelectMusicScreen extends ConsumerStatefulWidget {
   const SelectMusicScreen({super.key});
 
   @override
-  State<SelectMusicScreen> createState() => _SelectMusicScreenState();
+  ConsumerState<SelectMusicScreen> createState() => _SelectMusicScreenState();
 }
 
-class _SelectMusicScreenState extends State<SelectMusicScreen> {
-  final List<MusicModel> _tracks = [];
+class _SelectMusicScreenState extends ConsumerState<SelectMusicScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _selectedCategory = 'All';
@@ -27,7 +27,9 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
   @override
   void initState() {
     super.initState();
-    _tracks.addAll(MockDataService.getMockMusic());
+    Future.microtask(
+      () => ref.read(musicProvider.notifier).loadInitial(),
+    );
   }
 
   @override
@@ -36,8 +38,8 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
     super.dispose();
   }
 
-  List<MusicModel> get _filteredTracks {
-    var filtered = _tracks;
+  List<MusicModel> _filteredTracks(List<MusicModel> source) {
+    var filtered = source;
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
       filtered = filtered.where((t) =>
@@ -76,6 +78,10 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final musicState = ref.watch(musicProvider);
+    final tracks = musicState.tracks;
+    final filteredTracks = _filteredTracks(tracks);
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -90,16 +96,27 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
               _buildSearchBar(),
               _buildCategoryChips(),
               Expanded(
-                child: _filteredTracks.isEmpty
-                    ? _buildEmpty()
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                        itemCount: _filteredTracks.length,
-                        itemBuilder: (context, index) {
-                          final track = _filteredTracks[index];
-                          return _buildMusicTile(track, index);
-                        },
-                      ),
+                child: Builder(
+                  builder: (context) {
+                    if (musicState.isLoading && filteredTracks.isEmpty) {
+                      return const Center(
+                        child: CupertinoActivityIndicator(),
+                      );
+                    }
+                    if (filteredTracks.isEmpty) {
+                      return _buildEmpty();
+                    }
+                    return ListView.builder(
+                      padding:
+                          const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                      itemCount: filteredTracks.length,
+                      itemBuilder: (context, index) {
+                        final track = filteredTracks[index];
+                        return _buildMusicTile(track, index);
+                      },
+                    );
+                  },
+                ),
               ),
             ],
           ),

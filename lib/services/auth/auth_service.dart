@@ -10,6 +10,20 @@ import '../../core/constants/api_constants.dart';
 import '../../core/models/auth_response_model.dart';
 import '../../core/models/user_model.dart';
 
+class UserFetchResult {
+  final bool success;
+  final UserModel? user;
+  final String? errorMessage;
+
+  UserFetchResult({required this.success, this.user, this.errorMessage});
+
+  factory UserFetchResult.failure(String message) =>
+      UserFetchResult(success: false, errorMessage: message);
+
+  factory UserFetchResult.success(UserModel user) =>
+      UserFetchResult(success: true, user: user);
+}
+
 /// Result of an auth API call. [data] on success, [errorMessage] on failure.
 class AuthServiceResult {
   final bool success;
@@ -41,6 +55,22 @@ class AuthOperationResult {
 
   factory AuthOperationResult.success() =>
       AuthOperationResult(success: true);
+}
+
+class PreferencesOperationResult {
+  final bool success;
+  final String? errorMessage;
+
+  PreferencesOperationResult({
+    required this.success,
+    this.errorMessage,
+  });
+
+  factory PreferencesOperationResult.failure(String message) =>
+      PreferencesOperationResult(success: false, errorMessage: message);
+
+  factory PreferencesOperationResult.success() =>
+      PreferencesOperationResult(success: true);
 }
 
 /// Authentication API service. Uses Dio with logging interceptor.
@@ -244,9 +274,12 @@ class AuthService {
       }
 
       final response = await _dio.patch(
-        ApiConstants.authUpdate,
-        queryParameters: {'userId': userId},
+        ApiConstants.authUpdateUser(userId),
         data: formData,
+        options: Options(
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
       );
 
       final responseData = response.data as Map<String, dynamic>?;
@@ -328,6 +361,68 @@ class AuthService {
       return AuthOperationResult.failure(
         e is Exception ? e.toString() : 'Something went wrong',
       );
+    }
+  }
+
+  Future<PreferencesOperationResult> updatePreferences({
+    required Map<String, dynamic> preferences,
+  }) async {
+    try {
+      await _dio.patch(
+        ApiConstants.authUpdatePreferences,
+        data: preferences,
+      );
+      return PreferencesOperationResult.success();
+    } on DioException catch (e) {
+      final errorData = e.response?.data;
+      final errorMsg = errorData is Map
+          ? (errorData['message'] ??
+              errorData['error'] ??
+              'Failed to update preferences')
+          : 'Failed to update preferences';
+      return PreferencesOperationResult.failure(errorMsg.toString());
+    } on TimeoutException catch (_) {
+      return PreferencesOperationResult.failure('Request timed out');
+    } catch (e) {
+      return PreferencesOperationResult.failure(
+        e is Exception ? e.toString() : 'Something went wrong',
+      );
+    }
+  }
+
+  /// Fetch user by id for opening another user's profile.
+  /// Endpoint: GET /auth/getUserByID/:id (also /auth/user/:id).
+  Future<UserFetchResult> getUserById(String id) async {
+    if (id.trim().isEmpty) return UserFetchResult.failure('User id is required');
+    try {
+      final token = await _getToken();
+      if (token == null || token.isEmpty) {
+        return UserFetchResult.failure('Not authenticated');
+      }
+      DioClient.setAuthToken(token);
+      final response = await _dio.get(ApiConstants.authGetUserById(id.trim()));
+      final data = response.data;
+      if (data is! Map<String, dynamic>) {
+        return UserFetchResult.failure('Invalid response');
+      }
+      if (data['success'] != true) {
+        return UserFetchResult.failure(
+          data['message']?.toString() ?? 'Failed to fetch user',
+        );
+      }
+      final userJson = data['user'];
+      if (userJson is! Map<String, dynamic>) {
+        return UserFetchResult.failure('Invalid response: missing user');
+      }
+      return UserFetchResult.success(UserModel.fromJson(userJson));
+    } on DioException catch (e) {
+      final errorData = e.response?.data;
+      final errorMsg = errorData is Map
+          ? (errorData['message'] ?? errorData['error'] ?? 'Failed to fetch user')
+          : 'Failed to fetch user';
+      return UserFetchResult.failure(errorMsg.toString());
+    } catch (e) {
+      return UserFetchResult.failure('Failed to fetch user: ${e.toString()}');
     }
   }
 }

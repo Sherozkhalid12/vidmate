@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'dart:ui';
 import '../../core/utils/theme_helper.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/models/music_model.dart';
-import '../../core/services/mock_data_service.dart';
+import '../../core/providers/music_provider_riverpod.dart';
 import '../../core/widgets/glass_card.dart';
 import 'music_player_screen.dart';
 
 /// Beautiful modern music screen with theme awareness
-class MusicScreen extends StatefulWidget {
+class MusicScreen extends ConsumerStatefulWidget {
   const MusicScreen({super.key});
 
   @override
-  State<MusicScreen> createState() => _MusicScreenState();
+  ConsumerState<MusicScreen> createState() => _MusicScreenState();
 }
 
-class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin {
-  final List<MusicModel> _tracks = [];
+class _MusicScreenState extends ConsumerState<MusicScreen>
+    with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _showSearch = false;
@@ -31,7 +32,9 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _loadTracks();
+    Future.microtask(
+      () => ref.read(musicProvider.notifier).loadInitial(),
+    );
     _searchAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -49,14 +52,8 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
     super.dispose();
   }
 
-  void _loadTracks() {
-    setState(() {
-      _tracks.addAll(MockDataService.getMockMusic());
-    });
-  }
-
-  List<MusicModel> get _filteredTracks {
-    var filtered = _tracks;
+  List<MusicModel> _filteredTracks(List<MusicModel> source) {
+    var filtered = source;
     
     if (_searchQuery.isNotEmpty) {
       final query = _searchQuery.toLowerCase();
@@ -104,6 +101,10 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
+    final musicState = ref.watch(musicProvider);
+    final tracks = musicState.tracks;
+    final filteredTracks = _filteredTracks(tracks);
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: false,
@@ -117,7 +118,14 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
             slivers: [
               // Enhanced App Bar
               SliverToBoxAdapter(
-                child: _buildAppBar(),
+                child: _buildAppBar(
+                  totalTracks: tracks.length,
+                  likedCount: tracks.where((t) => t.isLiked).length,
+                  totalDuration: filteredTracks.fold<Duration>(
+                    Duration.zero,
+                    (prev, t) => prev + t.duration,
+                  ),
+                ),
               ),
               
               // Animated Search Bar
@@ -139,7 +147,13 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
               ),
 
               // Content
-              _buildMusicListSliver(),
+              _buildMusicListSliver(
+                allTracks: tracks,
+                filteredTracks: filteredTracks,
+                isLoading: musicState.isLoading,
+                isLoadingMore: musicState.isLoadingMore,
+                hasMore: musicState.hasMore,
+              ),
             ],
           ),
         ),
@@ -147,7 +161,11 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildAppBar() {
+  Widget _buildAppBar({
+    required int totalTracks,
+    required int likedCount,
+    required Duration totalDuration,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Row(
@@ -166,7 +184,7 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
               ),
               const SizedBox(height: 4),
               Text(
-                '${_tracks.length} tracks available',
+                '$totalTracks tracks available',
                 style: TextStyle(
                   color: ThemeHelper.getTextSecondary(context),
                   fontSize: 14,
@@ -181,13 +199,13 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
             onTap: _toggleSearch,
             isActive: _showSearch,
           ),
-          const SizedBox(width: 8),
-          _buildHeaderButton(
-            icon: CupertinoIcons.line_horizontal_3_decrease,
-            onTap: () {
-              // Filter options
-            },
-          ),
+          // const SizedBox(width: 8),
+          // _buildHeaderButton(
+          //   icon: CupertinoIcons.line_horizontal_3_decrease,
+          //   onTap: () {
+          //     // Filter options
+          //   },
+          // ),
         ],
       ),
     );
@@ -375,11 +393,14 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
   }
 
   Widget _buildStatsBar() {
-    final totalDuration = _filteredTracks.fold<Duration>(
+    final musicState = ref.watch(musicProvider);
+    final tracks = musicState.tracks;
+    final filteredTracks = _filteredTracks(tracks);
+    final totalDuration = filteredTracks.fold<Duration>(
       Duration.zero,
       (prev, track) => prev + track.duration,
     );
-    
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       padding: const EdgeInsets.all(16),
@@ -402,7 +423,7 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
           _buildStatItem(
             icon: CupertinoIcons.music_note_2,
             label: 'Tracks',
-            value: '${_filteredTracks.length}',
+            value: '${filteredTracks.length}',
           ),
           Container(
             width: 1,
@@ -422,7 +443,7 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
           _buildStatItem(
             icon: CupertinoIcons.heart_fill,
             label: 'Liked',
-            value: '${_tracks.where((t) => t.isLiked).length}',
+            value: '${tracks.where((t) => t.isLiked).length}',
           ),
         ],
       ),
@@ -461,8 +482,23 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildMusicListSliver() {
-    if (_filteredTracks.isEmpty) {
+  Widget _buildMusicListSliver({
+    required List<MusicModel> allTracks,
+    required List<MusicModel> filteredTracks,
+    required bool isLoading,
+    required bool isLoadingMore,
+    required bool hasMore,
+  }) {
+    if (isLoading && filteredTracks.isEmpty) {
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: CupertinoActivityIndicator(),
+        ),
+      );
+    }
+
+    if (filteredTracks.isEmpty) {
       return SliverFillRemaining(
         hasScrollBody: false,
         child: Center(
@@ -484,7 +520,9 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
               ),
               const SizedBox(height: 24),
               Text(
-                _searchQuery.isEmpty ? 'No music available' : 'No results found',
+                _searchQuery.isEmpty
+                    ? 'No music available'
+                    : 'No results found',
                 style: TextStyle(
                   color: ThemeHelper.getTextPrimary(context),
                   fontSize: 18,
@@ -513,26 +551,54 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
         child: SliverList(
           delegate: SliverChildBuilderDelegate(
             (context, index) {
-              final track = _filteredTracks[index];
-              return AnimationConfiguration.staggeredList(
-                position: index,
-                duration: const Duration(milliseconds: 400),
-                child: SlideAnimation(
-                  verticalOffset: 50.0,
-                  child: FadeInAnimation(
-                    child: _buildEnhancedTrackCard(track, index),
+              if (index < filteredTracks.length) {
+                final track = filteredTracks[index];
+                return AnimationConfiguration.staggeredList(
+                  position: index,
+                  duration: const Duration(milliseconds: 400),
+                  child: SlideAnimation(
+                    verticalOffset: 50.0,
+                    child: FadeInAnimation(
+                      child: _buildEnhancedTrackCard(
+                        track,
+                        allTracks,
+                        index,
+                      ),
+                    ),
                   ),
+                );
+              }
+
+              if (!hasMore) {
+                return const SizedBox.shrink();
+              }
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: isLoadingMore
+                      ? const CupertinoActivityIndicator()
+                      : TextButton(
+                          onPressed: () => ref
+                              .read(musicProvider.notifier)
+                              .loadMore(),
+                          child: const Text('Load more'),
+                        ),
                 ),
               );
             },
-            childCount: _filteredTracks.length,
+            childCount: filteredTracks.length + (hasMore ? 1 : 0),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildEnhancedTrackCard(MusicModel track, int index) {
+  Widget _buildEnhancedTrackCard(
+    MusicModel track,
+    List<MusicModel> allTracks,
+    int index,
+  ) {
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
@@ -543,7 +609,7 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
           MaterialPageRoute(
             builder: (context) => MusicPlayerScreen(
               track: track,
-              tracks: _filteredTracks,
+              tracks: allTracks,
               initialIndex: index,
             ),
           ),
@@ -734,15 +800,9 @@ class _MusicScreenState extends State<MusicScreen> with TickerProviderStateMixin
                   // Like Button with Animation
                   GestureDetector(
                     onTap: () {
-                      setState(() {
-                        final trackIndex = _tracks.indexWhere((t) => t.id == track.id);
-                        if (trackIndex != -1) {
-                          _tracks[trackIndex] = track.copyWith(
-                            isLiked: !track.isLiked,
-                            likes: track.isLiked ? track.likes - 1 : track.likes + 1,
-                          );
-                        }
-                      });
+                      ref
+                          .read(musicProvider.notifier)
+                          .toggleLike(track.id);
                     },
                     child: Container(
                       width: 44,

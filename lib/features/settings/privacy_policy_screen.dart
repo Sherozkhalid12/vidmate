@@ -11,15 +11,28 @@ class PrivacyPolicyScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Privacy Policy'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-      ),
-      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Privacy Policy',
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+              ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: GlassCard(
           padding: const EdgeInsets.all(20),
@@ -30,7 +43,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
               Text(
                 'Privacy Policy',
                 style: TextStyle(
-                  color: context.textPrimary,
+                  color: ThemeHelper.getTextPrimary(context),
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
                 ),
@@ -39,7 +52,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
               Text(
                 'Last updated: ${DateTime.now().toString().split(' ')[0]}',
                 style: TextStyle(
-                  color: context.textMuted,
+                  color: ThemeHelper.getTextMuted(context),
                   fontSize: 12,
                 ),
               ),
@@ -90,14 +103,18 @@ class PrivacyPolicyScreen extends StatelessWidget {
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                  foregroundColor: context.textPrimary,
+                  backgroundColor: ThemeHelper.getAccentColor(context),
+                  foregroundColor: ThemeHelper.getOnAccentColor(context),
                   minimumSize: const Size(double.infinity, 50),
                 ),
                 child: Text('I Understand'),
               ),
             ],
           ),
+        ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -112,7 +129,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
           Text(
             title,
             style: TextStyle(
-              color: context.textPrimary,
+              color: ThemeHelper.getTextPrimary(context),
               fontSize: 18,
               fontWeight: FontWeight.w600,
             ),
@@ -121,7 +138,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
           Text(
             content,
             style: TextStyle(
-              color: context.textSecondary,
+              color: ThemeHelper.getTextSecondary(context),
               fontSize: 14,
               height: 1.5,
             ),

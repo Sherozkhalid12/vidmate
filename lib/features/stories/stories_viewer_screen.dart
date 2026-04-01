@@ -12,11 +12,16 @@ import 'package:video_player/video_player.dart';
 class StoriesViewerScreen extends StatefulWidget {
   final int initialUserIndex;
   final int initialStoryIndex;
+  /// Pre-loaded from API; when null, falls back to mock data.
+  final List<UserModel>? users;
+  final Map<String, List<StoryModel>>? userStoriesMap;
 
   const StoriesViewerScreen({
     super.key,
     this.initialUserIndex = 0,
     this.initialStoryIndex = 0,
+    this.users,
+    this.userStoriesMap,
   });
 
   @override
@@ -63,20 +68,22 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   }
 
   void _initializeStories() {
-    final allStories = MockDataService.getMockStories();
-    _userStoriesMap = {};
-    _users = [];
-
-    // Group stories by user
-    for (var story in allStories) {
-      if (!_userStoriesMap.containsKey(story.author.id)) {
-        _userStoriesMap[story.author.id] = [];
-        _users.add(story.author);
+    if (widget.users != null && widget.userStoriesMap != null) {
+      _users = List.from(widget.users!);
+      _userStoriesMap = Map.from(widget.userStoriesMap!);
+    } else {
+      final allStories = MockDataService.getMockStories();
+      _userStoriesMap = {};
+      _users = [];
+      for (var story in allStories) {
+        if (!_userStoriesMap.containsKey(story.author.id)) {
+          _userStoriesMap[story.author.id] = [];
+          _users.add(story.author);
+        }
+        _userStoriesMap[story.author.id]!.add(story);
       }
-      _userStoriesMap[story.author.id]!.add(story);
     }
 
-    // Initialize current story index for each user
     for (var user in _users) {
       _currentStoryIndex[user.id.hashCode] = 0;
       _storyProgress[user.id.hashCode] = 0.0;
@@ -723,16 +730,100 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     final isLoaded = _storyLoaded[userHash] ?? false;
     final errorKey = '${userHash}_$storyIndex';
     final hasVideoError = _videoErrors[errorKey] ?? false;
+    final hasTags = story.locations.isNotEmpty || story.taggedUsers.isNotEmpty;
 
     return Container(
       width: double.infinity,
       height: double.infinity,
       color: Colors.black,
-      child: story.isVideo
-          ? (hasVideoError || videoController == null)
-              ? _buildVideoErrorFallback(story)
-              : _buildVideoStory(videoController, isCurrentStory, isLoaded)
-          : _buildImageStory(story, isLoaded),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          story.isVideo
+              ? (hasVideoError || videoController == null)
+                  ? _buildVideoErrorFallback(story)
+                  : _buildVideoStory(videoController, isCurrentStory, isLoaded)
+              : _buildImageStory(story, isLoaded),
+          if (hasTags)
+            Positioned(
+              bottom: 24,
+              left: 12,
+              right: 12,
+              child: _buildStoryChips(story),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Minimal pill/chip row for locations and tagged users (matches theme, non-cluttered).
+  Widget _buildStoryChips(StoryModel story) {
+    final chips = <Widget>[];
+    for (final loc in story.locations) {
+      if (loc.isEmpty) continue;
+      chips.add(
+        Container(
+          margin: const EdgeInsets.only(right: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white24, width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.location_on, size: 14, color: Colors.white.withValues(alpha: 0.9)),
+              const SizedBox(width: 4),
+              Text(
+                loc,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    for (final user in story.taggedUsers) {
+      if (user.isEmpty) continue;
+      chips.add(
+        Container(
+          margin: const EdgeInsets.only(right: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white24, width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.person_outline, size: 14, color: Colors.white.withValues(alpha: 0.9)),
+              const SizedBox(width: 4),
+              Text(
+                user,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: chips,
+      ),
     );
   }
 

@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/services/mock_data_service.dart';
 import '../../../core/models/post_model.dart';
+import '../../../core/providers/auth_provider_riverpod.dart';
+import '../../../services/posts/long_video_service.dart';
+import '../../../services/posts/posts_service.dart';
+import '../../../services/storage/user_storage_service.dart';
 
 /// Long Videos State
 class LongVideosState {
@@ -50,11 +53,15 @@ class LongVideosState {
 
 /// Long Videos Notifier using Riverpod StateNotifier
 class LongVideosNotifier extends StateNotifier<LongVideosState> {
-  LongVideosNotifier() : super(LongVideosState()) {
+  LongVideosNotifier(this._ref) : super(LongVideosState()) {
     loadVideos();
   }
 
-  /// Load initial videos
+  final Ref _ref;
+  final LongVideoService _service = LongVideoService();
+  final PostsService _postsService = PostsService();
+
+  /// Load initial videos or refresh from API
   Future<void> loadVideos({bool refresh = false}) async {
     if (refresh) {
       state = state.copyWith(
@@ -68,39 +75,20 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
     }
 
     try {
-      // Simulate network delay
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // Get video posts from mock data
-      final allPosts = MockDataService.getMockPosts();
-      final videoPosts = allPosts.where((p) => p.isVideo).toList();
-
-      // Generate additional mock videos for better feed
-      final additionalVideos = List.generate(10, (index) {
-        final userIndex = index % MockDataService.mockUsers.length;
-        return PostModel(
-          id: 'video_${index + 10}',
-          author: MockDataService.mockUsers[userIndex],
-          videoUrl:
-              'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          thumbnailUrl: 'https://picsum.photos/800/450?random=${index + 100}',
-          caption: 'Amazing video content ${index + 1}',
-          createdAt: DateTime.now().subtract(Duration(hours: index)),
-          likes: (index + 1) * 1000,
-          comments: (index + 1) * 50,
-          shares: (index + 1) * 20,
-          isLiked: false,
-          videoDuration:
-              Duration(minutes: index % 10 + 1, seconds: (index * 7) % 60),
-          isVideo: true,
+      final result = await _service.getLongVideos();
+      if (!result.success) {
+        state = state.copyWith(
+          isLoading: false,
+          error: result.errorMessage ?? 'Failed to load long videos',
         );
-      });
-
-      final allVideos = [...videoPosts, ...additionalVideos];
+        return;
+      }
+      final currentUserId = _ref.read(authProvider).currentUser?.id;
+      final allVideos = result.videos
+          .map((v) => PostModel.fromLongVideo(v, currentUserId: currentUserId))
+          .toList();
       final likedVideos = <String, bool>{};
       final likeCounts = <String, int>{};
-
-      // Initialize like states
       for (var video in allVideos) {
         likedVideos[video.id] = video.isLiked;
         likeCounts[video.id] = video.likes;
@@ -111,9 +99,12 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
         isLoading: false,
         likedVideos: likedVideos,
         likeCounts: likeCounts,
-        hasMore: false, // For now, all videos loaded at once
+        hasMore: false,
         currentPage: 1,
       );
+      UserStorageService.instance.runInBackground(() async {
+        await UserStorageService.instance.cacheUnseenLongVideos(videos: allVideos);
+      });
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -122,27 +113,15 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
     }
   }
 
-  /// Load more videos (pagination)
+  /// Load more videos (pagination-ready; API may support later)
   Future<void> loadMoreVideos() async {
     if (state.isLoading || !state.hasMore) return;
-
     state = state.copyWith(isLoading: true);
-
     try {
-      // Simulate network delay
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // For now, we don't have more videos to load
-      // In a real app, this would fetch from API
-      state = state.copyWith(
-        isLoading: false,
-        hasMore: false,
-      );
+      // API currently returns all; keep structure for future pagination
+      state = state.copyWith(isLoading: false, hasMore: false);
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
 
@@ -159,10 +138,76 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
         ? (currentCount - 1).clamp(0, double.infinity).toInt()
         : currentCount + 1;
 
+    final updatedVideos = _updateVideosList(
+      state.videos,
+      videoId: videoId,
+      isLiked: newLikedVideos[videoId],
+      likes: newLikeCounts[videoId],
+    );
     state = state.copyWith(
       likedVideos: newLikedVideos,
       likeCounts: newLikeCounts,
+      videos: updatedVideos,
     );
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheUnseenLongVideos(videos: updatedVideos);
+    });
+  }
+
+  Future<void> toggleLikeWithApi(String videoId) async {
+    if (videoId.isEmpty) return;
+    final previousLiked = state.likedVideos[videoId] ?? false;
+    toggleLike(videoId);
+    final result = await _postsService.likePost(videoId);
+    if (!result.success) {
+      toggleLike(videoId);
+      return;
+    }
+    final action = result.action;
+    final count = result.likesCount;
+    if (action == null && count == null) return;
+    final updatedLiked = Map<String, bool>.from(state.likedVideos);
+    final updatedCounts = Map<String, int>.from(state.likeCounts);
+    if (action == 'liked') updatedLiked[videoId] = true;
+    if (action == 'unliked') updatedLiked[videoId] = false;
+    if (count != null) updatedCounts[videoId] = count;
+    final updatedVideos = _updateVideosList(
+      state.videos,
+      videoId: videoId,
+      isLiked: updatedLiked[videoId] ?? previousLiked,
+      likes: updatedCounts[videoId],
+    );
+    state = state.copyWith(
+      likedVideos: updatedLiked,
+      likeCounts: updatedCounts,
+      videos: updatedVideos,
+    );
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheUnseenLongVideos(videos: updatedVideos);
+    });
+  }
+
+  void applyLikesUpdate({required String postId, int? likesCount, String? action}) {
+    if (postId.isEmpty) return;
+    final updatedLiked = Map<String, bool>.from(state.likedVideos);
+    final updatedCounts = Map<String, int>.from(state.likeCounts);
+    if (action == 'liked') updatedLiked[postId] = true;
+    if (action == 'unliked') updatedLiked[postId] = false;
+    if (likesCount != null) updatedCounts[postId] = likesCount;
+    final updatedVideos = _updateVideosList(
+      state.videos,
+      videoId: postId,
+      isLiked: updatedLiked[postId],
+      likes: updatedCounts[postId],
+    );
+    state = state.copyWith(
+      likedVideos: updatedLiked,
+      likeCounts: updatedCounts,
+      videos: updatedVideos,
+    );
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheUnseenLongVideos(videos: updatedVideos);
+    });
   }
 
   /// Get video by ID
@@ -175,10 +220,42 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
   }
 }
 
+List<PostModel> _updateVideosList(
+  List<PostModel> videos, {
+  required String videoId,
+  bool? isLiked,
+  int? likes,
+}) {
+  if (videos.isEmpty) return videos;
+  return videos
+      .map((v) => v.id == videoId
+          ? PostModel(
+              id: v.id,
+              author: v.author,
+              imageUrl: v.imageUrl,
+              imageUrls: v.imageUrls,
+              videoUrl: v.videoUrl,
+              thumbnailUrl: v.thumbnailUrl,
+              caption: v.caption,
+              createdAt: v.createdAt,
+              likes: likes ?? v.likes,
+              comments: v.comments,
+              shares: v.shares,
+              isLiked: isLiked ?? v.isLiked,
+              videoDuration: v.videoDuration,
+              isVideo: v.isVideo,
+              audioId: v.audioId,
+              audioName: v.audioName,
+              postType: v.postType,
+            )
+          : v)
+      .toList();
+}
+
 /// Long Videos Provider
 final longVideosProvider =
     StateNotifierProvider<LongVideosNotifier, LongVideosState>((ref) {
-  return LongVideosNotifier();
+  return LongVideosNotifier(ref);
 });
 
 /// Convenience Providers

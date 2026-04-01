@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
-import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
 import 'profile_screen.dart';
 
-/// Followers/Following list screen
-class FollowersListScreen extends StatelessWidget {
+/// Followers/Following list screen. Uses API data when viewing current user's list.
+class FollowersListScreen extends ConsumerWidget {
   final String userId;
   final bool isFollowers; // true for followers, false for following
 
@@ -20,10 +22,15 @@ class FollowersListScreen extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final users = isFollowers
-        ? MockDataService.mockUsers.take(5).toList()
-        : MockDataService.mockUsers.skip(1).take(4).toList();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final followState = ref.watch(followProvider);
+    final currentUserId = ref.watch(currentUserProvider)?.id;
+    final isCurrentUser = currentUserId != null && currentUserId == userId;
+    final users = isCurrentUser
+        ? (isFollowers ? followState.followersList : followState.followingList)
+        : <UserModel>[];
+
+    final isLoading = isCurrentUser && (isFollowers ? followState.isLoadingFollowers : followState.isLoadingFollowing);
 
     return Scaffold(
       backgroundColor: context.backgroundColor,
@@ -34,7 +41,9 @@ class FollowersListScreen extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: AnimationLimiter(
+      body: isLoading && users.isEmpty
+          ? Center(child: CircularProgressIndicator(color: ThemeHelper.getAccentColor(context)))
+          : AnimationLimiter(
         child: ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: users.length,
@@ -45,7 +54,7 @@ class FollowersListScreen extends StatelessWidget {
               child: SlideAnimation(
                 verticalOffset: 50.0,
                 child: FadeInAnimation(
-                  child: _buildUserCard(context, users[index]),
+                  child: _buildUserCard(context, ref, users[index]),
                 ),
               ),
             );
@@ -55,7 +64,10 @@ class FollowersListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildUserCard(BuildContext context, UserModel user) {
+  static Widget _buildUserCard(BuildContext context, WidgetRef ref, UserModel user) {
+    final isFollowing = ref.watch(followProvider).followingIds.contains(user.id) || user.isFollowing;
+    final currentUserId = ref.watch(currentUserProvider)?.id;
+    final showFollowButton = currentUserId != null && currentUserId != user.id;
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -147,45 +159,51 @@ class FollowersListScreen extends StatelessWidget {
               ],
             ),
           ),
-          if (!user.isFollowing)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 8,
-              ),
-              decoration: BoxDecoration(
-                gradient: ThemeHelper.getAccentGradient(context), // Theme-aware accent gradient
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                'Follow',
-                style: TextStyle(
-                  color: context.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 8,
-              ),
-              decoration: BoxDecoration(
-                color: context.surfaceColor,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: context.borderColor),
-              ),
-              child: Text(
-                'Following',
-                style: TextStyle(
-                  color: context.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+          if (showFollowButton)
+            !isFollowing
+                ? GestureDetector(
+                    onTap: () => ref.read(followProvider.notifier).follow(user.id),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: ThemeHelper.getAccentGradient(context),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Follow',
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                : GestureDetector(
+                    onTap: () => ref.read(followProvider.notifier).unfollow(user.id),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: context.surfaceColor,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: context.borderColor),
+                      ),
+                      child: Text(
+                        'Following',
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
         ],
       ),
     );

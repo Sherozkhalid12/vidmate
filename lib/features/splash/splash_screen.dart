@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/socket_provider_riverpod.dart';
 import '../onboarding/onboarding_screen.dart';
 import '../main/main_screen.dart';
 
@@ -56,6 +57,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       await ref.read(authProvider.notifier).loadFromStorage();
       if (!mounted) return;
       final isLoggedIn = ref.read(isAuthenticatedProvider);
+      if (isLoggedIn) {
+        ref.read(socketConnectionProvider.notifier).ensureConnection();
+      }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(

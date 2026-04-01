@@ -60,7 +60,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
+        content: Text(
+          message,
+          style: TextStyle(color: Theme.of(context).colorScheme.onError),
+        ),
         backgroundColor: AppColors.error,
         behavior: SnackBarBehavior.floating,
       ),
@@ -70,7 +73,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
   void _showSuccess(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
+        content: Text(
+          message,
+          style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+        ),
         backgroundColor: AppColors.success,
         behavior: SnackBarBehavior.floating,
       ),
@@ -203,7 +209,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                                   ? Icons.person_add
                                   : Icons.mark_email_read_outlined,
                               size: 64,
-                              color: Colors.white,
+                              color: ThemeHelper.getOnAccentColor(context),
                             ),
                           ),
                         ),

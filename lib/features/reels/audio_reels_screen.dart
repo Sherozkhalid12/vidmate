@@ -2,14 +2,20 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/comments_bottom_sheet.dart';
 import '../../core/widgets/share_bottom_sheet.dart';
-import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart' as posts;
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../services/posts/posts_service.dart';
 import '../../core/models/user_model.dart';
 import 'package:video_player/video_player.dart';
 import '../../core/models/post_model.dart';
+import '../../core/utils/share_link_helper.dart';
 
 /// Full-screen reels filtered by same audio (Instagram-style "Original sound" flow).
 /// Design matches app style; uses generic "Original sound" labels to avoid copyright.
@@ -32,22 +38,17 @@ class AudioReelsScreen extends ConsumerStatefulWidget {
 }
 
 class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
-  late PageController _pageController;
-  late int _currentIndex;
-  final Map<int, VideoPlayerController> _controllers = {};
-  final Map<String, bool> _likedPosts = {};
-  final Map<String, int> _likeCounts = {};
+    late PageController _pageController;
+    late int _currentIndex;
+    final Map<int, VideoPlayerController> _controllers = {};
 
   @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(initialPage: widget.initialIndex.clamp(0, widget.reels.length - 1));
-    _currentIndex = widget.initialIndex.clamp(0, widget.reels.length - 1);
-    for (var reel in widget.reels) {
-      _likedPosts[reel.id] = reel.isLiked;
-      _likeCounts[reel.id] = reel.likes;
-    }
-    _initializeVideo(_currentIndex);
+    void initState() {
+      super.initState();
+      _pageController = PageController(initialPage: widget.initialIndex.clamp(0, widget.reels.length - 1));
+      _currentIndex = widget.initialIndex.clamp(0, widget.reels.length - 1);
+      ref.read(reelsProvider.notifier).seedReels(widget.reels);
+      _initializeVideo(_currentIndex);
     if (_currentIndex + 1 < widget.reels.length) _initializeVideo(_currentIndex + 1);
     if (_currentIndex + 2 < widget.reels.length) _initializeVideo(_currentIndex + 2);
     if (_currentIndex - 1 >= 0) _initializeVideo(_currentIndex - 1);
@@ -118,8 +119,52 @@ class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
       context: context,
       builder: (ctx) => CupertinoActionSheet(
         actions: [
-          CupertinoActionSheetAction(child: const Text('Report'), onPressed: () => Navigator.pop(ctx)),
-          CupertinoActionSheetAction(child: const Text('Copy Link'), onPressed: () => Navigator.pop(ctx)),
+          CupertinoActionSheetAction(
+            child: const Text('Report'),
+            onPressed: () async {
+              final currentUserId = ref.read(authProvider).currentUser?.id ?? '';
+              Navigator.pop(ctx);
+
+              final result = await PostsService().reportPost(
+                postId: reel.id,
+                currentUserId: currentUserId,
+                postAuthorId: reel.author.id,
+              );
+
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    result.success ? 'Reported' : (result.errorMessage ?? 'Report failed'),
+                  ),
+                  backgroundColor: result.success
+                      ? ThemeHelper.getAccentColor(context)
+                      : ThemeHelper.getSurfaceColor(context),
+                ),
+              );
+            },
+          ),
+          CupertinoActionSheetAction(
+            child: const Text('Copy Link'),
+            onPressed: () {
+              final link = ShareLinkHelper.build(
+                contentId: reel.id,
+                thumbnailUrl: reel.effectiveThumbnailUrl,
+              );
+              Navigator.pop(ctx);
+              Clipboard.setData(ClipboardData(text: link));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Link copied!',
+                    style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                  ),
+                  backgroundColor:
+                      ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                ),
+              );
+            },
+          ),
         ],
         cancelButton: CupertinoActionSheetAction(child: const Text('Cancel'), onPressed: () => Navigator.pop(ctx)),
       ),
@@ -287,14 +332,37 @@ class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
                           ),
                           Consumer(
                             builder: (context, ref, _) {
-                              final posts = ref.watch(postsListProvider);
-                              final post = posts.firstWhere(
-                                (p) => p.author.id == reel.author.id,
-                                orElse: () => posts.first,
-                              );
-                              final isFollowing = post.author.id == reel.author.id ? post.author.isFollowing : reel.author.isFollowing;
+                              final currentUser = ref.watch(currentUserProvider);
+                              if (currentUser?.id == reel.author.id) {
+                                return const SizedBox.shrink();
+                              }
+                              final followState = ref.watch(followProvider);
+                              final followOverrides = ref.watch(posts.followStateProvider);
+                              final postList = ref.watch(posts.postsListProvider);
+                              PostModel? post;
+                              try {
+                                post = postList.firstWhere((p) => p.author.id == reel.author.id);
+                              } catch (_) {}
+                              final overrideStatus =
+                                  followOverrides[reel.author.id];
+                              final isFollowing =
+                                  overrideStatus ==
+                                          posts.FollowRelationshipStatus.following ||
+                                      (overrideStatus == null &&
+                                          (followState.followingIds.isNotEmpty
+                                              ? followState.followingIds
+                                                  .contains(reel.author.id)
+                                              : (post?.author.isFollowing ??
+                                                  reel.author.isFollowing)));
+                              final isPending = overrideStatus ==
+                                      posts.FollowRelationshipStatus.pending ||
+                                  (overrideStatus == null &&
+                                      followState.outgoingPendingRequests
+                                          .containsKey(reel.author.id));
                               return GestureDetector(
-                                onTap: () => ref.read(postsProvider.notifier).toggleFollow(reel.author.id),
+                                onTap: () {
+                                  ref.read(followProvider.notifier).toggleFollow(reel.author.id);
+                                },
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                                   decoration: BoxDecoration(
@@ -306,7 +374,9 @@ class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
                                     ),
                                   ),
                                   child: Text(
-                                    isFollowing ? 'Following' : 'Follow',
+                                    isFollowing
+                                        ? 'Following'
+                                        : (isPending ? 'Requested' : 'Follow'),
                                     style: TextStyle(color: isFollowing ? Colors.white : Colors.black, fontSize: 13, fontWeight: FontWeight.w600),
                                   ),
                                 ),
@@ -350,51 +420,66 @@ class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _action(
-                      Icons.favorite,
-                      count: _likeCounts[reel.id] ?? reel.likes,
-                      isActive: _likedPosts[reel.id] ?? reel.isLiked,
-                      onTap: () {
-                        setState(() {
-                          final cur = _likedPosts[reel.id] ?? reel.isLiked;
-                          final cnt = _likeCounts[reel.id] ?? reel.likes;
-                          _likedPosts[reel.id] = !cur;
-                          _likeCounts[reel.id] = cur ? (cnt - 1).clamp(0, 999999) : cnt + 1;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    _action(
-                      Icons.comment,
-                      count: reel.comments,
-                      onTap: () {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (ctx) => CommentsBottomSheet(postId: reel.id),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    GestureDetector(
-                      onTap: () {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (ctx) => ShareBottomSheet(postId: reel.id, videoUrl: reel.videoUrl, imageUrl: reel.imageUrl),
-                        );
-                      },
-                      child: Column(
-                        children: [
-                          Transform.rotate(angle: -0.785398, child: const Icon(Icons.send, color: Colors.white, size: 28)),
-                          const SizedBox(height: 4),
-                          Text(_formatCount(reel.shares), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                        ],
+                    if (reel.author.allowLikes) ...[
+                        _action(
+                          Icons.favorite,
+                          count: ref.watch(reelLikeCountProvider(reel.id)),
+                          isActive: ref.watch(reelLikedProvider(reel.id)),
+                          onTap: () {
+                            ref.read(reelsProvider.notifier).toggleLikeWithApi(reel.id);
+                          },
+                        ),
+                      const SizedBox(height: 14),
+                    ],
+                    if (reel.author.allowComments) ...[
+                      _action(
+                        Icons.comment,
+                        count: reel.comments,
+                        onTap: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (ctx) => CommentsBottomSheet(postId: reel.id),
+                          );
+                        },
                       ),
-                    ),
-                    const SizedBox(height: 14),
+                      const SizedBox(height: 14),
+                    ],
+                    if (reel.author.allowShares) ...[
+                      GestureDetector(
+                        onTap: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (ctx) => ShareBottomSheet(
+                              postId: reel.id,
+                              videoUrl: reel.videoUrl,
+                              imageUrl: reel.effectiveThumbnailUrl,
+                            ),
+                          );
+                        },
+                        child: Column(
+                          children: [
+                            Transform.rotate(
+                              angle: -0.785398,
+                              child: const Icon(Icons.send, color: Colors.white, size: 28),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _formatCount(reel.shares),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     _action(
                       isPlaying ? Icons.pause : Icons.play_arrow,
                       onTap: () {

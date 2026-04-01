@@ -5,6 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:better_player/better_player.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
+import '../long_videos/providers/long_videos_provider.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
@@ -13,6 +17,7 @@ import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/comments_bottom_sheet.dart';
 import '../../core/widgets/share_bottom_sheet.dart';
 import '../../core/widgets/safe_better_player.dart';
+import '../../core/utils/share_link_helper.dart';
 import '../profile/profile_screen.dart';
 import 'dart:ui';
 
@@ -35,9 +40,9 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
   ConsumerState<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with WidgetsBindingObserver {
-  bool _isLiked = false;
-  int _likeCount = 0;
+  class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with WidgetsBindingObserver {
+    bool _isLiked = false;
+    int _likeCount = 0;
   int _commentCount = 0;
   Timer? _controlsTimer;
   VideoPlayerNotifier? _cachedNotifier;
@@ -65,6 +70,34 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
           // Provider might not be ready yet
         }
       }
+    });
+  }
+
+  Future<void> _toggleLikeApi() async {
+    final post = widget.post;
+    if (post == null) return;
+    setState(() {
+      _isLiked = !_isLiked;
+      _likeCount += _isLiked ? 1 : -1;
+    });
+    if (post.postType == 'longVideo') {
+      await ref.read(longVideosProvider.notifier).toggleLikeWithApi(post.id);
+      if (!mounted) return;
+      final liked = ref.read(longVideoLikedProvider(post.id));
+      final count = ref.read(longVideoLikeCountProvider(post.id));
+      setState(() {
+        _isLiked = liked;
+        _likeCount = count;
+      });
+      return;
+    }
+    await ref.read(postsProvider.notifier).toggleLikeWithApi(post.id);
+    if (!mounted) return;
+    final liked = ref.read(postLikedProvider(post.id));
+    final count = ref.read(postLikeCountProvider(post.id));
+    setState(() {
+      _isLiked = liked;
+      _likeCount = count;
     });
   }
 
@@ -406,16 +439,40 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                   icon: Icons.link,
                   label: 'Copy Link',
                   onTap: () {
+                    final postId = widget.post?.id;
+                    final thumb = widget.post?.effectiveThumbnailUrl;
+                    if (postId == null || postId.isEmpty) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Unable to copy link for this content',
+                            style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                          ),
+                          backgroundColor:
+                              ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                        ),
+                      );
+                      return;
+                    }
+
+                    final link = ShareLinkHelper.build(
+                      contentId: postId,
+                      thumbnailUrl: thumb,
+                    );
+
                     Navigator.pop(context);
+                    Clipboard.setData(ClipboardData(text: link));
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'Link copied to clipboard!',
+                          'Link copied!',
                           style: TextStyle(
                             color: ThemeHelper.getTextPrimary(context),
                           ),
                         ),
-                        backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                        backgroundColor:
+                            ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
                       ),
                     );
                   },
@@ -1103,54 +1160,54 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                               children: [
                                 // Like button
-                                _buildPortraitActionButton(
-                                  icon: _isLiked ? Icons.favorite : Icons.favorite_border,
-                                  label: _formatCount(_likeCount),
-                                  color: _isLiked ? Colors.red : Colors.white,
-                                  onTap: () {
-                                    setState(() {
-                                      _isLiked = !_isLiked;
-                                      _likeCount += _isLiked ? 1 : -1;
-                                    });
-                                    _startControlsTimer();
-                                  },
-                                ),
+                              if (widget.author.allowLikes)
+                                    _buildPortraitActionButton(
+                                     icon: _isLiked ? Icons.favorite : Icons.favorite_border,
+                                     label: _formatCount(_likeCount),
+                                     color: _isLiked ? Colors.red : Colors.white,
+                                      onTap: () {
+                                        _toggleLikeApi();
+                                        _startControlsTimer();
+                                      },
+                                    ),
                                 // Comment button
-                                _buildPortraitActionButton(
-                                  icon: Icons.comment_outlined,
-                                  label: _formatCount(_commentCount),
-                                  color: Colors.white,
-                                  onTap: () {
-                                    _startControlsTimer();
-                                    showModalBottomSheet(
-                                      context: context,
-                                      isScrollControlled: true,
-                                      backgroundColor: Colors.transparent,
-                                      builder: (context) => CommentsBottomSheet(
-                                        postId: widget.post?.id ?? '',
-                                      ),
-                                    );
-                                  },
-                                ),
+                                if (widget.author.allowComments)
+                                  _buildPortraitActionButton(
+                                    icon: Icons.comment_outlined,
+                                    label: _formatCount(_commentCount),
+                                    color: Colors.white,
+                                    onTap: () {
+                                      _startControlsTimer();
+                                      showModalBottomSheet(
+                                        context: context,
+                                        isScrollControlled: true,
+                                        backgroundColor: Colors.transparent,
+                                        builder: (context) => CommentsBottomSheet(
+                                          postId: widget.post?.id ?? '',
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 // Share button
-                                _buildPortraitActionButton(
-                                  icon: Icons.share_outlined,
-                                  label: 'Share',
-                                  color: Colors.white,
-                                  onTap: () {
-                                    _startControlsTimer();
-                                    showModalBottomSheet(
-                                      context: context,
-                                      isScrollControlled: true,
-                                      backgroundColor: Colors.transparent,
-                                      builder: (context) => ShareBottomSheet(
-                                        postId: widget.post?.id,
-                                        videoUrl: widget.videoUrl,
-                                        imageUrl: widget.post?.imageUrl,
-                                      ),
-                                    );
-                                  },
-                                ),
+                                if (widget.author.allowShares)
+                                  _buildPortraitActionButton(
+                                    icon: Icons.share_outlined,
+                                    label: 'Share',
+                                    color: Colors.white,
+                                    onTap: () {
+                                      _startControlsTimer();
+                                      showModalBottomSheet(
+                                        context: context,
+                                        isScrollControlled: true,
+                                        backgroundColor: Colors.transparent,
+                                        builder: (context) => ShareBottomSheet(
+                                          postId: widget.post?.id,
+                                          videoUrl: widget.videoUrl,
+                                          imageUrl: widget.post?.effectiveThumbnailUrl,
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 // Visit profile button
                                 _buildPortraitActionButton(
                                   icon: Icons.person_outline,
@@ -1762,127 +1819,151 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                         ),
                       ),
                       
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () {},
-                            borderRadius: BorderRadius.circular(999),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              child: Text(
-                                'Follow',
-                                style: TextStyle(
-                                  color: context.buttonTextColor,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
+                      ref.watch(currentUserProvider)?.id == widget.author.id
+                          ? const SizedBox.shrink()
+                          : Consumer(
+                              builder: (context, ref, _) {
+                                final followState = ref.watch(followProvider);
+                                final overrideStatus =
+                                    ref.watch(followStateProvider)[widget.author.id];
+                                final isFollowing =
+                                    overrideStatus == FollowRelationshipStatus.following ||
+                                        (overrideStatus == null &&
+                                            (followState.followingIds.isNotEmpty
+                                                ? followState.followingIds
+                                                    .contains(widget.author.id)
+                                                : widget.author.isFollowing));
+                                final isPending =
+                                    overrideStatus == FollowRelationshipStatus.pending;
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: isFollowing ? Colors.transparent : Theme.of(context).colorScheme.primary,
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: isFollowing ? Border.all(color: Theme.of(context).colorScheme.primary, width: 1.5) : null,
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        ref.read(followProvider.notifier).toggleFollow(widget.author.id);
+                                      },
+                                      borderRadius: BorderRadius.circular(999),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                        child: Text(
+                                          isFollowing
+                                              ? 'Following'
+                                              : (isPending ? 'Requested' : 'Follow'),
+                                          style: TextStyle(
+                                            color: isFollowing ? ThemeHelper.getTextPrimary(context) : context.buttonTextColor,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                      const SizedBox(width: 8),
+                      if (widget.author.allowShares) ...[
+                        // Share icon
+                        GestureDetector(
+                          onTap: () {
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (context) => ShareBottomSheet(
+                                postId: widget.post?.id,
+                                videoUrl: widget.videoUrl,
+                                imageUrl: widget.post?.effectiveThumbnailUrl,
+                              ),
+                            );
+                          },
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Transform.rotate(
+                                angle: -0.785398,
+                                child: Icon(
+                                  Icons.send,
+                                  size: 24,
+                                  color: ThemeHelper.getTextPrimary(context),
                                 ),
                               ),
-                            ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatCount(widget.post?.shares ?? 0),
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Share icon
-                      GestureDetector(
-                        onTap: () {
-                          showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            backgroundColor: Colors.transparent,
-                            builder: (context) => ShareBottomSheet(
-                              postId: widget.post?.id,
-                              videoUrl: widget.videoUrl,
-                              imageUrl: widget.post?.imageUrl,
-                            ),
-                          );
-                        },
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Transform.rotate(
-                              angle: -0.785398,
-                              child: Icon(
-                                Icons.send,
+                        const SizedBox(width: 12),
+                      ],
+                      if (widget.author.allowComments) ...[
+                        // Comments icon
+                        GestureDetector(
+                          onTap: () {
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (context) => CommentsBottomSheet(
+                                postId: widget.post?.id ?? '',
+                              ),
+                            );
+                          },
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.mode_comment_outlined,
                                 size: 24,
                                 color: ThemeHelper.getTextPrimary(context),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatCount(widget.post?.shares ?? 0),
-                              style: TextStyle(
-                                color: ThemeHelper.getTextSecondary(context),
-                                fontSize: 11,
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatCount(_commentCount),
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  fontSize: 11,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      // Comments icon
-                      GestureDetector(
-                        onTap: () {
-                          showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            backgroundColor: Colors.transparent,
-                            builder: (context) => CommentsBottomSheet(
-                              postId: widget.post?.id ?? '',
-                            ),
-                          );
-                        },
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.mode_comment_outlined,
-                              size: 24,
-                              color: ThemeHelper.getTextPrimary(context),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatCount(_commentCount),
-                              style: TextStyle(
-                                color: ThemeHelper.getTextSecondary(context),
-                                fontSize: 11,
+                        const SizedBox(width: 12),
+                      ],
+                      if (widget.author.allowLikes)
+                          GestureDetector(
+                            onTap: () {
+                              _toggleLikeApi();
+                            },
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isLiked ? Icons.favorite : Icons.favorite_border,
+                                size: 24,
+                                color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      // Heart icon
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _isLiked = !_isLiked;
-                            _likeCount += _isLiked ? 1 : -1;
-                          });
-                        },
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _isLiked ? Icons.favorite : Icons.favorite_border,
-                              size: 24,
-                              color: _isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatCount(_likeCount),
-                              style: TextStyle(
-                                color: ThemeHelper.getTextSecondary(context),
-                                fontSize: 11,
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatCount(_likeCount),
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextSecondary(context),
+                                  fontSize: 11,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -1992,49 +2073,28 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     if (_cachedSuggestedVideos != null) {
       return _cachedSuggestedVideos!;
     }
-    
-    // Get suggested videos from mock data - show exactly 3 unique videos
-    final allPosts = MockDataService.getMockPosts();
-    var suggestedVideos = allPosts
-        .where((p) => p.isVideo && p.id != widget.post?.id)
-        .toList();
-    
-    // Generate additional videos if needed to ensure we have enough unique videos
-    if (suggestedVideos.length < 3) {
-      final additionalVideos = List.generate(10, (index) {
-        final userIndex = index % MockDataService.mockUsers.length;
-        return PostModel(
-          id: 'suggested_video_${index + 100}',
-          author: MockDataService.mockUsers[userIndex],
-          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          thumbnailUrl: 'https://picsum.photos/800/450?random=${index + 200}',
-          caption: 'Suggested video ${index + 1}',
-          createdAt: DateTime.now().subtract(Duration(hours: index)),
-          likes: (index + 1) * 500,
-          comments: (index + 1) * 25,
-          shares: (index + 1) * 10,
-          isLiked: false,
-          videoDuration: Duration(minutes: index % 10 + 1, seconds: (index * 7) % 60),
-          isVideo: true,
-        );
-      });
-      suggestedVideos.addAll(additionalVideos);
+
+    // Prefer real fetched videos from state (long videos or posts)
+    final longVideos = ref.read(longVideosProvider).videos;
+    final feedPosts = ref.read(postsListProvider);
+    var pool = [
+      ...longVideos,
+      ...feedPosts.where((p) => p.isVideo),
+    ];
+    // Remove current video
+    pool = pool.where((p) => p.id != widget.post?.id).toList();
+
+    // If still empty, fallback to mock
+    if (pool.isEmpty) {
+      pool = MockDataService.getMockPosts()
+          .where((p) => p.isVideo && p.id != widget.post?.id)
+          .toList();
     }
-    
-    // Filter out current video again in case it was in additional videos
-    suggestedVideos = suggestedVideos
-        .where((p) => p.id != widget.post?.id)
-        .toList();
-    
-    // Shuffle to get different videos each time (only once when first loading)
-    suggestedVideos.shuffle();
-    
-    // Take exactly 3 videos
-    suggestedVideos = suggestedVideos.take(3).toList();
-    
-    // Cache the videos so they don't change during playback
+
+    pool.shuffle();
+    final suggestedVideos = pool.take(3).toList();
+
     _cachedSuggestedVideos = suggestedVideos;
-    
     return suggestedVideos;
   }
 

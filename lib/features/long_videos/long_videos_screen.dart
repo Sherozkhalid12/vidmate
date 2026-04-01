@@ -6,6 +6,8 @@ import 'package:video_player/video_player.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/video_player_provider.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 import '../video/video_player_screen.dart';
 import '../profile/profile_screen.dart';
@@ -31,8 +33,6 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
   DateTime? _lastPlayActionTime; // Prevent rapid play/pause toggles
   Timer? _scrollThrottleTimer; // Throttle scroll events
   DateTime? _lastScrollCheck; // Last time we checked scroll position
-  final Map<String, bool> _followStates = {}; // Track follow states locally
-
   @override
   void initState() {
     super.initState();
@@ -532,40 +532,34 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                     ),
                   ),
                 ),
-                // Follow Button - same style as instagram_post_card, fully rounded
+                // Follow Button - hide when author is current user; state via Riverpod
                 Consumer(
                   builder: (context, ref, child) {
-                    // Get follow state from posts provider if available, otherwise use local state or video author
+                    final currentUser = ref.watch(currentUserProvider);
+                    if (currentUser?.id == video.author.id) {
+                      return const SizedBox.shrink();
+                    }
+                    final followOverrides = ref.watch(followStateProvider);
+                    final followState = ref.watch(followProvider);
                     final posts = ref.watch(postsListProvider);
                     PostModel? post;
                     try {
-                      // Try to find a post by this author
                       post = posts.firstWhere((p) => p.author.id == video.author.id);
-                    } catch (e) {
-                      // Author not found in posts
+                    } catch (_) {
                       post = null;
                     }
-                    
-                    // Initialize follow state if not set
-                    if (!_followStates.containsKey(video.author.id)) {
-                      _followStates[video.author.id] = post != null 
-                          ? post.author.isFollowing 
-                          : video.author.isFollowing;
-                    }
-                    
-                    // Get current follow state (prefer posts provider, then local state, then video author)
-                    final isFollowing = post != null 
-                        ? post.author.isFollowing 
-                        : (_followStates[video.author.id] ?? video.author.isFollowing);
-                    
+                    final overrideStatus = followOverrides[video.author.id];
+                    final isFollowing =
+                        overrideStatus == FollowRelationshipStatus.following ||
+                            (overrideStatus == null &&
+                                (followState.followingIds.isNotEmpty
+                                    ? followState.followingIds
+                                        .contains(video.author.id)
+                                    : (post?.author.isFollowing ??
+                                        video.author.isFollowing)));
                     return GestureDetector(
                       onTap: () {
-                        // Toggle follow state through posts provider
-                        ref.read(postsProvider.notifier).toggleFollow(video.author.id);
-                        // Update local state immediately
-                        setState(() {
-                          _followStates[video.author.id] = !isFollowing;
-                        });
+                        ref.read(followProvider.notifier).toggleFollow(video.author.id);
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -573,7 +567,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                           color: isFollowing ? Colors.transparent : ThemeHelper.getAccentColor(context),
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: isFollowing 
+                            color: isFollowing
                                 ? ThemeHelper.getTextPrimary(context)
                                 : ThemeHelper.getAccentColor(context),
                             width: isFollowing ? 1.5 : 1,
@@ -582,7 +576,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                         child: Text(
                           isFollowing ? 'Following' : 'Follow',
                           style: TextStyle(
-                            color: isFollowing 
+                            color: isFollowing
                                 ? ThemeHelper.getTextPrimary(context)
                                 : ThemeHelper.getOnAccentColor(context),
                             fontSize: 13,
@@ -596,10 +590,24 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
               ],
             ),
           ),
-          // Video Player/Thumbnail
-          _buildVideoPlayer(video),
-        ],
-      );
+        // Caption - below the icon/author row, above video
+        if (video.caption.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              video.caption,
+              style: TextStyle(
+                color: ThemeHelper.getTextPrimary(context),
+                fontSize: 14,
+              ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        // Video Player/Thumbnail
+        _buildVideoPlayer(video),
+      ],
+    );
   }
 
   Widget _buildPostDivider() {

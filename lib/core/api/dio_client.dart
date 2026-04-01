@@ -21,26 +21,28 @@ class DioClient {
         sendTimeout: const Duration(seconds: 60),
         headers: {
           'Accept': 'application/json',
-          'Content-Type': 'application/json',
         },
       ),
     );
 
-    // Add logging interceptor (only in debug mode)
+    // Minimal logging: one line per request/response (debug only)
     if (kDebugMode) {
       dio.interceptors.add(
-        LogInterceptor(
-          request: true,
-          requestHeader: true,
-          requestBody: true,
-          responseHeader: true,
-          responseBody: true,
-          error: true,
-          logPrint: (object) {
-            // Only log meaningful information
-            if (object.toString().isNotEmpty) {
-              debugPrint('[Dio] $object');
-            }
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            debugPrint('[API] ${options.method} ${options.uri.path}');
+            handler.next(options);
+          },
+          onResponse: (response, handler) {
+            debugPrint('[API] ${response.requestOptions.method} ${response.requestOptions.uri.path} -> ${response.statusCode}');
+            handler.next(response);
+          },
+          onError: (err, handler) {
+            final msg = err.response?.data is Map
+                ? (err.response?.data['message'] ?? err.response?.data['error'] ?? err.message)
+                : err.message;
+            debugPrint('[API] ${err.requestOptions.method} ${err.requestOptions.uri.path} -> error: $msg');
+            handler.next(err);
           },
         ),
       );

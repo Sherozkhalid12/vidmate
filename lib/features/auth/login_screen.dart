@@ -81,7 +81,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       final error = ref.read(authErrorProvider) ?? 'Login failed';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error, style: const TextStyle(color: Colors.white)),
+          content: Text(
+            error,
+            style: TextStyle(color: Theme.of(context).colorScheme.onError),
+          ),
           backgroundColor: AppColors.error,
           behavior: SnackBarBehavior.floating,
         ),
@@ -134,7 +137,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             child: Icon(
                               Icons.play_circle_filled,
                               size: 64,
-                              color: Colors.white, // White for high contrast on gradient background
+                              color: ThemeHelper.getOnAccentColor(context),
                             ),
                           ),
                         ),

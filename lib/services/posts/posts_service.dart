@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/dio_client.dart';
 import '../../core/constants/api_constants.dart';
+import '../../core/models/comment_model.dart';
 import '../../core/models/post_response_model.dart';
 
 /// Maximum images allowed per post.
@@ -54,10 +55,131 @@ class GetPostsResult {
       GetPostsResult(success: true, posts: posts);
 }
 
+/// Result of like post API.
+class LikePostResult {
+  final bool success;
+  final String? postId;
+  final int? likesCount;
+  final String? action; // 'liked' | 'unliked'
+  final String? errorMessage;
+
+  LikePostResult({
+    required this.success,
+    this.postId,
+    this.likesCount,
+    this.action,
+    this.errorMessage,
+  });
+}
+
+/// Result of add comment API.
+class AddCommentResult {
+  final bool success;
+  final PostComment? comment;
+  final String? errorMessage;
+
+  AddCommentResult({
+    required this.success,
+    this.comment,
+    this.errorMessage,
+  });
+}
+
+/// Result of get comments API.
+class GetCommentsResult {
+  final bool success;
+  final List<PostComment> comments;
+  final String? errorMessage;
+
+  GetCommentsResult({
+    required this.success,
+    this.comments = const [],
+    this.errorMessage,
+  });
+}
+
+/// Result of save post API.
+class SavePostResult {
+  final bool success;
+  final String? postId;
+  final String? action; // 'saved' | 'unsaved'
+  final List<String>? savedPosts;
+  final String? errorMessage;
+
+  SavePostResult({
+    required this.success,
+    this.postId,
+    this.action,
+    this.savedPosts,
+    this.errorMessage,
+  });
+}
+
+/// Result of delete post API call.
+class DeletePostResult {
+  final bool success;
+  final String? postId;
+  final String? errorMessage;
+
+  const DeletePostResult({
+    required this.success,
+    this.postId,
+    this.errorMessage,
+  });
+
+  factory DeletePostResult.failure(String message) =>
+      DeletePostResult(success: false, errorMessage: message);
+
+  factory DeletePostResult.success(String postId) =>
+      DeletePostResult(success: true, postId: postId);
+}
+
+/// Result of report post API call.
+class ReportPostResult {
+  final bool success;
+  final String? postId;
+  final String? errorMessage;
+
+  const ReportPostResult({
+    required this.success,
+    this.postId,
+    this.errorMessage,
+  });
+
+  factory ReportPostResult.failure(String message) =>
+      ReportPostResult(success: false, errorMessage: message);
+
+  factory ReportPostResult.success(String postId) =>
+      ReportPostResult(success: true, postId: postId);
+}
+
+/// Result of share post API call.
+class SharePostResult {
+  final bool success;
+  final String? postId;
+  final String? action;
+  final String? errorMessage;
+
+  const SharePostResult({
+    required this.success,
+    this.postId,
+    this.action,
+    this.errorMessage,
+  });
+
+  factory SharePostResult.failure(String message) =>
+      SharePostResult(success: false, errorMessage: message);
+
+  factory SharePostResult.success({String? postId, String? action}) =>
+      SharePostResult(success: true, postId: postId, action: action);
+}
+
 /// Parameters for creating a post. All optional except validation rules.
 class CreatePostParams {
   final List<File> images;
   final File? video;
+  final File? thumbnailFile;
+  final String? thumbnailUrl;
   final String? caption;
   final List<String> locations;
   final List<String> taggedUsers;
@@ -66,6 +188,8 @@ class CreatePostParams {
   CreatePostParams({
     this.images = const [],
     this.video,
+    this.thumbnailFile,
+    this.thumbnailUrl,
     this.caption,
     this.locations = const [],
     this.taggedUsers = const [],
@@ -79,6 +203,9 @@ class CreatePostParams {
     }
     if (video != null && video!.path.isEmpty) {
       return 'Invalid video file';
+    }
+    if (thumbnailFile != null && thumbnailFile!.path.isEmpty) {
+      return 'Invalid thumbnail file';
     }
     return null;
   }
@@ -125,6 +252,23 @@ class PostsService {
       }
       if (params.feelings.isNotEmpty) {
         formData.fields.add(MapEntry('feelings', jsonEncode(params.feelings)));
+      }
+
+      // Thumbnail: either file (preferred) OR URL string
+      if (params.thumbnailFile != null &&
+          params.thumbnailFile!.path.isNotEmpty &&
+          await params.thumbnailFile!.exists()) {
+        formData.files.add(MapEntry(
+          'thumbnail',
+          await MultipartFile.fromFile(
+            params.thumbnailFile!.path,
+            filename: 'thumbnail.jpg',
+          ),
+        ));
+      } else if (params.thumbnailUrl != null &&
+          params.thumbnailUrl!.trim().isNotEmpty) {
+        formData.fields
+            .add(MapEntry('thumbnail', params.thumbnailUrl!.trim()));
       }
 
       var imageCount = 0;
@@ -330,6 +474,273 @@ class PostsService {
       return GetPostsResult.failure(_networkErrorMessage(e.message));
     } on TimeoutException catch (_) {
       return GetPostsResult.failure('Request timed out');
+    } catch (e) {
+      return GetPostsResult.failure(
+        e is Exception ? e.toString() : 'Something went wrong',
+      );
+    }
+  }
+
+  /// POST like/unlike a post.
+  Future<LikePostResult> likePost(String postId) async {
+    if (postId.isEmpty) return LikePostResult(success: false, errorMessage: 'Invalid post id');
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return LikePostResult(success: false, errorMessage: 'Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.post(ApiConstants.postLike(postId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) return LikePostResult(success: false, errorMessage: 'Invalid response');
+      final count = data['likesCount'];
+      return LikePostResult(
+        success: true,
+        postId: data['postId']?.toString(),
+        likesCount: count is int ? count : (count != null ? int.tryParse(count.toString()) : null),
+        action: data['action']?.toString(),
+      );
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return LikePostResult(success: false, errorMessage: msg);
+    } catch (e) {
+      return LikePostResult(success: false, errorMessage: e.toString());
+    }
+  }
+
+  /// POST add comment to a post.
+  Future<AddCommentResult> addComment({required String postId, required String content}) async {
+    if (postId.isEmpty || content.trim().isEmpty) {
+      return AddCommentResult(success: false, errorMessage: 'Invalid input');
+    }
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return AddCommentResult(success: false, errorMessage: 'Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.post(
+        ApiConstants.postComment,
+        data: {'postId': postId, 'content': content.trim()},
+      );
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) return AddCommentResult(success: false, errorMessage: 'Invalid response');
+      final commentJson = data['comment'] as Map<String, dynamic>?;
+      if (commentJson == null) return AddCommentResult(success: false, errorMessage: 'No comment in response');
+      return AddCommentResult(success: true, comment: PostComment.fromJson(commentJson));
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return AddCommentResult(success: false, errorMessage: msg);
+    } catch (e) {
+      return AddCommentResult(success: false, errorMessage: e.toString());
+    }
+  }
+
+  /// GET comments for a post.
+  Future<GetCommentsResult> getComments(String postId) async {
+    if (postId.isEmpty) return GetCommentsResult(success: false, errorMessage: 'Invalid post id');
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return GetCommentsResult(success: false, errorMessage: 'Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.get(ApiConstants.postComments(postId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) return GetCommentsResult(success: false, errorMessage: 'Invalid response');
+      final list = data['comments'];
+      if (list == null || list is! List) {
+        return GetCommentsResult(success: true, comments: []);
+      }
+      final comments = <PostComment>[];
+      for (final e in list) {
+        if (e is Map<String, dynamic>) comments.add(PostComment.fromJson(e));
+      }
+      return GetCommentsResult(success: true, comments: comments);
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return GetCommentsResult(success: false, errorMessage: msg);
+    } catch (e) {
+      return GetCommentsResult(success: false, errorMessage: e.toString());
+    }
+  }
+
+  /// POST save/unsave a post.
+  Future<SavePostResult> savePost(String postId) async {
+    if (postId.isEmpty) return SavePostResult(success: false, errorMessage: 'Invalid post id');
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return SavePostResult(success: false, errorMessage: 'Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.post(ApiConstants.postSave(postId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) return SavePostResult(success: false, errorMessage: 'Invalid response');
+      final savedList = data['savedPosts'];
+      final list = savedList is List ? savedList.map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList() : null;
+      return SavePostResult(
+        success: true,
+        postId: data['postId']?.toString(),
+        action: data['action']?.toString(),
+        savedPosts: list,
+      );
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return SavePostResult(success: false, errorMessage: msg);
+    } catch (e) {
+      return SavePostResult(success: false, errorMessage: e.toString());
+    }
+  }
+
+  /// DELETE a post.
+  ///
+  /// Allowed only when [currentUserId] matches [postAuthorId].
+  Future<DeletePostResult> deletePost({
+    required String postId,
+    required String currentUserId,
+    required String postAuthorId,
+  }) async {
+    if (postId.isEmpty) return DeletePostResult.failure('Invalid post id');
+    if (currentUserId.isEmpty) return DeletePostResult.failure('Not authenticated');
+    if (currentUserId != postAuthorId) {
+      return DeletePostResult.failure('You are not allowed to delete this post');
+    }
+
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return DeletePostResult.failure('Not authenticated');
+    }
+
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.delete(ApiConstants.postDelete(postId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null || data['success'] != true) {
+        final err = data?['message']?.toString() ??
+            data?['error']?.toString() ??
+            'Failed to delete post';
+        return DeletePostResult.failure(err);
+      }
+      return DeletePostResult.success(postId);
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return DeletePostResult.failure(msg);
+    } catch (e) {
+      return DeletePostResult.failure(e.toString());
+    }
+  }
+
+  /// POST report a post.
+  ///
+  /// Allowed only when [currentUserId] is NOT the author.
+  Future<ReportPostResult> reportPost({
+    required String postId,
+    required String currentUserId,
+    required String postAuthorId,
+  }) async {
+    if (postId.isEmpty) return ReportPostResult.failure('Invalid post id');
+    if (currentUserId.isEmpty) return ReportPostResult.failure('Not authenticated');
+    if (currentUserId == postAuthorId) {
+      return ReportPostResult.failure('You cannot report your own post');
+    }
+
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return ReportPostResult.failure('Not authenticated');
+    }
+
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.post(ApiConstants.postReport(postId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null || data['success'] != true) {
+        final err = data?['message']?.toString() ??
+            data?['error']?.toString() ??
+            'Failed to report post';
+        return ReportPostResult.failure(err);
+      }
+      return ReportPostResult.success(postId);
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return ReportPostResult.failure(msg);
+    } catch (e) {
+      return ReportPostResult.failure(e.toString());
+    }
+  }
+
+  /// POST share a post.
+  Future<SharePostResult> sharePost(String postId) async {
+    if (postId.isEmpty) return SharePostResult.failure('Invalid post id');
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return SharePostResult.failure('Not authenticated');
+    }
+
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.post(ApiConstants.postShare(postId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null || data['success'] != true) {
+        final err = data?['message']?.toString() ??
+            data?['error']?.toString() ??
+            'Failed to share post';
+        return SharePostResult.failure(err);
+      }
+      return SharePostResult.success(
+        postId: data['postId']?.toString() ?? postId,
+        action: data['action']?.toString(),
+      );
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response?.data['message'] ?? e.response?.data['error'] ?? 'Request failed').toString()
+          : 'Request failed';
+      return SharePostResult.failure(msg);
+    } catch (e) {
+      return SharePostResult.failure(e.toString());
+    }
+  }
+
+  /// GET saved posts.
+  Future<GetPostsResult> getSavedPosts() async {
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return GetPostsResult.failure('Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.get(ApiConstants.postGetSavedPosts);
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null || data['success'] != true) {
+        final err = data?['message'] ?? data?['error'] ?? 'Failed to load saved posts';
+        return GetPostsResult.failure(err.toString());
+      }
+      final list = data['savedPosts'];
+      if (list == null || list is! List) return GetPostsResult.success([]);
+      final posts = <ApiPostWithAuthor>[];
+      for (final e in list) {
+        if (e is Map<String, dynamic>) posts.add(ApiPostWithAuthor.fromJson(e));
+      }
+      return GetPostsResult.success(posts);
+    } on DioException catch (e) {
+      if (e.response != null) {
+        final d = e.response?.data;
+        final msg = d is Map ? (d['message'] ?? d['error'] ?? 'Request failed') : 'Request failed';
+        return GetPostsResult.failure(msg.toString());
+      }
+      return GetPostsResult.failure(_networkErrorMessage(e.message));
     } catch (e) {
       return GetPostsResult.failure(
         e is Exception ? e.toString() : 'Something went wrong',

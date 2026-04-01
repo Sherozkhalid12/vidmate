@@ -4,24 +4,38 @@ class UserModel {
   final String username;
   final String displayName;
   final String avatarUrl;
+  final bool verified;
   final String? bio;
   final int followers;
   final int following;
   final int posts;
   final bool isFollowing;
   final bool isOnline;
+  final bool privateAccount;
+  final bool showActivityStatus;
+  final bool allowComments;
+  final bool allowLikes;
+  final bool allowShares;
+  final bool allowStoryReplies;
 
   UserModel({
     required this.id,
     required this.username,
     required this.displayName,
     required this.avatarUrl,
+    this.verified = false,
     this.bio,
     this.followers = 0,
     this.following = 0,
     this.posts = 0,
     this.isFollowing = false,
     this.isOnline = false,
+    this.privateAccount = false,
+    this.showActivityStatus = true,
+    this.allowComments = true,
+    this.allowLikes = true,
+    this.allowShares = true,
+    this.allowStoryReplies = true,
   });
 
   /// Safely parse count from JSON (API may return int or list).
@@ -40,12 +54,19 @@ class UserModel {
           json['displayName'] ?? json['name'] ?? json['username'] ?? ''),
       avatarUrl: _stringFromJson(
           json['avatarUrl'] ?? json['profilePicture'] ?? json['image'] ?? ''),
+      verified: json['verified'] == true,
       bio: _stringFromJsonNullable(json['bio']),
       followers: _countFromJson(json['followers']),
       following: _countFromJson(json['following']),
       posts: _countFromJson(json['posts']),
       isFollowing: json['isFollowing'] == true,
       isOnline: json['isOnline'] == true,
+      privateAccount: json['privateAccount'] == true,
+      showActivityStatus: json['showActivityStatus'] != false,
+      allowComments: json['allowComments'] != false,
+      allowLikes: json['allowLikes'] != false,
+      allowShares: json['allowShares'] != false,
+      allowStoryReplies: json['allowStoryReplies'] != false,
     );
   }
 
@@ -66,12 +87,19 @@ class UserModel {
       'username': username,
       'displayName': displayName,
       'avatarUrl': avatarUrl,
+      'verified': verified,
       'bio': bio,
       'followers': followers,
       'following': following,
       'posts': posts,
       'isFollowing': isFollowing,
       'isOnline': isOnline,
+      'privateAccount': privateAccount,
+      'showActivityStatus': showActivityStatus,
+      'allowComments': allowComments,
+      'allowLikes': allowLikes,
+      'allowShares': allowShares,
+      'allowStoryReplies': allowStoryReplies,
     };
   }
 }

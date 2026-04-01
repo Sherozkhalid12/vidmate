@@ -1,22 +1,25 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/features/feed/create_content_screen.dart';
-import 'package:flutter_application_1/features/feed/create_post_screen.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/fetched_users_provider_riverpod.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../features/long_videos/providers/long_videos_provider.dart';
+import '../../core/utils/video_thumbnail_helper.dart';
 import '../../core/utils/theme_helper.dart';
 import '../settings/settings_screen.dart';
-import '../chat/chat_list_screen.dart';
-import 'followers_list_screen.dart';
+import '../chat/chat_screen.dart';
 import 'edit/edit_profile_screen.dart';
 import 'profile_post_viewer_screen.dart';
-import '../../core/services/mock_data_service.dart';
+import '../live/live_stream_studio_screen.dart';
 
 /// Instagram-style profile screen. If [user] is null, shows current user's profile (from API).
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -33,14 +36,38 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen>
     with SingleTickerProviderStateMixin {
-  bool _isFollowing = false;
   String? _displayedUserId;
+  String? _followPrefetchUserId;
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
+    _prefetchOtherUserIfNeeded();
+  }
+
+  void _prefetchOtherUserIfNeeded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final currentUserId = ref.read(currentUserProvider)?.id;
+      final incoming = widget.user;
+      if (incoming == null) return;
+      final incomingId = incoming.id.trim();
+      if (incomingId.isEmpty) return;
+      if (currentUserId != null && incomingId == currentUserId.trim()) return;
+      final cached = ref.read(fetchedUserProvider(incomingId));
+      if (cached != null) return;
+      ref.read(fetchedUsersProvider.notifier).fetchIfNeeded(incomingId);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user?.id != widget.user?.id) {
+      _prefetchOtherUserIfNeeded();
+    }
   }
 
   @override
@@ -52,7 +79,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   @override
   Widget build(BuildContext context) {
     final currentUser = ref.watch(currentUserProvider);
-    final user = widget.user ?? currentUser;
+    final incomingUser = widget.user;
+    final incomingId = incomingUser?.id.trim() ?? '';
+    // IMPORTANT: treat it as "other user" even if currentUser hasn't loaded yet,
+    // otherwise the fetched user won't be watched and UI can get stuck on placeholder/loading.
+    final isOtherUser = incomingUser != null &&
+        (currentUser == null || incomingId != currentUser.id.trim());
+    final fetchedUser = (isOtherUser && incomingId.isNotEmpty)
+        ? ref.watch(fetchedUserProvider(incomingId))
+        : null;
+    final isFetchingOtherUser = (isOtherUser && incomingId.isNotEmpty)
+        ? ref.watch(fetchedUserLoadingProvider(incomingId))
+        : false;
+    final otherUserError = (isOtherUser && incomingId.isNotEmpty)
+        ? ref.watch(fetchedUserErrorProvider(incomingId))
+        : null;
+    final user = (isOtherUser ? (fetchedUser ?? incomingUser) : (incomingUser ?? currentUser));
     if (user == null) {
       return Scaffold(
         backgroundColor: Colors.transparent,
@@ -62,13 +104,124 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         ),
       );
     }
+    if (isOtherUser && fetchedUser == null && isFetchingOtherUser) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Container(
+          decoration: BoxDecoration(gradient: context.backgroundGradient),
+          child: Center(
+            child: CircularProgressIndicator(
+              color: ThemeHelper.getAccentColor(context),
+            ),
+          ),
+        ),
+      );
+    }
+    if (isOtherUser && fetchedUser == null && otherUserError != null) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Container(
+          decoration: BoxDecoration(gradient: context.backgroundGradient),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.error_outline,
+                      color: ThemeHelper.getTextMuted(context), size: 34),
+                  const SizedBox(height: 10),
+                  Text(
+                    otherUserError,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextSecondary(context),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 44,
+                    child: ElevatedButton(
+                      onPressed: incomingId.isEmpty
+                          ? null
+                          : () => ref
+                              .read(fetchedUsersProvider.notifier)
+                              .fetch(incomingId),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ThemeHelper.getAccentColor(context),
+                        foregroundColor: ThemeHelper.getOnAccentColor(context),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Retry',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     if (user.id != _displayedUserId) {
       _displayedUserId = user.id;
-      _isFollowing = user.isFollowing;
     }
     final userPostsState = ref.watch(userPostsProvider(user.id));
     final posts = userPostsState.posts;
+    final reelsState = ref.watch(reelsProvider);
+    final longVideosState = ref.watch(longVideosProvider);
+    final reelPosts = () {
+      final set = <String>{};
+      final list = <PostModel>[];
+      for (final p in posts.where((p) => p.postType == 'reel')) {
+        if (set.add(p.id)) list.add(p);
+      }
+      for (final p in reelsState.reels.where((r) => r.author.id == user.id)) {
+        if (set.add(p.id)) list.add(p);
+      }
+      return list;
+    }();
+
+    final longVideoPosts = () {
+      final set = <String>{};
+      final list = <PostModel>[];
+      for (final p in posts.where((p) => p.postType == 'longVideo')) {
+        if (set.add(p.id)) list.add(p);
+      }
+      for (final p in longVideosState.videos.where((v) => v.author.id == user.id)) {
+        if (set.add(p.id)) list.add(p);
+      }
+      return list;
+    }();
     final isCurrentUser = currentUser != null && currentUser.id == user.id;
+    final followOverrides = ref.watch(followStateProvider);
+    final followState = ref.watch(followProvider);
+    final overrideStatus = followOverrides[user.id];
+    final isFollowing = overrideStatus == FollowRelationshipStatus.following ||
+        (overrideStatus == null &&
+            (followState.followingIds.isNotEmpty
+                ? followState.followingIds.contains(user.id)
+                : user.isFollowing));
+    final isPending = overrideStatus == FollowRelationshipStatus.pending ||
+        (overrideStatus == null &&
+            followState.outgoingPendingRequests.containsKey(user.id));
+    final followersCount =
+        isCurrentUser ? followState.followersList.length : user.followers;
+    final followingCount =
+        isCurrentUser ? followState.followingIds.length : user.following;
+    if (isCurrentUser && _followPrefetchUserId != user.id) {
+      _followPrefetchUserId = user.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(followProvider.notifier).ensureFollowListsLoaded();
+      });
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -100,13 +253,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     SizedBox(width: 12,),
                     if (isCurrentUser)
                       InkWell(
-                        onTap: (){
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>  CreateContentScreen(),
-                            ),
-                          );
+                        onTap: () {
+                          _showCreateContentSheet();
                         },
                         child: Icon(
                           CupertinoIcons.plus,
@@ -123,18 +271,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                 ),
               ),
               actions: [
-                IconButton(
-                  icon: Icon(Icons.menu),
-                  onPressed: () {
-                    // Navigate directly to settings
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const SettingsScreen(),
-                      ),
-                    );
-                  },
-                ),
+                if (isCurrentUser)
+                  IconButton(
+                    icon: const Icon(CupertinoIcons.line_horizontal_3),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                  ),
               ],
             ),
 
@@ -200,19 +348,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                             ),
                           ),
                           const SizedBox(width: 4),
-                          Container(
-                            width: 16,
-                            height: 16,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.blue,
+                          if (user.verified)
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.blue,
+                              ),
+                              child: const Icon(
+                                Icons.check,
+                                color: Colors.white,
+                                size: 12,
+                              ),
                             ),
-                            child: const Icon(
-                              Icons.check,
-                              color: Colors.white,
-                              size: 12,
-                            ),
-                          ),
                         ],
                       ),
                     ),
@@ -221,13 +370,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        _buildStatColumn(user.followers, "Follower's"),
-                        _buildStatColumn(user.following, 'Following'),
+                        _buildStatColumn(followersCount, "Follower's", isCurrentUser),
+                        _buildStatColumn(followingCount, 'Following', isCurrentUser),
                         _buildStatColumn(
                           userPostsState.isLoading && posts.isEmpty
                               ? user.posts
-                              : posts.length,
+                              : posts.where((p) => p.postType != 'story').length,
                           'Posts',
+                          false,
                         ),
                       ],
                     ),
@@ -271,12 +421,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                             ]
                           : [
                               Expanded(
-                                child: _isFollowing
+                                child: isFollowing
                                     ? OutlinedButton(
                                         onPressed: () {
-                                          setState(() {
-                                            _isFollowing = !_isFollowing;
-                                          });
+                                          ref.read(followProvider.notifier).unfollow(user.id);
                                         },
                                         style: OutlinedButton.styleFrom(
                                           side: BorderSide(
@@ -299,9 +447,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                                       )
                                     : ElevatedButton(
                                         onPressed: () {
-                                          setState(() {
-                                            _isFollowing = !_isFollowing;
-                                          });
+                                          ref.read(followProvider.notifier).follow(user.id);
                                         },
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: ThemeHelper.getAccentColor(context),
@@ -313,7 +459,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                                           elevation: 0,
                                         ),
                                         child: Text(
-                                          'Follow',
+                                          isPending ? 'Requested' : 'Follow',
                                           style: TextStyle(
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -327,7 +473,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) => ChatListScreen(),
+                                        builder: (context) => ChatScreen(user: user),
                                       ),
                                     );
                                   },
@@ -416,17 +562,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                 ),
               ),
             ),
-            // Content grid
+            // Content grid - categorize by postType from API
             SliverFillRemaining(
               hasScrollBody: true,
               child: userPostsState.isLoading && posts.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(child: CircularProgressIndicator(color: ThemeHelper.getAccentColor(context)))
                   : TabBarView(
                       controller: _tabController,
                       children: [
-                        _buildPostsGrid(posts),
-                        _buildReelsGrid(posts),
-                        _buildLongVideosGrid(posts),
+                        _buildPostsGrid(posts.where((p) => p.postType == 'post').toList()),
+                        _buildReelsGrid(reelPosts),
+                        _buildLongVideosGrid(longVideoPosts),
                       ],
                     ),
             ),
@@ -436,11 +582,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  Widget _buildStatColumn(int value, String label) {
+  Widget _buildStatColumn(int value, String label, [bool canOpenSheet = false]) {
     return GestureDetector(
-      onTap: () {
-        _showFollowersFollowingSheet(label.toLowerCase().contains('follower'));
-      },
+      onTap: canOpenSheet
+          ? () {
+              _showFollowersFollowingSheet(label.toLowerCase().contains('follower'));
+            }
+          : null,
       child: Column(
         children: [
           Text(
@@ -464,8 +612,206 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
+  /// Hovering bottom sheet for creating new content (Post, Story, Reel, Long Video, Live).
+  /// Opaque background for both light and dark modes; improved card design.
+  void _showCreateContentSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        final bgColor = ThemeHelper.getBackgroundColor(context);
+        final surfaceColor = ThemeHelper.getSurfaceColor(context);
+        final borderColor = ThemeHelper.getBorderColor(context);
+        final textPrimary = ThemeHelper.getTextPrimary(context);
+        final textSecondary = ThemeHelper.getTextSecondary(context);
+        final accent = ThemeHelper.getAccentColor(context);
+
+        final options = [
+          (
+            type: ContentType.post,
+            label: 'Post',
+            icon: Icons.grid_on_outlined,
+          ),
+          (
+            type: ContentType.story,
+            label: 'Story',
+            icon: Icons.auto_stories_outlined,
+          ),
+          (
+            type: ContentType.reel,
+            label: 'Reel',
+            icon: Icons.video_library_outlined,
+          ),
+          (
+            type: ContentType.longVideo,
+            label: 'Long video',
+            icon: Icons.movie_outlined,
+          ),
+          (
+            type: ContentType.live,
+            label: 'Live',
+            icon: Icons.live_tv_rounded,
+          ),
+        ];
+
+        return Container(
+          margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: borderColor.withOpacity(0.6), width: 1),
+            color: bgColor,
+            boxShadow: [
+              BoxShadow(
+                color: textPrimary.withOpacity(isDark ? 0.25 : 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Create',
+                        style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        splashRadius: 20,
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: textSecondary,
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Choose what you want to share.',
+                    style: TextStyle(
+                      color: textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 0.9,
+                    ),
+                    itemCount: options.length,
+                    itemBuilder: (context, index) {
+                      final opt = options[index];
+                      final cardBg = surfaceColor;
+                      final cardBorder = borderColor.withOpacity(isDark ? 0.7 : 0.5);
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            Navigator.pop(context);
+                            if (opt.type == ContentType.live) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const LiveStreamStudioScreen(),
+                                ),
+                              );
+                              return;
+                            }
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => CreateContentScreen(
+                                  initialType: opt.type,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              color: cardBg,
+                              border: Border.all(color: cardBorder, width: 1),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: textPrimary.withOpacity(isDark ? 0.08 : 0.06),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: accent.withOpacity(isDark ? 0.2 : 0.14),
+                                  ),
+                                  child: Icon(
+                                    opt.icon,
+                                    size: 22,
+                                    color: accent,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  opt.label,
+                                  style: TextStyle(
+                                    color: textPrimary,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _showFollowersFollowingSheet(bool isFollowers) {
-    final users = MockDataService.mockUsers.take(10).toList();
+    final followState = ref.read(followProvider);
+    final users = isFollowers
+        ? followState.followersList
+        : followState.followingList;
+    final isLoading = isFollowers
+        ? followState.isLoadingFollowers
+        : followState.isLoadingFollowing;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -478,105 +824,135 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         minChildSize: 0.5,
         maxChildSize: 0.95,
         expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: ThemeHelper.getBorderColor(context),
-                    width: 1,
+        builder: (context, scrollController) => Consumer(
+          builder: (context, ref, _) {
+            final followStateLive = ref.watch(followProvider);
+            final usersLive = isFollowers
+                ? followStateLive.followersList
+                : followStateLive.followingList;
+            final isLoadingLive = isFollowers
+                ? followStateLive.isLoadingFollowers
+                : followStateLive.isLoadingFollowing;
+            final currentUserId = ref.watch(currentUserProvider)?.id;
+            return Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: ThemeHelper.getBorderColor(context),
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          isFollowers ? 'Followers' : 'Following',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextPrimary(context),
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close,
+                          color: ThemeHelper.getTextPrimary(context),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      isFollowers ? 'Followers' : 'Following',
-                      style: TextStyle(
-                        color: ThemeHelper.getTextPrimary(context),
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      Icons.close,
-                      color: ThemeHelper.getTextPrimary(context),
-                    ),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                itemCount: users.length,
-                itemBuilder: (context, index) {
-                  final user = users[index];
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundImage: NetworkImage(user.avatarUrl),
-                      backgroundColor: ThemeHelper.getSurfaceColor(context),
-                    ),
-                    title: Text(
-                      user.username,
-                      style: TextStyle(
-                        color: ThemeHelper.getTextPrimary(context),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      user.displayName,
-                      style: TextStyle(
-                        color: ThemeHelper.getTextSecondary(context),
-                      ),
-                    ),
-                    trailing: user.isFollowing
-                        ? OutlinedButton(
-                            onPressed: () {},
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(
-                                color: ThemeHelper.getTextPrimary(context),
-                                width: 1.5,
-                              ),
-                              backgroundColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            child: Text(
-                              'Following',
-                              style: TextStyle(
-                                color: ThemeHelper.getTextPrimary(context),
-                                fontSize: 12,
-                              ),
-                            ),
-                          )
-                        : ElevatedButton(
-                            onPressed: () {},
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: ThemeHelper.getAccentColor(context),
-                              foregroundColor: ThemeHelper.getOnAccentColor(context),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            child: Text(
-                              'Follow',
-                              style: TextStyle(fontSize: 12),
-                            ),
+                Expanded(
+                  child: isLoadingLive && usersLive.isEmpty
+                      ? Center(
+                          child: CircularProgressIndicator(
+                            color: ThemeHelper.getAccentColor(context),
                           ),
-                  );
-                },
-              ),
-            ),
-          ],
+                        )
+                      : ListView.builder(
+                          controller: scrollController,
+                          itemCount: usersLive.length,
+                          itemBuilder: (context, index) {
+                            final listUser = usersLive[index];
+                            final isFollowingUser = followStateLive.followingIds.contains(listUser.id) || listUser.isFollowing;
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundImage: listUser.avatarUrl.isNotEmpty
+                                    ? NetworkImage(listUser.avatarUrl)
+                                    : null,
+                                backgroundColor: ThemeHelper.getSurfaceColor(context),
+                                child: listUser.avatarUrl.isEmpty
+                                    ? Icon(Icons.person, color: ThemeHelper.getTextSecondary(context))
+                                    : null,
+                              ),
+                              title: Text(
+                                listUser.username,
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextPrimary(context),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              subtitle: Text(
+                                listUser.displayName,
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextSecondary(context),
+                                ),
+                              ),
+                              trailing: currentUserId == listUser.id
+                                  ? const SizedBox.shrink()
+                                  : isFollowingUser
+                                      ? OutlinedButton(
+                                          onPressed: () {
+                                            ref.read(followProvider.notifier).unfollow(listUser.id);
+                                          },
+                                          style: OutlinedButton.styleFrom(
+                                            side: BorderSide(
+                                              color: ThemeHelper.getTextPrimary(context),
+                                              width: 1.5,
+                                            ),
+                                            backgroundColor: Colors.transparent,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Following',
+                                            style: TextStyle(
+                                              color: ThemeHelper.getTextPrimary(context),
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        )
+                                      : ElevatedButton(
+                                          onPressed: () {
+                                            ref.read(followProvider.notifier).follow(listUser.id);
+                                          },
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: ThemeHelper.getAccentColor(context),
+                                            foregroundColor: ThemeHelper.getOnAccentColor(context),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Follow',
+                                            style: TextStyle(fontSize: 12),
+                                          ),
+                                        ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -614,7 +990,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       ),
                     );
                   },
-                  child: Container(
+                        child: Container(
                     decoration: BoxDecoration(
                       color: context.surfaceColor,
                     ),
@@ -623,7 +999,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       children: [
                         (() {
                           final imageUrl =
-                              posts[index].thumbnailUrl ?? posts[index].imageUrl ?? '';
+                              posts[index].effectiveThumbnailUrl ?? posts[index].imageUrl ?? '';
                           if (imageUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
@@ -633,18 +1009,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                               ),
                             );
                           }
-                          return Image.network(
-                            imageUrl,
+                          return CachedNetworkImage(
+                            imageUrl: imageUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: context.surfaceColor,
-                                child: Icon(
-                                  Icons.image_not_supported,
-                                  color: context.textMuted,
-                                ),
-                              );
-                            },
+                            fadeInDuration: const Duration(milliseconds: 180),
+                            placeholder: (context, url) => Container(
+                              color: context.surfaceColor,
+                              child: Icon(
+                                Icons.image,
+                                color: context.textMuted,
+                              ),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: context.surfaceColor,
+                              child: Icon(
+                                Icons.image_not_supported,
+                                color: context.textMuted,
+                              ),
+                            ),
                           );
                         })(),
                         if (posts[index].isVideo)
@@ -677,8 +1059,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   Widget _buildReelsGrid(List<PostModel> posts) {
-    final reels = posts.where((p) => p.isVideo).toList();
-    if (reels.isEmpty) {
+    if (posts.isEmpty) {
       return const SizedBox.shrink();
     }
     return AnimationLimiter(
@@ -690,7 +1071,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           crossAxisSpacing: 2,
           mainAxisSpacing: 2,
         ),
-        itemCount: reels.length,
+        itemCount: posts.length,
         itemBuilder: (context, index) {
           return AnimationConfiguration.staggeredGrid(
             position: index,
@@ -699,7 +1080,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             child: ScaleAnimation(
               child: FadeInAnimation(
                 child: GestureDetector(
-                  onTap: () {},
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProfilePostViewerScreen(
+                          posts: posts,
+                          initialIndex: index,
+                        ),
+                      ),
+                    );
+                  },
                   child: Container(
                     decoration: BoxDecoration(
                       color: context.surfaceColor,
@@ -708,20 +1099,49 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       fit: StackFit.expand,
                       children: [
                         (() {
-                          final thumbnailUrl = reels[index].thumbnailUrl ?? '';
-                          if (thumbnailUrl.isEmpty) {
+                          final post = posts[index];
+
+                          // Prefer a generated thumbnail for reels; fall back through provided fields.
+                          String? thumbnailUrl;
+                          if (post.videoUrl?.isNotEmpty == true) {
+                            thumbnailUrl = VideoThumbnailHelper.thumbnailFromVideoUrl(post.videoUrl!);
+                          }
+                          thumbnailUrl = thumbnailUrl?.isNotEmpty == true
+                              ? thumbnailUrl
+                              : (post.effectiveThumbnailUrl?.isNotEmpty == true
+                                  ? post.effectiveThumbnailUrl
+                                  : null);
+                          thumbnailUrl ??= post.thumbnailUrl?.isNotEmpty == true ? post.thumbnailUrl : null;
+                          thumbnailUrl ??= post.imageUrl?.isNotEmpty == true ? post.imageUrl : null;
+                          if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+                            final imgs = post.imageUrls;
+                            if (imgs.isNotEmpty && imgs.first.isNotEmpty) {
+                              thumbnailUrl = imgs.first;
+                            }
+                          }
+
+                          if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
+                              alignment: Alignment.center,
+                              child: Icon(Icons.video_library_outlined, color: context.textMuted, size: 24),
                             );
                           }
-                          return Image.network(
-                            thumbnailUrl,
+
+                          return CachedNetworkImage(
+                            imageUrl: thumbnailUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: context.surfaceColor,
-                              );
-                            },
+                            fadeInDuration: const Duration(milliseconds: 120),
+                            placeholder: (context, url) => Container(
+                              color: context.surfaceColor,
+                              alignment: Alignment.center,
+                              child: Icon(Icons.video_library_outlined, color: context.textMuted, size: 20),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: context.surfaceColor,
+                              alignment: Alignment.center,
+                              child: Icon(Icons.video_library_outlined, color: context.textMuted, size: 22),
+                            ),
                           );
                         })(),
                         Center(
@@ -744,8 +1164,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   Widget _buildLongVideosGrid(List<PostModel> posts) {
-    final longVideos = posts.where((p) => p.isVideo && (p.videoDuration?.inMinutes ?? 0) >= 1).toList();
-    if (longVideos.isEmpty) {
+    if (posts.isEmpty) {
       return const SizedBox.shrink();
     }
     return AnimationLimiter(
@@ -757,7 +1176,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           crossAxisSpacing: 2,
           mainAxisSpacing: 2,
         ),
-        itemCount: longVideos.length,
+        itemCount: posts.length,
         itemBuilder: (context, index) {
           return AnimationConfiguration.staggeredGrid(
             position: index,
@@ -766,7 +1185,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             child: ScaleAnimation(
               child: FadeInAnimation(
                 child: GestureDetector(
-                  onTap: () {},
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProfilePostViewerScreen(
+                          posts: posts,
+                          initialIndex: index,
+                        ),
+                      ),
+                    );
+                  },
                   child: Container(
                     decoration: BoxDecoration(
                       color: context.surfaceColor,
@@ -775,20 +1204,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       fit: StackFit.expand,
                       children: [
                         (() {
-                          final thumbnailUrl = longVideos[index].thumbnailUrl ?? '';
+                          final thumbnailUrl = posts[index].effectiveThumbnailUrl ?? posts[index].thumbnailUrl ?? '';
                           if (thumbnailUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
                             );
                           }
-                          return Image.network(
-                            thumbnailUrl,
+                          return CachedNetworkImage(
+                            imageUrl: thumbnailUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: context.surfaceColor,
-                              );
-                            },
+                            fadeInDuration: const Duration(milliseconds: 180),
+                            placeholder: (context, url) => Container(
+                              color: context.surfaceColor,
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: context.surfaceColor,
+                            ),
                           );
                         })(),
                         Center(
@@ -798,7 +1229,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                             size: 32,
                           ),
                         ),
-                        if (longVideos[index].videoDuration != null)
+                        if (posts[index].videoDuration != null)
                           Positioned(
                             bottom: 4,
                             right: 4,
@@ -812,7 +1243,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                _formatDuration(longVideos[index].videoDuration!),
+                                _formatDuration(posts[index].videoDuration!),
                                 style: TextStyle(
                                   color: context.textPrimary,
                                   fontSize: 10,

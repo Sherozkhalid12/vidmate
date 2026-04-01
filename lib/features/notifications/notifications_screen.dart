@@ -1,32 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/services/mock_data_service.dart';
 import '../../core/models/user_model.dart';
+import '../../core/providers/notifications_provider_riverpod.dart';
+import '../../services/notifications/notifications_service.dart';
+import '../../core/widgets/glass_card.dart';
 import '../profile/profile_screen.dart';
 
 /// Notifications screen with activity feed
-class NotificationsScreen extends StatefulWidget {
+class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
 
   @override
-  State<NotificationsScreen> createState() => _NotificationsScreenState();
+  ConsumerState<NotificationsScreen> createState() =>
+      _NotificationsScreenState();
 }
 
-class _NotificationsScreenState extends State<NotificationsScreen> {
-  final List<Map<String, dynamic>> _notifications = [];
-
+class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadNotifications();
-  }
-
-  void _loadNotifications() {
-    setState(() {
-      _notifications.addAll(MockDataService.getMockNotifications());
+    // Load from API on first open; keep existing list for subsequent opens.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = ref.read(notificationsProvider);
+      if (!state.isLoading && state.notifications.isEmpty) {
+        ref.read(notificationsProvider.notifier).loadNotifications();
+      }
     });
   }
 
@@ -59,6 +61,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final state = ref.watch(notificationsProvider);
+    final notifications = state.notifications;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Material(
       color: ThemeHelper.getBackgroundColor(context),
@@ -86,13 +90,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              setState(() {
-                for (var notification in _notifications) {
-                  notification['isRead'] = true;
-                }
-              });
-            },
+            onPressed: notifications.isEmpty
+                ? null
+                : () {
+                    ref
+                        .read(notificationsProvider.notifier)
+                        .markAllAsRead();
+                  },
             child: Text(
               'Mark all as read',
               style: TextStyle(
@@ -108,7 +112,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         decoration: BoxDecoration(
           gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-        child: _notifications.isEmpty
+        child: state.isLoading && notifications.isEmpty
+          ? const Center(
+              child: CircularProgressIndicator(),
+            )
+          : notifications.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -132,9 +140,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           : AnimationLimiter(
               child: ListView.builder(
                 padding: const EdgeInsets.all(16),
-                itemCount: _notifications.length,
+                itemCount: notifications.length,
                 itemBuilder: (context, index) {
-                  final notification = _notifications[index];
+                  final notification = notifications[index];
                   return AnimationConfiguration.staggeredList(
                     position: index,
                     duration: const Duration(milliseconds: 375),
@@ -153,13 +161,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _buildNotificationCard(Map<String, dynamic> notification) {
-    final user = notification['user'] as UserModel;
-    final type = notification['type'] as String;
-    final isRead = notification['isRead'] as bool;
-    final text = notification['text'] as String;
+  Widget _buildNotificationCard(NotificationItem notification) {
+    final user = ref
+        .read(notificationsProvider.notifier)
+        .buildUserPlaceholder(notification);
+    final type = notification.type;
+    final isRead = notification.isRead;
+    final text = notification.body.isNotEmpty
+        ? notification.body
+        : notification.title;
 
-    return InkWell(
+    return GlassCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       onTap: () {
         Navigator.push(
           context,
@@ -167,40 +181,41 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             builder: (context) => ProfileScreen(user: user),
           ),
         );
-        setState(() {
-          notification['isRead'] = true;
-        });
+        ref
+            .read(notificationsProvider.notifier)
+            .markAsRead(notification.id);
       },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
+      child: Row(
           children: [
             // Profile image on the left
             ClipOval(
-              child: Image.network(
-                user.avatarUrl,
-                width: 50,
-                height: 50,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    width: 50,
-                    height: 50,
-                    color: ThemeHelper.getSurfaceColor(context),
-                    child: Icon(
-                      Icons.person,
-                      color: ThemeHelper.getTextSecondary(context),
+              child: user.avatarUrl.isNotEmpty
+                  ? Image.network(
+                      user.avatarUrl,
+                      width: 50,
+                      height: 50,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          width: 50,
+                          height: 50,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(
+                            Icons.person,
+                            color: ThemeHelper.getTextSecondary(context),
+                          ),
+                        );
+                      },
+                    )
+                  : Container(
+                      width: 50,
+                      height: 50,
+                      color: ThemeHelper.getSurfaceColor(context),
+                      child: Icon(
+                        Icons.person,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
                     ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Notification type icon (right of image, left of text)
-            Icon(
-              _getNotificationIcon(type),
-              color: _getNotificationColor(type),
-              size: 28,
             ),
             const SizedBox(width: 12),
             // Content
@@ -227,7 +242,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    _formatTime(notification['timestamp'] as DateTime),
+                    _formatTime(notification.createdAt),
                     style: TextStyle(
                       color: ThemeHelper.getTextMuted(context),
                       fontSize: 12,
@@ -248,7 +263,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ),
           ],
         ),
-      ),
     );
   }
 
@@ -267,5 +281,4 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 }
-
 

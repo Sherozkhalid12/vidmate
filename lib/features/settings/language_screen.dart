@@ -33,15 +33,28 @@ class _LanguageScreenState extends State<LanguageScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Language'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-      ),
-      body: ListView.builder(
+        child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Language',
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+              ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
         padding: const EdgeInsets.all(20),
         itemCount: _languages.length,
         itemBuilder: (context, index) {
@@ -55,21 +68,21 @@ class _LanguageScreenState extends State<LanguageScreen> {
             child: ListTile(
               leading: Icon(
                 isSelected ? Icons.check_circle : Icons.circle_outlined,
-                color: isSelected 
-                    ? ThemeHelper.getAccentColor(context) // Theme-aware accent color
-                    : context.textMuted,
+                color: isSelected
+                    ? ThemeHelper.getAccentColor(context)
+                    : ThemeHelper.getTextMuted(context),
               ),
               title: Text(
                 language['name']!,
                 style: TextStyle(
-                  color: context.textPrimary,
+                  color: ThemeHelper.getTextPrimary(context),
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                 ),
               ),
               subtitle: Text(
                 language['native']!,
                 style: TextStyle(
-                  color: context.textSecondary,
+                  color: ThemeHelper.getTextSecondary(context),
                   fontSize: 12,
                 ),
               ),
@@ -79,14 +92,21 @@ class _LanguageScreenState extends State<LanguageScreen> {
                 });
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Language changed to ${language['name']}'),
-                    backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                    content: Text(
+                      'Language changed to ${language['name']}',
+                      style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+                    ),
+                    backgroundColor: ThemeHelper.getAccentColor(context),
                   ),
                 );
               },
             ),
           );
         },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

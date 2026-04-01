@@ -5,13 +5,15 @@ import '../../core/widgets/glass_card.dart';
 import '../../core/providers/theme_provider_riverpod.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/user_preferences_provider_riverpod.dart';
 import '../profile/edit/edit_profile_screen.dart';
 import '../../core/services/mock_data_service.dart';
 import 'privacy_security_screen.dart';
-import 'language_screen.dart';
+// import 'language_screen.dart';
 import 'help_center_screen.dart';
 import 'terms_screen.dart';
 import 'privacy_policy_screen.dart';
+import 'saved_screen.dart';
 import '../analytics/analytics_screen.dart';
 import '../copyright/copyright_screen.dart';
 import '../auth/login_screen.dart';
@@ -25,12 +27,18 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _notificationsEnabled = true;
-  bool _autoPlayEnabled = true;
-  bool _downloadEnabled = false;
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      ref.read(userPreferencesProvider.notifier).loadFromStorage();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final preferencesState = ref.watch(userPreferencesProvider);
+    final preferences = preferencesState.preferences;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -82,6 +90,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSettingTile(
+                    icon: Icons.bookmark_border_rounded,
+                    title: 'Saved',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SavedScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
+                  _buildSettingTile(
                     icon: Icons.lock_outline,
                     title: 'Privacy & Security',
                     onTap: () {
@@ -94,25 +115,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     },
                   ),
                   Divider(color: ThemeHelper.getBorderColor(context)),
-                  _buildSettingTile(
-                    icon: Icons.language,
-                    title: 'Language',
-                    trailing: Text(
-                      'English',
-                      style: TextStyle(
-                        color: ThemeHelper.getTextSecondary(context),
-                        fontSize: 14,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const LanguageScreen(),
-                        ),
-                      );
-                    },
-                  ),
+                  // Language tile – commented out for now
+                  // _buildSettingTile(
+                  //   icon: Icons.language,
+                  //   title: 'Language',
+                  //   trailing: Text(
+                  //     'English',
+                  //     style: TextStyle(
+                  //       color: ThemeHelper.getTextSecondary(context),
+                  //       fontSize: 14,
+                  //     ),
+                  //   ),
+                  //   onTap: () {
+                  //     Navigator.push(
+                  //       context,
+                  //       MaterialPageRoute(
+                  //         builder: (context) => const LanguageScreen(),
+                  //       ),
+                  //     );
+                  //   },
+                  // ),
                 ],
               ),
             ),
@@ -127,12 +149,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   _buildSwitchTile(
                     icon: Icons.notifications_outlined,
                     title: 'Push Notifications',
-                    value: _notificationsEnabled,
-                    onChanged: (value) {
-                      setState(() {
-                        _notificationsEnabled = value;
-                      });
-                    },
+                    value: preferences.notificationsEnabled,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(notificationsEnabled: value),
+                        ),
                   ),
                   Divider(color: ThemeHelper.getBorderColor(context)),
                   // Dark mode toggle using Riverpod for super fast updates
@@ -154,23 +177,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   _buildSwitchTile(
                     icon: Icons.play_circle_outline,
                     title: 'Auto-play Videos',
-                    value: _autoPlayEnabled,
-                    onChanged: (value) {
-                      setState(() {
-                        _autoPlayEnabled = value;
-                      });
-                    },
+                    value: preferences.autoplayvideos,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(autoplayvideos: value),
+                        ),
                   ),
                   Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildSwitchTile(
                     icon: Icons.download_outlined,
                     title: 'Download Over Wi-Fi Only',
-                    value: _downloadEnabled,
-                    onChanged: (value) {
-                      setState(() {
-                        _downloadEnabled = value;
-                      });
-                    },
+                    value: preferences.downloadOverWifi,
+                    onChanged: (value) => ref
+                        .read(userPreferencesProvider.notifier)
+                        .updatePreference(
+                          update: (current) =>
+                              current.copyWith(downloadOverWifi: value),
+                        ),
                   ),
                 ],
               ),

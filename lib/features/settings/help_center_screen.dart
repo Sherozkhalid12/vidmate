@@ -79,28 +79,44 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Help Center'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.search),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Search help articles'),
-                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+        child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Help Center',
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+              ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Search help articles',
+                          style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+                        ),
+                        backgroundColor: ThemeHelper.getAccentColor(context),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
+              ],
+            ),
+            Expanded(
+              child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -121,7 +137,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                   Text(
                     'Need More Help?',
                     style: TextStyle(
-                      color: context.textPrimary,
+                      color: ThemeHelper.getTextPrimary(context),
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -130,7 +146,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                   Text(
                     'Contact our support team',
                     style: TextStyle(
-                      color: context.textSecondary,
+                      color: ThemeHelper.getTextSecondary(context),
                       fontSize: 14,
                     ),
                   ),
@@ -139,16 +155,19 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                     onPressed: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('Opening support chat...'),
-                          backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                          content: Text(
+                            'Opening support chat...',
+                            style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+                          ),
+                          backgroundColor: ThemeHelper.getAccentColor(context),
                         ),
                       );
                     },
                     icon: Icon(Icons.chat),
                     label: Text('Contact Support'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
-                      foregroundColor: context.textPrimary,
+                      backgroundColor: ThemeHelper.getAccentColor(context),
+                      foregroundColor: ThemeHelper.getOnAccentColor(context),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 24,
                         vertical: 12,
@@ -162,7 +181,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
             Text(
               'Frequently Asked Questions',
               style: TextStyle(
-                color: context.textPrimary,
+                color: ThemeHelper.getTextPrimary(context),
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
@@ -172,6 +191,10 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
               return _buildHelpCategory(category);
             }),
             const SizedBox(height: 40),
+          ],
+        ),
+              ),
+            ),
           ],
         ),
       ),
@@ -186,12 +209,12 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
       child: ExpansionTile(
         leading: Icon(
           category['icon'] as IconData,
-          color: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+          color: ThemeHelper.getAccentColor(context),
         ),
         title: Text(
           category['title'] as String,
           style: TextStyle(
-            color: context.textPrimary,
+            color: ThemeHelper.getTextPrimary(context),
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -199,21 +222,24 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
           return ListTile(
             leading: Icon(
               Icons.help_outline,
-              color: context.textMuted,
+              color: ThemeHelper.getTextMuted(context),
               size: 20,
             ),
             title: Text(
               item,
               style: TextStyle(
-                color: context.textSecondary,
+                color: ThemeHelper.getTextSecondary(context),
                 fontSize: 14,
               ),
             ),
             onTap: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Opening: $item'),
-                  backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                  content: Text(
+                    'Opening: $item',
+                    style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
+                  ),
+                  backgroundColor: ThemeHelper.getAccentColor(context),
                 ),
               );
             },

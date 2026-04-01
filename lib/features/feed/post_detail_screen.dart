@@ -1,19 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_button.dart';
 import '../../core/models/post_model.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/follow_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import 'comments_screen.dart';
 
 /// Post detail screen with full interactions
-class PostDetailScreen extends StatelessWidget {
+class PostDetailScreen extends ConsumerWidget {
   final PostModel post;
 
   const PostDetailScreen({super.key, required this.post});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: context.backgroundColor,
       appBar: AppBar(
@@ -146,27 +150,38 @@ class PostDetailScreen extends StatelessWidget {
                           ],
                         ),
                       ),
-                      GlassButton(
-                        text: post.author.isFollowing ? 'Following' : 'Follow',
-                        backgroundColor: post.author.isFollowing
-                            ? context.surfaceColor
-                            : null,
-                        textColor: post.author.isFollowing
-                            ? context.textPrimary
-                            : null,
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Follow feature coming soon'),
-                              backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                      ref.watch(currentUserProvider)?.id == post.author.id
+                          ? const SizedBox.shrink()
+                          : Consumer(
+                              builder: (context, ref, _) {
+                                final followState = ref.watch(followProvider);
+                                final overrideStatus =
+                                    ref.watch(followStateProvider)[post.author.id];
+                                final isFollowing =
+                                    overrideStatus == FollowRelationshipStatus.following ||
+                                        (overrideStatus == null &&
+                                            (followState.followingIds.isNotEmpty
+                                                ? followState.followingIds
+                                                    .contains(post.author.id)
+                                                : post.author.isFollowing));
+                                return GlassButton(
+                                  text: isFollowing ? 'Following' : 'Follow',
+                                  backgroundColor: isFollowing
+                                      ? context.surfaceColor
+                                      : null,
+                                  textColor: isFollowing
+                                      ? context.textPrimary
+                                      : null,
+                                  onPressed: () {
+                                    ref.read(followProvider.notifier).toggleFollow(post.author.id);
+                                  },
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),

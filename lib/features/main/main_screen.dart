@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/bottom_nav_bar.dart';
+import '../../core/providers/stories_provider_riverpod.dart';
 import '../home/home_feed_page.dart';
 import '../reels/reels_page.dart';
 import '../stories/story_page.dart';
@@ -8,19 +10,18 @@ import '../long_videos/long_videos_page.dart';
 import '../music/music_page.dart';
 /// Root screen with persistent glassmorphic bottom navigation
 /// Uses Stack architecture: PageView for content, BottomNavBar as overlay
-class MainScreen extends StatefulWidget {
+class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key});
 
   @override
-  State<MainScreen> createState() => _MainScreenState();
-  
+  ConsumerState<MainScreen> createState() => _MainScreenState();
+
   // Static reference to access MainScreen state from anywhere
   static _MainScreenState? _instance;
-  
   static _MainScreenState? get instance => _instance;
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends ConsumerState<MainScreen> {
   late PageController _pageController;
   int _currentIndex = 0;
   
@@ -57,11 +58,14 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _onPageChanged(int index) {
-    // Only update if different to prevent unnecessary rebuilds
     if (_currentIndex != index) {
       setState(() {
         _currentIndex = index;
       });
+    }
+    // Always fetch fresh stories when user opens the Stories tab (index 2)
+    if (index == 2) {
+      ref.read(storiesProvider.notifier).refresh();
     }
   }
 

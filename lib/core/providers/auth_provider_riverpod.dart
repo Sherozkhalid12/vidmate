@@ -5,6 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/user_model.dart';
 import '../api/dio_client.dart';
 import '../../services/auth/auth_service.dart';
+import '../../services/notifications/push_notifications_service.dart';
+import '../../services/storage/user_storage_service.dart';
+import '../../services/calls/livestream_service.dart';
 
 /// Authentication state
 class AuthState {
@@ -50,6 +53,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final user = UserModel.fromJson(userJson);
       state = state.copyWith(currentUser: user);
+      await UserStorageService.instance.saveCurrentUserProfile(
+        userJson,
+        userId: user.id,
+      );
+      // On app restart, always end any lingering host live session for this user.
+      await LivestreamService().endAllActive();
     } catch (_) {
       // Invalid stored user; clear auth so user can log in again
       await _authService.clearAuth();
@@ -60,6 +69,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(isLoading: true, clearError: true);
     final result = await _authService.login(email: email, password: password);
     if (result.success && result.data != null) {
+      await UserStorageService.instance.saveCurrentUserProfile(
+        result.data!.user.toJson(),
+        userId: result.data!.user.id,
+      );
       state = state.copyWith(
         currentUser: result.data!.user,
         isLoading: false,
@@ -113,6 +126,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       password: password,
     );
     if (result.success && result.data != null) {
+      await UserStorageService.instance.saveCurrentUserProfile(
+        result.data!.user.toJson(),
+        userId: result.data!.user.id,
+      );
       state = state.copyWith(
         currentUser: result.data!.user,
         isLoading: false,
@@ -127,6 +144,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
+    // Remove device token association before clearing auth storage.
+    await PushNotificationsService.instance.removeDeviceTokenFromBackend();
+    final uid = state.currentUser?.id;
+    await UserStorageService.instance.markLoggedOut(userId: uid);
     DioClient.clearAuthToken();
     await _authService.clearAuth();
     state = state.copyWith(currentUser: null);
@@ -148,6 +169,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       profilePicture: profilePicture,
     );
     if (result.success && result.data != null) {
+      await UserStorageService.instance.saveCurrentUserProfile(
+        result.data!.user.toJson(),
+        userId: result.data!.user.id,
+      );
       state = state.copyWith(
         currentUser: result.data!.user,
         isLoading: false,

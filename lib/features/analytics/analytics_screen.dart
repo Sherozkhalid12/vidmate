@@ -18,37 +18,50 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.backgroundColor,
-      appBar: AppBar(
-        title: Text('Analytics'),
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: ThemeHelper.getBackgroundGradient(context),
         ),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              setState(() {
-                _selectedPeriod = value;
-              });
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'Last 7 Days', child: Text('Last 7 Days')),
-              const PopupMenuItem(value: 'Last 30 Days', child: Text('Last 30 Days')),
-              const PopupMenuItem(value: 'Last 90 Days', child: Text('Last 90 Days')),
-              const PopupMenuItem(value: 'All Time', child: Text('All Time')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                _selectedPeriod,
-                style: TextStyle(color: context.textPrimary),
+        child: Column(
+          children: [
+            AppBar(
+              title: Text(
+                'Analytics',
+                style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
               ),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              iconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+              actions: [
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    setState(() {
+                      _selectedPeriod = value;
+                    });
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: 'Last 7 Days', child: Text('Last 7 Days')),
+                    const PopupMenuItem(value: 'Last 30 Days', child: Text('Last 30 Days')),
+                    const PopupMenuItem(value: 'Last 90 Days', child: Text('Last 90 Days')),
+                    const PopupMenuItem(value: 'All Time', child: Text('All Time')),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      _selectedPeriod,
+                      style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
+            Expanded(
+              child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,11 +121,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               child: Column(
                 children: [
                   _buildAnalyticsRow('Total Videos', '1,234'),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildAnalyticsRow('Total Views', '1,234,567'),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildAnalyticsRow('Average Watch Time', '3m 24s'),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildAnalyticsRow('Engagement Rate', '12.5%'),
                 ],
               ),
@@ -126,16 +139,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               child: Column(
                 children: [
                   _buildAnalyticsRow('New Users', '456'),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildAnalyticsRow('Active Users', '12,500'),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildAnalyticsRow('Retention Rate', '68%'),
-                  Divider(color: context.borderColor),
+                  Divider(color: ThemeHelper.getBorderColor(context)),
                   _buildAnalyticsRow('Avg Session Duration', '18m 32s'),
                 ],
               ),
             ),
             const SizedBox(height: 40),
+          ],
+        ),
+              ),
+            ),
           ],
         ),
       ),
@@ -148,7 +165,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       child: Text(
         title,
         style: TextStyle(
-          color: context.textPrimary,
+          color: ThemeHelper.getTextPrimary(context),
           fontSize: 18,
           fontWeight: FontWeight.bold,
         ),
@@ -177,7 +194,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Text(
             label,
             style: TextStyle(
-              color: context.textSecondary,
+              color: ThemeHelper.getTextSecondary(context),
               fontSize: 12,
             ),
           ),
@@ -195,7 +212,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Text(
             label,
             style: TextStyle(
-              color: context.textPrimary,
+              color: ThemeHelper.getTextPrimary(context),
               fontSize: 14,
             ),
           ),

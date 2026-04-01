@@ -4,6 +4,7 @@ import 'message_model.dart';
 /// Chat conversation model for recent messages list
 class ChatConversationModel {
   final String id;
+  final String? conversationId; // API conversation id (for socket/read state)
   final UserModel user; // For 1-to-1 chat
   final List<UserModel>? participants; // For group chat
   final bool isGroup;
@@ -17,6 +18,7 @@ class ChatConversationModel {
 
   ChatConversationModel({
     required this.id,
+    this.conversationId,
     required this.user,
     this.participants,
     this.isGroup = false,

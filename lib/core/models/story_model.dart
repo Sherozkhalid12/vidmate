@@ -1,6 +1,6 @@
 import 'user_model.dart';
 
-/// Story model
+/// Story model (UI)
 class StoryModel {
   final String id;
   final UserModel author;
@@ -8,6 +8,8 @@ class StoryModel {
   final bool isVideo;
   final DateTime createdAt;
   final bool isViewed;
+  final List<String> locations;
+  final List<String> taggedUsers;
 
   StoryModel({
     required this.id,
@@ -16,6 +18,8 @@ class StoryModel {
     this.isVideo = false,
     required this.createdAt,
     this.isViewed = false,
+    this.locations = const [],
+    this.taggedUsers = const [],
   });
 }
 

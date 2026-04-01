@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import '../../core/services/mock_data_service.dart';
-import '../../core/models/user_model.dart';
+import '../../core/models/comment_model.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/comments_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 
-/// Enhanced Comments bottom sheet widget with modern, beautiful UI
-class CommentsBottomSheet extends StatefulWidget {
+/// Comments bottom sheet: loads and posts via API, listens for realtime via socket.
+class CommentsBottomSheet extends ConsumerStatefulWidget {
   final String postId;
 
   const CommentsBottomSheet({
@@ -15,21 +19,19 @@ class CommentsBottomSheet extends StatefulWidget {
   });
 
   @override
-  State<CommentsBottomSheet> createState() => _CommentsBottomSheetState();
+  ConsumerState<CommentsBottomSheet> createState() => _CommentsBottomSheetState();
 }
 
-class _CommentsBottomSheetState extends State<CommentsBottomSheet>
+class _CommentsBottomSheetState extends ConsumerState<CommentsBottomSheet>
     with SingleTickerProviderStateMixin {
   final _commentController = TextEditingController();
   final _focusNode = FocusNode();
-  final List<Map<String, dynamic>> _comments = [];
   final Set<String> _likedComments = {};
   late AnimationController _sendButtonController;
 
   @override
   void initState() {
     super.initState();
-    _loadComments();
     _sendButtonController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -51,81 +53,42 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
     super.dispose();
   }
 
-  void _loadComments() {
-    // Mock comments
-    setState(() {
-      _comments.addAll([
-        {
-          'id': '1',
-          'user': MockDataService.mockUsers[1],
-          'text': 'This is amazing! 🔥',
-          'timestamp': DateTime.now().subtract(const Duration(hours: 2)),
-          'likes': 12,
-        },
-        {
-          'id': '2',
-          'user': MockDataService.mockUsers[2],
-          'text': 'Love it!',
-          'timestamp': DateTime.now().subtract(const Duration(hours: 5)),
-          'likes': 5,
-        },
-        {
-          'id': '3',
-          'user': MockDataService.mockUsers[3],
-          'text': 'Great content!',
-          'timestamp': DateTime.now().subtract(const Duration(days: 1)),
-          'likes': 8,
-        },
-      ]);
-    });
-  }
-
-  void _addComment() {
-    if (_commentController.text.trim().isEmpty) return;
-
-    setState(() {
-      _comments.insert(0, {
-        'id': DateTime.now().millisecondsSinceEpoch.toString(),
-        'user': MockDataService.mockUsers[0],
-        'text': _commentController.text.trim(),
-        'timestamp': DateTime.now(),
-        'likes': 0,
-      });
-    });
-
+  Future<void> _addComment() async {
+    final text = _commentController.text;
+    if (text.trim().isEmpty) return;
     _commentController.clear();
     _focusNode.unfocus();
-
-    // Show success feedback
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 12),
-            const Text('Comment posted!'),
-          ],
+    final notifier = ref.read(commentsProvider(widget.postId).notifier);
+    final ok = await notifier.addComment(text);
+    if (!mounted) return;
+    if (ok) {
+      ref.read(postsProvider.notifier).incrementCommentCount(widget.postId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 20),
+              const SizedBox(width: 12),
+              const Text('Comment posted!'),
+            ],
+          ),
+          backgroundColor: ThemeHelper.getAccentColor(context),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 2),
         ),
-        backgroundColor: ThemeHelper.getAccentColor(context),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+      );
+    }
   }
 
-  void _toggleLike(Map<String, dynamic> comment) {
-    final commentId = comment['id'] as String;
-    setState(() {
-      if (_likedComments.contains(commentId)) {
-        _likedComments.remove(commentId);
-        comment['likes'] = (comment['likes'] as int) - 1;
-      } else {
-        _likedComments.add(commentId);
-        comment['likes'] = (comment['likes'] as int) + 1;
-      }
-    });
+  void _toggleLike(PostComment comment) {
+    if (_likedComments.contains(comment.id)) {
+      _likedComments.remove(comment.id);
+    } else {
+      _likedComments.add(comment.id);
+    }
+    setState(() {});
   }
 
   String _formatTime(DateTime time) {
@@ -208,7 +171,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '${_comments.length} replies',
+                          '${ref.watch(commentsProvider(widget.postId)).comments.length} replies',
                           style: TextStyle(
                             color: ThemeHelper.getTextMuted(context),
                             fontSize: 12,
@@ -223,28 +186,35 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
             ),
             // Comments list
             Expanded(
-              child: _comments.isEmpty
-                  ? _buildEmptyState()
-                  : AnimationLimiter(
-                      child: ListView.builder(
-                        controller: scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                        itemCount: _comments.length,
-                        itemBuilder: (context, index) {
-                          final comment = _comments[index];
-                          return AnimationConfiguration.staggeredList(
-                            position: index,
-                            duration: const Duration(milliseconds: 400),
-                            child: SlideAnimation(
-                              verticalOffset: 30.0,
-                              child: FadeInAnimation(
-                                child: _buildCommentItem(comment, index),
-                              ),
+              child: Builder(
+                builder: (context) {
+                  final state = ref.watch(commentsProvider(widget.postId));
+                  if (state.isLoading && state.comments.isEmpty)
+                    return Center(child: CircularProgressIndicator(color: ThemeHelper.getAccentColor(context)));
+                  if (state.comments.isEmpty)
+                    return _buildEmptyState();
+                  return AnimationLimiter(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      itemCount: state.comments.length,
+                      itemBuilder: (context, index) {
+                        final comment = state.comments[index];
+                        return AnimationConfiguration.staggeredList(
+                          position: index,
+                          duration: const Duration(milliseconds: 400),
+                          child: SlideAnimation(
+                            verticalOffset: 30.0,
+                            child: FadeInAnimation(
+                              child: _buildCommentItem(comment, index),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
+                  );
+                },
+              ),
             ),
             // Enhanced input bar
             _buildInputBar(),
@@ -327,35 +297,57 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                       width: 2,
                     ),
                   ),
-                  child: ClipOval(
-                    child: Image.network(
-                      MockDataService.mockUsers[0].avatarUrl,
-                      width: 42,
-                      height: 42,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                ThemeHelper.getAccentColor(context),
-                                ThemeHelper.getAccentColor(context)
-                                    .withOpacity(0.6),
-                              ],
+                    child: ClipOval(
+                      child: Builder(
+                        builder: (context) {
+                          final user = ref.watch(currentUserProvider);
+                          final url = user?.avatarUrl ?? '';
+                          if (url.isEmpty) {
+                            return Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    ThemeHelper.getAccentColor(context),
+                                    ThemeHelper.getAccentColor(context).withOpacity(0.6),
+                                  ],
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.person,
+                                color: ThemeHelper.getOnAccentColor(context),
+                                size: 24,
+                              ),
+                            );
+                          }
+                          return CachedNetworkImage(
+                            imageUrl: url,
+                            width: 42,
+                            height: 42,
+                            fit: BoxFit.cover,
+                            errorWidget: (_, __, ___) => Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    ThemeHelper.getAccentColor(context),
+                                    ThemeHelper.getAccentColor(context).withOpacity(0.6),
+                                  ],
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.person,
+                                color: ThemeHelper.getOnAccentColor(context),
+                                size: 24,
+                              ),
                             ),
-                          ),
-                          child: Icon(
-                            Icons.person,
-                            color: ThemeHelper.getOnAccentColor(context),
-                            size: 24,
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
                 Positioned(
                   right: 0,
                   bottom: 0,
@@ -471,11 +463,9 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
     );
   }
 
-  Widget _buildCommentItem(Map<String, dynamic> comment, int index) {
-    final user = comment['user'] as UserModel;
-    final commentId = comment['id'] as String;
-    final isLiked = _likedComments.contains(commentId);
-    final isNew = index == 0 && DateTime.now().difference(comment['timestamp'] as DateTime).inSeconds < 5;
+  Widget _buildCommentItem(PostComment comment, int index) {
+    final isLiked = _likedComments.contains(comment.id);
+    final isNew = index == 0 && DateTime.now().difference(comment.createdAt).inSeconds < 30;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -485,7 +475,6 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Avatar with badge for new comments
               Stack(
                 children: [
                   Container(
@@ -499,32 +488,15 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                       ),
                     ),
                     child: ClipOval(
-                      child: Image.network(
-                        user.avatarUrl,
-                        width: 44,
-                        height: 44,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  ThemeHelper.getSurfaceColor(context),
-                                  ThemeHelper.getSurfaceColor(context)
-                                      .withOpacity(0.7),
-                                ],
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.person,
-                              color: ThemeHelper.getTextSecondary(context),
-                              size: 24,
-                            ),
-                          );
-                        },
-                      ),
+                      child: comment.profilePicture.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: comment.profilePicture,
+                              width: 44,
+                              height: 44,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) => _avatarPlaceholder(),
+                            )
+                          : _avatarPlaceholder(),
                     ),
                   ),
                   if (isNew)
@@ -537,8 +509,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                           color: ThemeHelper.getAccentColor(context),
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: ThemeHelper.getSecondaryBackgroundColor(
-                                context),
+                            color: ThemeHelper.getSecondaryBackgroundColor(context),
                             width: 2,
                           ),
                         ),
@@ -556,12 +527,11 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // User name and timestamp
                     Row(
                       children: [
                         Flexible(
                           child: Text(
-                            user.displayName,
+                            comment.username,
                             style: TextStyle(
                               color: ThemeHelper.getTextPrimary(context),
                               fontSize: 15,
@@ -577,14 +547,13 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                           width: 3,
                           height: 3,
                           decoration: BoxDecoration(
-                            color: ThemeHelper.getTextMuted(context)
-                                .withOpacity(0.5),
+                            color: ThemeHelper.getTextMuted(context).withOpacity(0.5),
                             shape: BoxShape.circle,
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          _formatTime(comment['timestamp'] as DateTime),
+                          _formatTime(comment.createdAt),
                           style: TextStyle(
                             color: ThemeHelper.getTextMuted(context),
                             fontSize: 13,
@@ -593,9 +562,8 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                       ],
                     ),
                     const SizedBox(height: 8),
-                    // Comment text
                     Text(
-                      comment['text'] as String,
+                      comment.content,
                       style: TextStyle(
                         color: ThemeHelper.getTextPrimary(context),
                         fontSize: 15,
@@ -603,10 +571,8 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Action buttons
                     Row(
                       children: [
-                        // Like button
                         GestureDetector(
                           onTap: () => _toggleLike(comment),
                           child: Row(
@@ -621,10 +587,10 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                                     ? ThemeHelper.getAccentColor(context)
                                     : ThemeHelper.getTextMuted(context),
                               ),
-                              if (comment['likes'] > 0) ...[
+                              if (comment.likes.isNotEmpty) ...[
                                 const SizedBox(width: 4),
                                 Text(
-                                  '${comment['likes']}',
+                                  '${comment.likes.length}',
                                   style: TextStyle(
                                     color: isLiked
                                         ? ThemeHelper.getAccentColor(context)
@@ -638,15 +604,13 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
                           ),
                         ),
                         const SizedBox(width: 16),
-                        // Reply button
                         GestureDetector(
                           onTap: () {
                             _focusNode.requestFocus();
-                            _commentController.text = '@${user.displayName} ';
+                            _commentController.text = '@${comment.username} ';
                             _commentController.selection =
                                 TextSelection.fromPosition(
-                              TextPosition(
-                                  offset: _commentController.text.length),
+                              TextPosition(offset: _commentController.text.length),
                             );
                           },
                           child: Row(
@@ -682,6 +646,26 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet>
             color: ThemeHelper.getBorderColor(context).withOpacity(0.4),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _avatarPlaceholder() {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            ThemeHelper.getSurfaceColor(context),
+            ThemeHelper.getSurfaceColor(context).withOpacity(0.7),
+          ],
+        ),
+      ),
+      child: Icon(
+        Icons.person,
+        color: ThemeHelper.getTextSecondary(context),
+        size: 24,
       ),
     );
   }

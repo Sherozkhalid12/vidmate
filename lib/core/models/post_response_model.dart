@@ -46,6 +46,12 @@ class ApiPost {
   final String id;
   final DateTime createdAt;
   final int? version;
+  /// Content type: 'post' | 'reel' | 'longVideo' | 'story'
+  final String type;
+  /// User IDs who liked (from backend). Used for count and isLiked.
+  final List<String> likes;
+  /// Comment count from backend (API may send 'Comments' or 'comments').
+  final int commentsCount;
 
   ApiPost({
     required this.userId,
@@ -58,7 +64,11 @@ class ApiPost {
     required this.id,
     required this.createdAt,
     this.version,
-  });
+    this.type = 'post',
+    List<String>? likes,
+    int? commentsCount,
+  })  : likes = likes ?? const [],
+        commentsCount = commentsCount ?? 0;
 
   static String _string(dynamic value) {
     if (value == null) return '';
@@ -73,6 +83,12 @@ class ApiPost {
         .toList();
   }
 
+  static int _int(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    return int.tryParse(value.toString()) ?? 0;
+  }
+
   static DateTime _dateTime(dynamic value) {
     if (value == null) return DateTime.now();
     if (value is DateTime) return value;
@@ -84,6 +100,14 @@ class ApiPost {
   }
 
   factory ApiPost.fromJson(Map<String, dynamic> json) {
+    final typeRaw = _string(json['type']).toLowerCase();
+    final type = typeRaw.isEmpty ? 'post' : typeRaw;
+    final likesRaw = json['likes'];
+    final likesList = likesRaw is List ? _stringList(likesRaw) : const <String>[];
+    final commentsVal = json['Comments'] ?? json['comments'];
+    final commentsCount = commentsVal is int
+        ? commentsVal
+        : (commentsVal is List ? (commentsVal as List).length : _int(commentsVal));
     return ApiPost(
       userId: _string(json['userId']),
       images: _stringList(json['images']),
@@ -95,6 +119,9 @@ class ApiPost {
       id: _string(json['_id'] ?? json['id']),
       createdAt: _dateTime(json['createdAt']),
       version: json['__v'] is int ? json['__v'] as int : null,
+      type: type,
+      likes: likesList,
+      commentsCount: commentsCount,
     );
   }
 
@@ -110,6 +137,9 @@ class ApiPost {
       '_id': id,
       'createdAt': createdAt.toIso8601String(),
       if (version != null) '__v': version,
+      'type': type,
+      'likes': likes,
+      'comments': commentsCount,
     };
   }
 }

@@ -3,13 +3,18 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  agora_rtc_engine
   audioplayers_windows
   file_selector_windows
+  firebase_core
   flutter_inappwebview_windows
+  iris_method_channel
   permission_handler_windows
+  pro_video_editor
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  flutter_local_notifications_windows
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

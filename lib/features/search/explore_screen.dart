@@ -2,64 +2,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+
 import '../../core/utils/theme_helper.dart';
-import '../../core/services/mock_data_service.dart';
-import '../../core/models/user_model.dart';
-import '../profile/profile_screen.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/models/post_model.dart';
+import '../reels/reels_screen.dart';
 import 'search_screen.dart';
 
-class ExploreItem {
-  final String imageUrl;
-  final UserModel user;
-  final double aspectRatio;
-
-  ExploreItem({
-    required this.imageUrl,
-    required this.user,
-    required this.aspectRatio,
-  });
-}
-
-/// Instagram-style Explore screen with staggered grid
-class ExploreScreen extends StatefulWidget {
+/// Explore screen (for now: shows all reels in a staggered grid).
+class ExploreScreen extends ConsumerStatefulWidget {
   final VoidCallback? onBackToHome;
   final double? bottomPadding;
 
   const ExploreScreen({super.key, this.onBackToHome, this.bottomPadding});
 
   @override
-  State<ExploreScreen> createState() => _ExploreScreenState();
+  ConsumerState<ExploreScreen> createState() => _ExploreScreenState();
 }
 
-class _ExploreScreenState extends State<ExploreScreen> {
-  final List<ExploreItem> _exploreItems = [];
+class _ExploreScreenState extends ConsumerState<ExploreScreen> {
+  static Color _alpha(Color c, double opacity) =>
+      c.withAlpha((opacity.clamp(0.0, 1.0) * 255).round());
 
-  @override
-  void initState() {
-    super.initState();
-    _generateExploreItems();
-  }
-
-  void _generateExploreItems() {
-    final items = <ExploreItem>[];
-    for (int i = 0; i < 50; i++) {
-      final user = MockDataService.mockUsers[i % MockDataService.mockUsers.length];
-      items.add(ExploreItem(
-        imageUrl: user.avatarUrl,
-        user: user,
-        aspectRatio: _getRandomAspectRatio(i),
-      ));
-    }
-    _exploreItems.addAll(items);
-  }
-
-  double _getRandomAspectRatio(int index) {
-    final patterns = [1.0, 1.0, 0.75, 1.0, 1.33, 1.0, 1.0];
-    return patterns[index % patterns.length];
+  String _formatCount(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return n.toString();
   }
 
   @override
   Widget build(BuildContext context) {
+    final reels = ref.watch(reelsListProvider);
+    final loading = ref.watch(reelsLoadingProvider);
+    final error = ref.watch(reelsErrorProvider);
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -76,7 +53,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
                 color: Colors.transparent,
                 border: Border(
                   bottom: BorderSide(
-                    color: ThemeHelper.getBorderColor(context).withOpacity(0.3),
+                    color: _alpha(ThemeHelper.getBorderColor(context), 0.3),
                     width: 0.5,
                   ),
                 ),
@@ -151,9 +128,33 @@ class _ExploreScreenState extends State<ExploreScreen> {
                 ],
               ),
             ),
-            // Staggered grid
             Expanded(
-              child: _buildExploreGrid(),
+              child: loading && reels.isEmpty
+                  ? Center(
+                      child: CircularProgressIndicator(
+                        color: ThemeHelper.getAccentColor(context),
+                      ),
+                    )
+                  : error != null && reels.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              error,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: ThemeHelper.getTextMuted(context),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        )
+                      : RefreshIndicator(
+                          color: ThemeHelper.getAccentColor(context),
+                          onRefresh: () =>
+                              ref.read(reelsProvider.notifier).refresh(),
+                          child: _buildExploreGrid(reels),
+                        ),
             ),
           ],
         ),
@@ -162,7 +163,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     );
   }
 
-  Widget _buildExploreGrid() {
+  Widget _buildExploreGrid(List<PostModel> reels) {
     return Padding(
       padding: EdgeInsets.only(
         bottom: (widget.bottomPadding ?? 0),
@@ -171,16 +172,16 @@ class _ExploreScreenState extends State<ExploreScreen> {
         crossAxisCount: 3,
         mainAxisSpacing: 2,
         crossAxisSpacing: 2,
-        itemCount: _exploreItems.length,
+        itemCount: reels.length,
         itemBuilder: (context, index) {
-          final item = _exploreItems[index];
+          final reel = reels[index];
           return AnimationConfiguration.staggeredGrid(
             position: index,
             duration: const Duration(milliseconds: 375),
             columnCount: 3,
             child: ScaleAnimation(
               child: FadeInAnimation(
-                child: _buildExploreItem(item),
+                child: _buildExploreItem(reel),
               ),
             ),
           );
@@ -189,38 +190,106 @@ class _ExploreScreenState extends State<ExploreScreen> {
     );
   }
 
-  Widget _buildExploreItem(ExploreItem item) {
+  Widget _buildExploreItem(PostModel reel) {
+    final thumb = reel.effectiveThumbnailUrl ?? reel.thumbnailUrl ?? '';
+    final likes = reel.likes;
+    // Views are not currently present in PostModel/ReelModelApi; show 0 until backend provides it.
+    final views = 0;
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (context) => ProfileScreen(user: item.user),
-          ),
+          MaterialPageRoute(builder: (context) => ReelsScreen(initialPostId: reel.id)),
         );
       },
       child: AspectRatio(
-        aspectRatio: item.aspectRatio,
+        // Fixed ratio prevents Masonry/Sliver sizing assertion crashes.
+        aspectRatio: 9 / 16,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.network(
-              item.imageUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
+            if (thumb.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: thumb,
+                fit: BoxFit.cover,
+                // Distinct underscore names avoid duplicate identifier error.
+                errorWidget: (_, __, ___) => Container(
                   color: ThemeHelper.getSurfaceColor(context),
-                  child: Icon(
-                    Icons.person,
-                    color: ThemeHelper.getTextMuted(context),
-                    size: 40,
+                ),
+              )
+            else
+              Container(
+                color: ThemeHelper.getSurfaceColor(context),
+              ),
+
+            // Bottom-half overlay (modern gradient)
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        _alpha(Colors.black, 0.0),
+                        _alpha(Colors.black, 0.0),
+                        _alpha(Colors.black, 0.35),
+                        _alpha(Colors.black, 0.75),
+                      ],
+                      stops: const [0.0, 0.45, 0.70, 1.0],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
+            ),
+
+            // Bottom metrics (no containers)
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 8,
+              child: Row(
+                children: [
+                  _metricInline(
+                    icon: Icons.favorite_rounded,
+                    value: _formatCount(likes),
+                  ),
+                  const SizedBox(width: 12),
+                  _metricInline(
+                    icon: Icons.remove_red_eye_rounded,
+                    value: _formatCount(views),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _metricInline({required IconData icon, required String value}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: _alpha(Colors.white, 0.92)),
+        const SizedBox(width: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: _alpha(Colors.white, 0.92),
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            shadows: [
+              Shadow(
+                color: _alpha(Colors.black, 0.55),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
