@@ -52,14 +52,27 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
     _controller.forward();
 
-    Future.delayed(const Duration(milliseconds: 2500), () async {
+    // Navigate after animation + auth restore, but never stay stuck here.
+    Future.microtask(() async {
+      await Future.delayed(const Duration(milliseconds: 2500));
       if (!mounted) return;
-      await ref.read(authProvider.notifier).loadFromStorage();
+
+      try {
+        // Cap auth restore time so splash can't hang on network/disk issues.
+        await ref
+            .read(authProvider.notifier)
+            .loadFromStorage()
+            .timeout(const Duration(seconds: 3));
+      } catch (_) {
+        // Ignore; will fall back to onboarding.
+      }
+
       if (!mounted) return;
       final isLoggedIn = ref.read(isAuthenticatedProvider);
       if (isLoggedIn) {
         ref.read(socketConnectionProvider.notifier).ensureConnection();
       }
+
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
@@ -86,7 +99,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   @override
   Widget build(BuildContext context) {
     final accentColor = ThemeHelper.getAccentColor(context);
-    
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(

@@ -28,6 +28,19 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Ensure Agora library has the AndroidX resources it references during release builds.
+subprojects {
+    if (project.name == "agora_rtc_engine") {
+        plugins.withId("com.android.library") {
+            dependencies {
+                add("implementation", "androidx.appcompat:appcompat:1.6.1")
+                add("implementation", "androidx.core:core-ktx:1.13.1")
+            }
+        }
+    }
+}
+
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

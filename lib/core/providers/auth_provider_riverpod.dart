@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -48,6 +49,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> loadFromStorage() async {
     final token = await _authService.getToken();
     if (token == null || token.isEmpty) return;
+
+    // Ensure API client is primed before any follow-up calls.
+    DioClient.setAuthToken(token);
+
     final userJson = await _authService.getStoredUser();
     if (userJson == null) return;
     try {
@@ -57,8 +62,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
         userJson,
         userId: user.id,
       );
-      // On app restart, always end any lingering host live session for this user.
-      await LivestreamService().endAllActive();
+
+      // Do not block splash on network; fire-and-forget with timeout.
+      unawaited(
+        LivestreamService()
+            .endAllActive()
+            .timeout(const Duration(seconds: 3))
+            .catchError((_) {}),
+      );
     } catch (_) {
       // Invalid stored user; clear auth so user can log in again
       await _authService.clearAuth();
@@ -100,7 +111,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
     return false;
   }
 
-  Future<bool> verifyEmailOtp({required String email, required String otp}) async {
+  Future<bool> verifyEmailOtp(
+      {required String email, required String otp}) async {
     state = state.copyWith(isLoading: true, clearError: true);
     final result = await _authService.verifyEmailOtp(email: email, otp: otp);
     if (result.success) {

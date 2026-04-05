@@ -32,6 +32,33 @@ android {
         targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Strip unused locale resources from dependencies.
+        resConfigs("en")
+
+        // Clear any ABI filters injected by tooling; we build a single universal APK by default.
+        ndk {
+            abiFilters.clear()
+        }
+    }
+
+    // Explicitly disable ABI splits to avoid conflicts with ndk.abiFilters.
+    splits {
+        abi {
+            isEnable = false
+            reset()
+        }
+    }
+
+    packaging {
+        resources {
+            // Drop license metadata; keeps functionality intact while saving a bit of space.
+            excludes += setOf(
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "META-INF/LICENSE*"
+            )
+        }
     }
 
     buildTypes {
@@ -39,12 +66,20 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+
+            // Keep all code/resources to avoid plugin strip issues.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // Explicitly include AppCompat/Core so Agora's notification resources are present in release builds.
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.core:core-ktx:1.13.1")
 }
 
 flutter {

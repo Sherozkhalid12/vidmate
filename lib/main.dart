@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,25 +24,54 @@ final RouteObserver<PageRoute<dynamic>> routeObserver =
     RouteObserver<PageRoute<dynamic>>();
 bool _callScreenOpen = false;
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Configure logging to suppress verbose logs in release mode.
   _configureLogging();
 
-  // Request critical permissions BEFORE runApp to prevent first-launch crashes.
-  // Camera/mic must be granted before any plugin or provider touches those resources.
-  await _requestStartupPermissions();
-
-  // Initialize Firebase Cloud Messaging + local notifications.
+  // Needed before we initialize push notifications so snackbars can show.
   PushNotificationsService.setScaffoldMessengerKey(scaffoldMessengerKey);
-  await PushNotificationsService.instance.initialize();
 
-  runApp(
-    const ProviderScope(
-      child: MyApp(),
-    ),
-  );
+  // Never block the first frame on slow/fragile native init (FCM, permissions).
+  runZonedGuarded(() {
+    unawaited(_bootstrapSafely());
+
+    runApp(
+      const ProviderScope(
+        child: MyApp(),
+      ),
+    );
+  }, (error, stackTrace) {
+    // Keep the app alive even if a background init step throws.
+    if (kDebugMode) {
+      debugPrint('[Startup] Uncaught error: $error');
+      debugPrint(stackTrace.toString());
+    }
+  });
+}
+
+/// Run startup tasks without blocking app launch. Any failures are logged
+/// (in debug) but won't crash the release build.
+Future<void> _bootstrapSafely() async {
+  try {
+    await _requestStartupPermissions();
+  } catch (e, st) {
+    _logStartupError('permissions', e, st);
+  }
+
+  try {
+    await PushNotificationsService.instance.initialize();
+  } catch (e, st) {
+    _logStartupError('push_notifications', e, st);
+  }
+}
+
+void _logStartupError(String step, Object error, StackTrace stackTrace) {
+  if (kDebugMode) {
+    debugPrint('[Startup][$step] $error');
+    debugPrint(stackTrace.toString());
+  }
 }
 
 /// Request all permissions the app needs at startup.
@@ -52,8 +83,8 @@ Future<void> _requestStartupPermissions() async {
     await [
       Permission.camera,
       Permission.microphone,
-      Permission.notification,        // Required for FCM on Android 13+
-      Permission.bluetoothConnect,    // Required by Agora on Android 12+
+      Permission.notification, // Required for FCM on Android 13+
+      Permission.bluetoothConnect, // Required by Agora on Android 12+
     ].request();
   } catch (e) {
     // Permissions failing at this stage must not crash the app.
@@ -159,7 +190,8 @@ class _RouteAwareWrapper extends StatefulWidget {
   State<_RouteAwareWrapper> createState() => _RouteAwareWrapperState();
 }
 
-class _RouteAwareWrapperState extends State<_RouteAwareWrapper> with RouteAware {
+class _RouteAwareWrapperState extends State<_RouteAwareWrapper>
+    with RouteAware {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
