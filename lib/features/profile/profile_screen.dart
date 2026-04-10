@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:shimmer/shimmer.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
@@ -13,7 +14,6 @@ import '../../core/providers/posts_provider_riverpod.dart';
 import '../../core/providers/fetched_users_provider_riverpod.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
 import '../../features/long_videos/providers/long_videos_provider.dart';
-import '../../core/utils/video_thumbnail_helper.dart';
 import '../../core/utils/theme_helper.dart';
 import '../settings/settings_screen.dart';
 import '../chat/chat_screen.dart';
@@ -76,6 +76,139 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     super.dispose();
   }
 
+  (Color, Color) _shimmerPair(BuildContext context) {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  /// Full-screen shimmer while profile user is resolving (self not loaded yet, or other user fetch).
+  Widget _buildProfileLoadingShell(BuildContext context) {
+    final (base, hi) = _shimmerPair(context);
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: BoxDecoration(gradient: context.backgroundGradient),
+        child: SafeArea(
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                  child: Column(
+                    children: [
+                      Shimmer.fromColors(
+                        baseColor: base,
+                        highlightColor: hi,
+                        child: Container(
+                          width: 100,
+                          height: 100,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Shimmer.fromColors(
+                        baseColor: base,
+                        highlightColor: hi,
+                        child: Container(
+                          height: 16,
+                          width: 140,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: List.generate(
+                          3,
+                          (i) => Shimmer.fromColors(
+                            baseColor: base,
+                            highlightColor: hi,
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: 36,
+                                  height: 14,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: 56,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.all(2),
+                sliver: SliverGrid(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 2,
+                    mainAxisSpacing: 2,
+                    childAspectRatio: 1,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      return Shimmer.fromColors(
+                        baseColor: base,
+                        highlightColor: hi,
+                        child: Container(color: Colors.white),
+                      );
+                    },
+                    childCount: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileTabGridShimmer(BuildContext context) {
+    final (base, hi) = _shimmerPair(context);
+    return GridView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(2),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+      ),
+      itemCount: 12,
+      itemBuilder: (context, index) {
+        return Shimmer.fromColors(
+          baseColor: base,
+          highlightColor: hi,
+          child: Container(color: Colors.white),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = ref.watch(currentUserProvider);
@@ -96,26 +229,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         : null;
     final user = (isOtherUser ? (fetchedUser ?? incomingUser) : (incomingUser ?? currentUser));
     if (user == null) {
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Container(
-          decoration: BoxDecoration(gradient: context.backgroundGradient),
-          child: const Center(child: CircularProgressIndicator()),
-        ),
-      );
+      return _buildProfileLoadingShell(context);
     }
     if (isOtherUser && fetchedUser == null && isFetchingOtherUser) {
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Container(
-          decoration: BoxDecoration(gradient: context.backgroundGradient),
-          child: Center(
-            child: CircularProgressIndicator(
-              color: ThemeHelper.getAccentColor(context),
-            ),
-          ),
-        ),
-      );
+      return _buildProfileLoadingShell(context);
     }
     if (isOtherUser && fetchedUser == null && otherUserError != null) {
       return Scaffold(
@@ -199,6 +316,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       }
       return list;
     }();
+    final showProfilePostsSkeleton = userPostsState.isLoading &&
+        posts.isEmpty &&
+        !userPostsState.initialFetchCompleted;
     final isCurrentUser = currentUser != null && currentUser.id == user.id;
     final followOverrides = ref.watch(followStateProvider);
     final followState = ref.watch(followProvider);
@@ -565,8 +685,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             // Content grid - categorize by postType from API
             SliverFillRemaining(
               hasScrollBody: true,
-              child: userPostsState.isLoading && posts.isEmpty
-                  ? Center(child: CircularProgressIndicator(color: ThemeHelper.getAccentColor(context)))
+              child: showProfilePostsSkeleton
+                  ? _buildProfileTabGridShimmer(context)
                   : TabBarView(
                       controller: _tabController,
                       children: [
@@ -1100,47 +1220,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       children: [
                         (() {
                           final post = posts[index];
-
-                          // Prefer a generated thumbnail for reels; fall back through provided fields.
-                          String? thumbnailUrl;
-                          if (post.videoUrl?.isNotEmpty == true) {
-                            thumbnailUrl = VideoThumbnailHelper.thumbnailFromVideoUrl(post.videoUrl!);
-                          }
-                          thumbnailUrl = thumbnailUrl?.isNotEmpty == true
-                              ? thumbnailUrl
-                              : (post.effectiveThumbnailUrl?.isNotEmpty == true
-                                  ? post.effectiveThumbnailUrl
-                                  : null);
-                          thumbnailUrl ??= post.thumbnailUrl?.isNotEmpty == true ? post.thumbnailUrl : null;
-                          thumbnailUrl ??= post.imageUrl?.isNotEmpty == true ? post.imageUrl : null;
-                          if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
-                            final imgs = post.imageUrls;
-                            if (imgs.isNotEmpty && imgs.first.isNotEmpty) {
-                              thumbnailUrl = imgs.first;
-                            }
-                          }
-
-                          if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
+                          final imageUrl =
+                              post.effectiveThumbnailUrl ?? post.imageUrl ?? '';
+                          if (imageUrl.isEmpty) {
                             return Container(
                               color: context.surfaceColor,
                               alignment: Alignment.center,
-                              child: Icon(Icons.video_library_outlined, color: context.textMuted, size: 24),
+                              child: Icon(Icons.video_library_outlined,
+                                  color: context.textMuted, size: 24),
                             );
                           }
-
                           return CachedNetworkImage(
-                            imageUrl: thumbnailUrl,
+                            imageUrl: imageUrl,
                             fit: BoxFit.cover,
                             fadeInDuration: const Duration(milliseconds: 120),
                             placeholder: (context, url) => Container(
                               color: context.surfaceColor,
                               alignment: Alignment.center,
-                              child: Icon(Icons.video_library_outlined, color: context.textMuted, size: 20),
+                              child: Icon(Icons.video_library_outlined,
+                                  color: context.textMuted, size: 20),
                             ),
                             errorWidget: (context, url, error) => Container(
                               color: context.surfaceColor,
                               alignment: Alignment.center,
-                              child: Icon(Icons.video_library_outlined, color: context.textMuted, size: 22),
+                              child: Icon(Icons.video_library_outlined,
+                                  color: context.textMuted, size: 22),
                             ),
                           );
                         })(),

@@ -1,10 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 import 'stories_viewer_screen.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/media/app_media_cache.dart';
+import '../../core/widgets/feed_image_precache.dart';
+import '../../core/perf/stories_perf_metrics.dart';
 import '../../core/providers/stories_provider_riverpod.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/network_status_provider.dart';
+import '../../services/reels/reel_video_prefetch.dart';
 import '../../core/providers/active_livestreams_provider_riverpod.dart';
 import '../../core/providers/livestream_controller_riverpod.dart';
 import '../../core/models/story_model.dart';
@@ -26,7 +34,269 @@ class StoryPage extends ConsumerStatefulWidget {
   ConsumerState<StoryPage> createState() => _StoryPageState();
 }
 
-class _StoryPageState extends ConsumerState<StoryPage> {
+class _StoryPageState extends ConsumerState<StoryPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  final Stopwatch _trayStopwatch = Stopwatch()..start();
+  bool _trayPaintLogged = false;
+  String _lastTrayWarmSig = '';
+
+  (Color, Color) _shimmerBaseHi(BuildContext context) {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  void _maybeLogTrayPaint() {
+    if (_trayPaintLogged) return;
+    _trayPaintLogged = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      StoriesPerfMetrics.logTrayPaintMs(_trayStopwatch.elapsedMilliseconds);
+    });
+  }
+
+  void _maybePrecacheStoriesTray(StoriesState s) {
+    if (s.users.isEmpty) return;
+    final sig = s.users
+        .take(8)
+        .map((u) {
+          final st = s.userStoriesMap[u.id];
+          final sid = (st != null && st.isNotEmpty) ? st.first.id : '';
+          return '${u.id}_$sid';
+        })
+        .join('|');
+    if (sig == _lastTrayWarmSig) return;
+    _lastTrayWarmSig = sig;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      for (final u in s.users.take(5)) {
+        if (u.avatarUrl.isNotEmpty) {
+          precacheFeedImageSafe(
+            CachedNetworkImageProvider(
+              u.avatarUrl,
+              cacheManager: AppMediaCache.feedMedia,
+            ),
+            context,
+          );
+        }
+        final stories = s.userStoriesMap[u.id];
+        if (stories == null || stories.isEmpty) continue;
+        final first = stories.first;
+        if (first.mediaUrl.isEmpty) continue;
+        if (first.isVideo) {
+          unawaited(ReelVideoPrefetchService.instance.prefetchIfAllowed(first.mediaUrl));
+        } else {
+          precacheFeedImageSafe(
+            CachedNetworkImageProvider(
+              first.mediaUrl,
+              cacheManager: AppMediaCache.feedMedia,
+            ),
+            context,
+          );
+        }
+      }
+    });
+  }
+
+  Widget _avatarImagePlaceholder(BuildContext context) {
+    final accent = ThemeHelper.getAccentColor(context);
+    final surface = ThemeHelper.getSurfaceColor(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            accent.withValues(alpha: 0.45),
+            surface,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStoriesTrayShimmer() {
+    final (base, hi) = _shimmerBaseHi(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Shimmer.fromColors(
+            baseColor: base,
+            highlightColor: hi,
+            child: Container(
+              width: 88,
+              height: 14,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+          ),
+        ),
+        Shimmer.fromColors(
+          baseColor: base,
+          highlightColor: hi,
+          child: SizedBox(
+            height: 120,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              itemCount: 8,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, __) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 78,
+                      height: 78,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 64,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Shimmer block shaped like the “Live now” header + tall live cards.
+  Widget _buildLiveSectionShimmer() {
+    final (base, hi) = _shimmerBaseHi(context);
+    return Shimmer.fromColors(
+      baseColor: base,
+      highlightColor: hi,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: 96,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+            ),
+          ),
+          _liveCardShimmerSkeleton(),
+          const SizedBox(height: 10),
+          _liveCardShimmerSkeleton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _liveCardShimmerSkeleton() {
+    return Container(
+      height: 200,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+    );
+  }
+
+  Widget _buildLiveEmptyState({bool showErrorHint = false}) {
+    final accent = ThemeHelper.getAccentColor(context);
+    final primary = ThemeHelper.getTextPrimary(context);
+    final secondary = ThemeHelper.getTextSecondary(context);
+
+    return SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    accent.withValues(alpha: 0.22),
+                    accent.withValues(alpha: 0.06),
+                  ],
+                ),
+                border: Border.all(
+                  color: accent.withValues(alpha: 0.28),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withValues(alpha: 0.12),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.live_tv_rounded,
+                size: 44,
+                color: accent.withValues(alpha: 0.9),
+              ),
+            ),
+            const SizedBox(height: 22),
+            Text(
+              'No one is live',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: primary,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              showErrorHint
+                  ? 'We couldn\'t refresh live streams. Pull down to try again.'
+                  : 'When creators go live, their streams will show up here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: secondary,
+                fontSize: 14,
+                height: 1.45,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _openStoryViewer(
     int userIndex,
@@ -34,6 +304,7 @@ class _StoryPageState extends ConsumerState<StoryPage> {
     List<UserModel> users,
     Map<String, List<StoryModel>> userStoriesMap,
   ) {
+    final offline = ref.read(isOfflineProvider);
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -42,21 +313,62 @@ class _StoryPageState extends ConsumerState<StoryPage> {
           initialStoryIndex: storyIndex,
           users: users,
           userStoriesMap: userStoriesMap,
+          offline: offline,
         ),
       ),
     );
   }
 
+  void _openCurrentUserStoryViewer(
+    UserModel currentUser,
+    Map<String, List<StoryModel>> userStoriesMap,
+  ) {
+    final myStories = userStoriesMap[currentUser.id] ?? const <StoryModel>[];
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CurrentUserStoriesViewerScreen(
+          currentUser: currentUser,
+          stories: myStories,
+        ),
+      ),
+    );
+  }
+
+  String _yourStoryPreviewUrl(
+    UserModel? currentUser,
+    Map<String, List<StoryModel>> userStoriesMap,
+  ) {
+    if (currentUser == null) return '';
+    final list = userStoriesMap[currentUser.id];
+    if (list != null && list.isNotEmpty) {
+      final first = list.first;
+      if (first.mediaUrl.isNotEmpty && !first.isVideo) {
+        return first.mediaUrl;
+      }
+    }
+    return currentUser.avatarUrl;
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final storiesState = ref.watch(storiesProvider);
+    ref.listen<StoriesState>(storiesProvider, (_, next) {
+      _maybePrecacheStoriesTray(next);
+    });
+    _maybePrecacheStoriesTray(storiesState);
+    _maybeLogTrayPaint();
+
     final users = storiesState.users;
     final userStoriesMap = storiesState.userStoriesMap;
     final isLoading = storiesState.isLoading;
     final error = storiesState.error;
+    final offline = ref.watch(isOfflineProvider);
+    final showTrayOfflineBanner =
+        storiesState.trayOfflineBanner || (offline && users.isNotEmpty);
     final currentUser = ref.watch(authProvider).currentUser;
     final liveAsync = ref.watch(activeLivestreamsProvider);
-    final liveCtrlState = ref.watch(livestreamControllerProvider);
 
     return SafeArea(
       bottom: false,
@@ -82,12 +394,65 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                 ],
               ),
             ),
+            if (showTrayOfflineBanner)
+              Material(
+                color: ThemeHelper.getSurfaceColor(context).withValues(alpha: 0.92),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        size: 18,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          storiesState.trayOfflineBanner
+                              ? 'Couldn\'t refresh — showing saved stories'
+                              : 'Showing saved stories — connect to refresh',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: ThemeHelper.getTextSecondary(context),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             // Stories layout: "Your story" at top center, then 2 columns below
             Expanded(
               child: isLoading && users.isEmpty
-                  ? Center(
-                      child: CircularProgressIndicator(
-                        color: ThemeHelper.getAccentColor(context),
+                  ? RefreshIndicator(
+                      onRefresh: () =>
+                          ref.read(storiesProvider.notifier).refresh(),
+                      color: ThemeHelper.getAccentColor(context),
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildStoriesTrayShimmer(),
+                            const SizedBox(height: 28),
+                            _buildLiveSectionShimmer(),
+                            if (error != null)
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  error,
+                                  style: TextStyle(
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    fontSize: 13,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     )
                   : error != null && users.isEmpty
@@ -123,6 +488,7 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                               ref.read(storiesProvider.notifier).refresh(),
                           color: ThemeHelper.getAccentColor(context),
                           child: SingleChildScrollView(
+                            key: const PageStorageKey<String>('story_tab_scroll'),
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 8),
@@ -136,28 +502,6 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                                 ),
                                 const SizedBox(height: 12),
                                 _buildLivesList(liveAsync),
-                                if (users.isEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 18),
-                                    child: Column(
-                                      children: [
-                                        Icon(
-                                          Icons.auto_stories_outlined,
-                                          size: 48,
-                                          color: ThemeHelper.getTextSecondary(context),
-                                        ),
-                                        const SizedBox(height: 10),
-                                        Text(
-                                          'No stories or live streams yet',
-                                          style: TextStyle(
-                                            color: ThemeHelper.getTextPrimary(context),
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
                               ],
                             ),
                           ),
@@ -262,10 +606,9 @@ class _StoryPageState extends ConsumerState<StoryPage> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => CurrentUserStoryLiveViewerScreen(
+            builder: (_) => CurrentUserStoriesViewerScreen(
               currentUser: currentUser,
               stories: stories,
-              lives: lives,
             ),
           ),
         );
@@ -378,6 +721,9 @@ class _StoryPageState extends ConsumerState<StoryPage> {
     );
 
     final streams = liveAsync.value ?? const <LivestreamModel>[];
+    final trayUsers = currentUser == null
+        ? users
+        : users.where((u) => u.id != currentUser.id).toList();
 
     return SizedBox(
       height: 120,
@@ -387,23 +733,35 @@ class _StoryPageState extends ConsumerState<StoryPage> {
         itemBuilder: (context, index) {
           if (index == 0) {
             final cu = currentUser;
+            if (cu == null) {
+              return _storyBubble(
+                name: 'Your story',
+                imageUrl: '',
+                showPlus: true,
+                ring: ring,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        CreateContentScreen(initialType: ContentType.story),
+                  ),
+                ),
+              );
+            }
             return _storyBubble(
               name: 'Your story',
-              imageUrl: cu?.avatarUrl ?? '',
+              imageUrl: _yourStoryPreviewUrl(cu, userStoriesMap),
               showPlus: true,
               ring: ring,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CreateContentScreen(initialType: ContentType.story),
-                ),
-              ),
+              onAvatarTap: () => _openCurrentUserStoryViewer(cu, userStoriesMap),
+              onPlusTap: () async => _showCurrentUserAddSheet(),
             );
           }
-          final user = users[index - 1];
+          final user = trayUsers[index - 1];
           final stories = userStoriesMap[user.id] ?? const <StoryModel>[];
           if (stories.isEmpty) return const SizedBox.shrink();
           final isLive = streams.any((s) => s.hostId == user.id);
+          final fullIndex = users.indexWhere((u) => u.id == user.id);
           return _storyBubble(
             name: user.username,
             imageUrl: user.avatarUrl,
@@ -411,16 +769,15 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                 ? const LinearGradient(colors: [Color(0xFFEF4444), Color(0xFFF97316)])
                 : ring,
             badge: isLive ? 'LIVE' : null,
-            onTap: () => _openStoryViewer(
-              users.indexOf(user),
-              0,
-              users,
-              userStoriesMap,
-            ),
+            onTap: () {
+              if (fullIndex >= 0) {
+                _openStoryViewer(fullIndex, 0, users, userStoriesMap);
+              }
+            },
           );
         },
         separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemCount: users.length + 1,
+        itemCount: trayUsers.length + 1,
       ),
     );
   }
@@ -430,19 +787,24 @@ class _StoryPageState extends ConsumerState<StoryPage> {
     required String imageUrl,
     required Gradient ring,
     VoidCallback? onTap,
+    VoidCallback? onAvatarTap,
+    VoidCallback? onPlusTap,
     bool showPlus = false,
     String? badge,
   }) {
     final bg = ThemeHelper.getBackgroundColor(context);
+    final VoidCallback? avatarTap =
+        (showPlus && onAvatarTap != null) ? onAvatarTap : onTap;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          onTap: onTap,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            GestureDetector(
+              onTap: avatarTap,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(shape: BoxShape.circle, gradient: ring),
                 child: Container(
@@ -454,10 +816,18 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: imageUrl.isNotEmpty
-                      ? CachedNetworkImage(imageUrl: imageUrl, fit: BoxFit.cover)
+                      ? CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          cacheManager: AppMediaCache.feedMedia,
+                          fadeInDuration: const Duration(milliseconds: 200),
+                          placeholder: (_, __) =>
+                              _avatarImagePlaceholder(context),
+                        )
                       : Icon(Icons.person, size: 36, color: ThemeHelper.getTextSecondary(context)),
                 ),
               ),
+            ),
               if (badge != null)
                 Positioned(
                   top: -4,
@@ -484,7 +854,41 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                     ),
                   ),
                 ),
-              if (showPlus)
+              if (showPlus && onPlusTap != null)
+                Positioned(
+                  bottom: -2,
+                  right: -2,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: onPlusTap,
+                      customBorder: const CircleBorder(),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: bg,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.15),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        child: Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: ThemeHelper.getAccentColor(context),
+                          ),
+                          child: const Icon(Icons.add, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (showPlus && onPlusTap == null)
                 Positioned(
                   bottom: -2,
                   right: -2,
@@ -513,7 +917,6 @@ class _StoryPageState extends ConsumerState<StoryPage> {
                 ),
             ],
           ),
-        ),
         const SizedBox(height: 6),
         SizedBox(
           width: 80,
@@ -537,51 +940,60 @@ class _StoryPageState extends ConsumerState<StoryPage> {
     AsyncValue<List<LivestreamModel>> liveAsync,
   ) {
     return liveAsync.when(
-      loading: () => const SizedBox(height: 120, child: Center(child: CircularProgressIndicator())),
-      error: (_, __) => const SizedBox.shrink(),
+      loading: () => _buildLiveSectionShimmer(),
+      error: (_, __) => _buildLiveEmptyState(showErrorHint: true),
       data: (streams) {
-        if (streams.isEmpty) return const SizedBox.shrink();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Live now',
-                    style: TextStyle(
-                      color: ThemeHelper.getTextPrimary(context),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Text(
-                    '${streams.length}',
-                    style: TextStyle(
-                      color: ThemeHelper.getTextSecondary(context),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ...streams.map((s) => _liveCard(s)).toList(),
-          ],
-        );
+        if (streams.isNotEmpty) {
+          return _buildLiveStreamsColumn(streams);
+        }
+        return _buildLiveEmptyState();
       },
+    );
+  }
+
+  Widget _buildLiveStreamsColumn(List<LivestreamModel> streams) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Live now',
+                style: TextStyle(
+                  color: ThemeHelper.getTextPrimary(context),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                '${streams.length}',
+                style: TextStyle(
+                  color: ThemeHelper.getTextSecondary(context),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+        ...streams.map(_liveCard),
+      ],
     );
   }
 
   Widget _liveCard(LivestreamModel stream) {
     final host = stream.host;
-    final image = (stream.thumbnail?.isNotEmpty == true)
-        ? stream.thumbnail!
-        : (host?.profilePicture ?? '');
-    final title = stream.title?.isNotEmpty == true ? stream.title! : stream.channelName;
-    final subtitle = stream.description?.isNotEmpty == true
-        ? stream.description!
+    final thumb = stream.thumbnail ?? '';
+    final image =
+        thumb.isNotEmpty ? thumb : (host?.profilePicture ?? '');
+    final rawTitle = stream.title ?? '';
+    final title =
+        rawTitle.isNotEmpty ? rawTitle : stream.channelName;
+    final rawDesc = stream.description ?? '';
+    final subtitle = rawDesc.isNotEmpty
+        ? rawDesc
         : 'Hosted by ${host?.username ?? 'creator'}';
     return GestureDetector(
       onTap: () async {
@@ -725,7 +1137,6 @@ class _StoryPageState extends ConsumerState<StoryPage> {
       builder: (ctx) {
         final isDark = Theme.of(ctx).brightness == Brightness.dark;
         final bgColor = ThemeHelper.getBackgroundColor(ctx);
-        final surfaceColor = ThemeHelper.getSurfaceColor(ctx);
         final borderColor = ThemeHelper.getBorderColor(ctx);
         final textPrimary = ThemeHelper.getTextPrimary(ctx);
         final textSecondary = ThemeHelper.getTextSecondary(ctx);
@@ -1216,7 +1627,6 @@ class _StoryPageState extends ConsumerState<StoryPage> {
     List<UserModel> users,
     Map<String, List<StoryModel>> userStoriesMap,
   ) {
-    final currentUserStories = userStoriesMap[currentUser.id] ?? [];
     final userIndex = users.indexWhere((u) => u.id == currentUser.id);
 
     showModalBottomSheet(

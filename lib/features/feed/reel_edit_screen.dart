@@ -535,10 +535,12 @@ class _LayerState extends ChangeNotifier {
 class _ExportProgressDialog extends StatefulWidget {
   final Stream<double> progressStream;
   final Stream<String> statusStream;
+  final bool isImageExport;
 
   const _ExportProgressDialog({
     required this.progressStream,
     required this.statusStream,
+    this.isImageExport = false,
   });
 
   @override
@@ -550,139 +552,125 @@ class _ExportProgressDialogState extends State<_ExportProgressDialog>
   double _progress = 0;
   String _status = 'Preparing...';
   late AnimationController _pulseController;
+  StreamSubscription<double>? _progressSub;
+  StreamSubscription<String>? _statusSub;
 
   @override
   void initState() {
     super.initState();
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
 
-    widget.progressStream.listen((progress) {
+    _progressSub = widget.progressStream.listen((progress) {
       if (mounted) setState(() => _progress = progress);
     });
-
-    widget.statusStream.listen((status) {
+    _statusSub = widget.statusStream.listen((status) {
       if (mounted) setState(() => _status = status);
     });
   }
 
   @override
   void dispose() {
+    _progressSub?.cancel();
+    _statusSub?.cancel();
     _pulseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final d = _ReelEditTheme.of(context);
+    final accent = ThemeHelper.getAccentColor(context);
+    final title = widget.isImageExport ? 'Saving image' : 'Exporting video';
+    final icon = widget.isImageExport ? Icons.image_outlined : Icons.movie_creation_outlined;
+
     return PopScope(
       canPop: false,
       child: Dialog(
         backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
         child: Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(24, 26, 24, 22),
           decoration: BoxDecoration(
-            color: _ReelEditTheme.of(context).surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: _ReelEditTheme.of(context).border,
-              width: 1,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                d.surface,
+                Color.lerp(d.surface, d.bg, 0.35)!,
+              ],
             ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: accent.withValues(alpha: 0.22), width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 28,
+                offset: const Offset(0, 14),
+              ),
+            ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(height: 8),
-              // Animated progress indicator
-              SizedBox(
-                width: 80,
-                height: 80,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Background circle
-                    CircularProgressIndicator(
-                      value: 1,
-                      strokeWidth: 6,
-                      backgroundColor: Colors.transparent,
-                      valueColor: AlwaysStoppedAnimation(
-                        _ReelEditTheme.of(context).border.withOpacity(0.3),
-                      ),
+              AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, _) {
+                  return Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accent.withValues(alpha: 0.12 + _pulseController.value * 0.08),
+                      border: Border.all(color: accent.withValues(alpha: 0.35)),
                     ),
-                    // Progress circle
-                    CircularProgressIndicator(
-                      value: _progress > 0 ? _progress : null,
-                      strokeWidth: 6,
-                      backgroundColor: Colors.transparent,
-                      valueColor: AlwaysStoppedAnimation(
-                        _ReelEditTheme.of(context).accent,
-                      ),
-                    ),
-                    // Percentage text
-                    if (_progress > 0)
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '${(_progress * 100).toInt()}',
-                            style: _DS.heading(context, size: 20),
-                          ),
-                          Text(
-                            '%',
-                            style: _DS.label(context,
-                                size: 10,
-                                color: _ReelEditTheme.of(context).textSec),
-                          ),
-                        ],
-                      )
-                    else
-                      AnimatedBuilder(
-                        animation: _pulseController,
-                        builder: (context, child) {
-                          return Icon(
-                            Icons.video_library_rounded,
-                            color: _ReelEditTheme.of(context).accent.withOpacity(
-                                0.5 + (_pulseController.value * 0.5)),
-                            size: 28,
-                          );
-                        },
-                      ),
-                  ],
-                ),
+                    child: Icon(icon, color: accent, size: 28),
+                  );
+                },
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
               Text(
-                'EXPORTING VIDEO',
-                style: _DS.heading(context, size: 14),
+                title,
+                style: TextStyle(
+                  color: d.textPrim,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.2,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 _status,
-                style: _DS.label(context,
-                    size: 11, color: _ReelEditTheme.of(context).textSec),
+                style: TextStyle(
+                  color: d.textSec,
+                  fontSize: 13,
+                  height: 1.35,
+                  fontWeight: FontWeight.w500,
+                ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
-              // Progress bar
-              Container(
-                height: 4,
-                decoration: BoxDecoration(
-                  color: _ReelEditTheme.of(context).border.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-                child: FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: _progress.clamp(0.0, 1.0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: _ReelEditTheme.of(context).accent,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
+              const SizedBox(height: 20),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: _progress > 0 ? _progress.clamp(0.0, 1.0) : null,
+                  minHeight: 8,
+                  backgroundColor: d.border.withValues(alpha: 0.35),
+                  valueColor: AlwaysStoppedAnimation<Color>(accent),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
+              Text(
+                _progress > 0 ? '${(_progress * 100).clamp(0, 100).toInt()}%' : '…',
+                style: TextStyle(
+                  color: d.textDim,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ],
           ),
         ),
@@ -696,8 +684,16 @@ class _ExportProgressDialogState extends State<_ExportProgressDialog>
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ReelEditScreen extends StatefulWidget {
-  final File videoFile;
-  const ReelEditScreen({super.key, required this.videoFile});
+  /// Video (reel / long) or a single photo (story image mode).
+  final File mediaFile;
+  /// When true: static image editor — no trim, no playback; export is a PNG composite.
+  final bool isImageMode;
+
+  const ReelEditScreen({
+    super.key,
+    required this.mediaFile,
+    this.isImageMode = false,
+  });
 
   @override
   State<ReelEditScreen> createState() => _ReelEditScreenState();
@@ -718,7 +714,12 @@ class _ReelEditScreenState extends State<ReelEditScreen>
   bool _isExporting = false;
 
   final _overlayKey = GlobalKey();
+  final _fullImageExportKey = GlobalKey();
   final _videoContainerKey = GlobalKey();
+
+  /// Pixel dimensions of [mediaFile] when [isImageMode].
+  double? _imagePixelW;
+  double? _imagePixelH;
 
   Size _videoDisplaySize = Size.zero;
 
@@ -738,7 +739,11 @@ class _ReelEditScreenState extends State<ReelEditScreen>
       duration: const Duration(milliseconds: 250),
     );
 
-    _initVideo();
+    if (widget.isImageMode) {
+      _loadImageForEdit();
+    } else {
+      _initVideo();
+    }
   }
 
   @override
@@ -755,9 +760,31 @@ class _ReelEditScreenState extends State<ReelEditScreen>
     super.dispose();
   }
 
+  Future<void> _loadImageForEdit() async {
+    try {
+      final bytes = await widget.mediaFile.readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
+      if (!mounted) {
+        img.dispose();
+        return;
+      }
+      setState(() {
+        _imagePixelW = img.width.toDouble();
+        _imagePixelH = img.height.toDouble();
+      });
+      img.dispose();
+      _isInitializing.value = false;
+    } catch (e) {
+      debugPrint('Story image load error: $e');
+      if (mounted) _isInitializing.value = false;
+    }
+  }
+
   Future<void> _initVideo() async {
     try {
-      final controller = VideoPlayerController.file(widget.videoFile);
+      final controller = VideoPlayerController.file(widget.mediaFile);
       await controller.initialize();
       controller.setLooping(false);
       controller.addListener(_videoListener);
@@ -776,6 +803,7 @@ class _ReelEditScreenState extends State<ReelEditScreen>
   }
 
   void _videoListener() {
+    if (widget.isImageMode) return;
     final controller = _videoController;
     if (controller == null) return;
 
@@ -796,6 +824,7 @@ class _ReelEditScreenState extends State<ReelEditScreen>
   }
 
   void _togglePlay() async {
+    if (widget.isImageMode) return;
     final controller = _videoController;
     if (controller == null) return;
 
@@ -824,6 +853,7 @@ class _ReelEditScreenState extends State<ReelEditScreen>
 
   void _selectTool(_Tool tool) async {
     await _DS.hapticLight();
+    if (widget.isImageMode && tool == _Tool.trim) return;
 
     if (_editorState.activeTool == tool) {
       _editorState.activeTool = _Tool.none;
@@ -988,7 +1018,9 @@ class _ReelEditScreenState extends State<ReelEditScreen>
     await Future.delayed(const Duration(milliseconds: 150));
 
     try {
-      final result = await _exportVideoWithOverlays();
+      final File? result = widget.isImageMode
+          ? await _exportImageWithOverlays()
+          : await _exportVideoWithOverlays();
       if (mounted && result != null) {
         Navigator.pop(context, result);
       }
@@ -1007,10 +1039,79 @@ class _ReelEditScreenState extends State<ReelEditScreen>
     }
   }
 
+  Future<File?> _exportImageWithOverlays() async {
+    final progressController = StreamController<double>.broadcast();
+    final statusController = StreamController<String>.broadcast();
+
+    if (!mounted) return null;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor:
+          ThemeHelper.getBackgroundColor(context).withValues(alpha: 0.82),
+      builder: (_) => _ExportProgressDialog(
+        progressStream: progressController.stream,
+        statusStream: statusController.stream,
+        isImageExport: true,
+      ),
+    );
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      statusController.add('Preparing…');
+      progressController.add(0.06);
+      await Future.delayed(const Duration(milliseconds: 120));
+
+      statusController.add('Rendering…');
+      progressController.add(0.22);
+
+      final boundary = _fullImageExportKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        if (mounted) Navigator.pop(context);
+        return widget.mediaFile;
+      }
+
+      await Future.delayed(const Duration(milliseconds: 80));
+      final pixelRatio =
+          MediaQuery.of(context).devicePixelRatio.clamp(1.0, 3.0);
+      final uiImage = await boundary.toImage(pixelRatio: pixelRatio);
+      progressController.add(0.62);
+      statusController.add('Saving…');
+
+      final byteData =
+          await uiImage.toByteData(format: ui.ImageByteFormat.png);
+      uiImage.dispose();
+
+      if (byteData == null) {
+        if (mounted) Navigator.pop(context);
+        return widget.mediaFile;
+      }
+
+      final outPath = '${tempDir.path}/story_edit_$timestamp.png';
+      await File(outPath).writeAsBytes(byteData.buffer.asUint8List());
+
+      progressController.add(1.0);
+      statusController.add('Done');
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (mounted) Navigator.pop(context);
+
+      return File(outPath);
+    } catch (e, st) {
+      debugPrint('Image export error: $e\n$st');
+      if (mounted) Navigator.pop(context);
+      rethrow;
+    } finally {
+      await progressController.close();
+      await statusController.close();
+    }
+  }
+
   Future<File?> _exportVideoWithOverlays() async {
     final controller = _videoController;
     if (controller == null || !controller.value.isInitialized) {
-      return widget.videoFile;
+      return widget.mediaFile;
     }
 
     // Create stream controllers for progress
@@ -1021,10 +1122,12 @@ class _ReelEditScreenState extends State<ReelEditScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: ThemeHelper.getBackgroundColor(context).withOpacity(0.85),
+      barrierColor:
+          ThemeHelper.getBackgroundColor(context).withValues(alpha: 0.82),
       builder: (_) => _ExportProgressDialog(
         progressStream: progressController.stream,
         statusStream: statusController.stream,
+        isImageExport: false,
       ),
     );
 
@@ -1076,7 +1179,7 @@ class _ReelEditScreenState extends State<ReelEditScreen>
 
       // Step 5: Build FFmpeg arguments (list form for reliable parsing, no shell quoting)
       final ffmpegArgs = _buildFFmpegExportArguments(
-        inputPath: widget.videoFile.path,
+        inputPath: widget.mediaFile.path,
         overlayPath: overlayPath,
         outputPath: outputPath,
         startTime: startTimeSec,
@@ -1140,7 +1243,7 @@ class _ReelEditScreenState extends State<ReelEditScreen>
       if (mounted) Navigator.pop(context);
 
       // Return original file as fallback
-      return widget.videoFile;
+      return widget.mediaFile;
 
     } catch (e, stackTrace) {
       debugPrint('Export exception: $e\n$stackTrace');
@@ -1375,7 +1478,7 @@ class _ReelEditScreenState extends State<ReelEditScreen>
             onTap: () => Navigator.pop(context),
           ),
           const SizedBox(width: 8),
-          Text('EDITOR',
+          Text(widget.isImageMode ? 'EDIT PHOTO' : 'EDITOR',
               style: _DS.heading(context,
                   size: 11, color: _ReelEditTheme.of(context).textSec)),
           const Spacer(),
@@ -1435,6 +1538,45 @@ class _ReelEditScreenState extends State<ReelEditScreen>
               height: 24,
               child: CircularProgressIndicator(
                   strokeWidth: 2, color: _ReelEditTheme.of(context).accent),
+            ),
+          );
+        }
+
+        if (widget.isImageMode) {
+          final iw = _imagePixelW;
+          final ih = _imagePixelH;
+          if (iw == null || ih == null || iw <= 0 || ih <= 0) {
+            return Center(
+              child: Icon(Icons.broken_image_outlined,
+                  color: _ReelEditTheme.of(context).textDim, size: 40),
+            );
+          }
+          final imageAspect = iw / ih;
+          final selectedRatio =
+              _aspectRatios[_editorState.aspectRatioIndex].ratio;
+          final displayAspect = selectedRatio ?? imageAspect;
+
+          final maxWidth = screenSize.width - 24;
+          final maxHeight = screenSize.height * 0.55;
+
+          double viewW, viewH;
+          if (maxWidth / displayAspect <= maxHeight) {
+            viewW = maxWidth;
+            viewH = maxWidth / displayAspect;
+          } else {
+            viewH = maxHeight;
+            viewW = maxHeight * displayAspect;
+          }
+
+          _videoDisplaySize = Size(viewW, viewH);
+
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: SizedBox(
+              key: _videoContainerKey,
+              width: viewW,
+              height: viewH,
+              child: _buildImageStack(viewW, viewH),
             ),
           );
         }
@@ -1590,7 +1732,118 @@ class _ReelEditScreenState extends State<ReelEditScreen>
     return video;
   }
 
+  Widget _buildImageWithEffects() {
+    final w = _imagePixelW!;
+    final h = _imagePixelH!;
+    Widget image = SizedBox.expand(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: w,
+          height: h,
+          child: Image.file(
+            widget.mediaFile,
+            fit: BoxFit.cover,
+            width: w,
+            height: h,
+          ),
+        ),
+      ),
+    );
+
+    final colorFilter = _computeColorFilter();
+    if (colorFilter != null) {
+      image = ColorFiltered(colorFilter: colorFilter, child: image);
+    }
+
+    final blur = _effectiveBlur;
+    if (blur > 0) {
+      image = ImageFiltered(
+        imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+        child: image,
+      );
+    }
+
+    return image;
+  }
+
+  Widget _buildImageStack(double width, double height) {
+    return GestureDetector(
+      onPanStart: _onPanStart,
+      onPanUpdate: _onPanUpdate,
+      onPanEnd: _onPanEnd,
+      onTapDown: _onCanvasTap,
+      child: Stack(
+        clipBehavior: Clip.hardEdge,
+        children: [
+          Positioned.fill(
+            child: RepaintBoundary(
+              key: _fullImageExportKey,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Positioned.fill(child: _buildImageWithEffects()),
+                  Positioned.fill(
+                    child: RepaintBoundary(
+                      key: _overlayKey,
+                      child: Stack(
+                        children: [
+                          ValueListenableBuilder<List<Offset?>>(
+                            valueListenable: _currentStroke,
+                            builder: (context, stroke, _) {
+                              return ListenableBuilder(
+                                listenable:
+                                    Listenable.merge([_layerState, _brushState]),
+                                builder: (context, _) {
+                                  return CustomPaint(
+                                    size: Size(width, height),
+                                    painter: _LayerPainter(
+                                      layers: _layerState.layers,
+                                      currentStroke: stroke,
+                                      currentColor: _brushState.color,
+                                      currentStrokeWidth: _brushState.size,
+                                      currentBrush: _brushState.type,
+                                    ),
+                                    isComplex: true,
+                                    willChange: stroke.isNotEmpty,
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                          _buildOverlayLayers(),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_editorState.vignette > 0)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child:
+                            _VignetteOverlay(intensity: _editorState.vignette),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (_editorState.activeTool == _Tool.crop)
+            Positioned.fill(
+              child: _CropOverlay(
+                rect: _editorState.cropRect,
+                onRectChanged: (rect) {
+                  _editorState.cropRect = rect;
+                  _editorState.notifyAdjustmentChanged();
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPlayButton() {
+    if (widget.isImageMode) return const SizedBox.shrink();
     return ValueListenableBuilder<bool>(
       valueListenable: _isPlaying,
       builder: (context, isPlaying, _) {
@@ -1704,33 +1957,36 @@ class _ReelEditScreenState extends State<ReelEditScreen>
           _editorState.notifyAdjustmentChanged();
         },
       ),
-      _Tool.trim => _TrimPanel(
-        key: const ValueKey('trim'),
-        controller: _videoController,
-        trimStart: _editorState.trimStart,
-        trimEnd: _editorState.trimEnd,
-        isPlaying: _isPlaying,
-        onTrimChanged: (start, end) {
-          _editorState.trimStart = start;
-          _editorState.trimEnd = end;
-          _editorState.notifyAdjustmentChanged();
-        },
-        onTogglePlay: _togglePlay,
-        onSeek: (position) {
-          final duration =
-              _videoController?.value.duration ?? Duration.zero;
-          _videoController?.seekTo(Duration(
-            milliseconds: (duration.inMilliseconds * position).round(),
-          ));
-        },
-      ),
+      _Tool.trim => widget.isImageMode
+          ? const SizedBox.shrink(key: ValueKey('trim_none'))
+          : _TrimPanel(
+              key: const ValueKey('trim'),
+              controller: _videoController,
+              trimStart: _editorState.trimStart,
+              trimEnd: _editorState.trimEnd,
+              isPlaying: _isPlaying,
+              onTrimChanged: (start, end) {
+                _editorState.trimStart = start;
+                _editorState.trimEnd = end;
+                _editorState.notifyAdjustmentChanged();
+              },
+              onTogglePlay: _togglePlay,
+              onSeek: (position) {
+                final duration =
+                    _videoController?.value.duration ?? Duration.zero;
+                _videoController?.seekTo(Duration(
+                  milliseconds: (duration.inMilliseconds * position).round(),
+                ));
+              },
+            ),
       _ => const SizedBox.shrink(key: ValueKey('none')),
     };
   }
 
   Widget _buildTabBar() {
-    const tabs = [
-      (Icons.content_cut_rounded, 'TRIM', _Tool.trim),
+    final tabs = <(IconData, String, _Tool)>[
+      if (!widget.isImageMode)
+        (Icons.content_cut_rounded, 'TRIM', _Tool.trim),
       (Icons.crop_rounded, 'CROP', _Tool.crop),
       (Icons.filter_rounded, 'FILTER', _Tool.filter),
       (Icons.tune_rounded, 'ADJUST', _Tool.adjust),

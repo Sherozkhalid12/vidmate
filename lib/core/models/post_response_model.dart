@@ -52,6 +52,10 @@ class ApiPost {
   final List<String> likes;
   /// Comment count from backend (API may send 'Comments' or 'comments').
   final int commentsCount;
+  /// Optional BlurHash for instant thumbnail placeholder.
+  final String? blurHash;
+  /// Explicit cover/thumbnail (reels/long video) when not in [images].
+  final String? thumbnailUrl;
 
   ApiPost({
     required this.userId,
@@ -67,6 +71,8 @@ class ApiPost {
     this.type = 'post',
     List<String>? likes,
     int? commentsCount,
+    this.blurHash,
+    this.thumbnailUrl,
   })  : likes = likes ?? const [],
         commentsCount = commentsCount ?? 0;
 
@@ -108,6 +114,14 @@ class ApiPost {
     final commentsCount = commentsVal is int
         ? commentsVal
         : (commentsVal is List ? (commentsVal as List).length : _int(commentsVal));
+    final bh = _string(json['blurHash'] ?? json['blurhash'] ?? json['thumbHash'] ?? '');
+    final thumbRaw = _string(json['thumbnailUrl'] ??
+        json['thumbnail'] ??
+        json['preview'] ??
+        json['coverImage'] ??
+        json['cover'] ??
+        json['thumb']);
+    final thumb = thumbRaw.isEmpty ? null : thumbRaw;
     return ApiPost(
       userId: _string(json['userId']),
       images: _stringList(json['images']),
@@ -122,6 +136,8 @@ class ApiPost {
       type: type,
       likes: likesList,
       commentsCount: commentsCount,
+      blurHash: bh.isEmpty ? null : bh,
+      thumbnailUrl: thumb,
     );
   }
 
@@ -140,6 +156,9 @@ class ApiPost {
       'type': type,
       'likes': likes,
       'comments': commentsCount,
+      if (blurHash != null) 'blurHash': blurHash,
+      if (thumbnailUrl != null && thumbnailUrl!.isNotEmpty)
+        'thumbnailUrl': thumbnailUrl,
     };
   }
 }

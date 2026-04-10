@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/utils/theme_helper.dart';
@@ -61,6 +62,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _convIdNotifier = ref.read(currentConversationIdProvider.notifier);
         _socketService = ref.read(socketServiceProvider);
         _chatPeerNotifier.state = peerId;
+        if (widget.user != null) {
+          ref.read(chatMessagesProvider(peerId).notifier).setPeerUser(widget.user!);
+        }
         ref.read(chatMessagesProvider(peerId).notifier).load().then((_) {
           if (!mounted) return;
           final state = ref.read(chatMessagesProvider(peerId));
@@ -111,6 +115,95 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         );
       }
     });
+  }
+
+  (Color, Color) _shimmerColors(BuildContext context) {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  /// Shown at the visual top while older messages are loading (reverse list).
+  Widget _buildOlderMessagesShimmer(BuildContext context) {
+    final (base, hi) = _shimmerColors(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+      child: Shimmer.fromColors(
+        baseColor: base,
+        highlightColor: hi,
+        child: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Container(
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatMessagesSkeleton(BuildContext context) {
+    final (base, hi) = _shimmerColors(context);
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: List.generate(8, (i) {
+        final alignRight = i % 3 == 1;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Shimmer.fromColors(
+            baseColor: base,
+            highlightColor: hi,
+            child: Row(
+              mainAxisAlignment:
+                  alignRight ? MainAxisAlignment.end : MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (!alignRight) ...[
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Flexible(
+                  child: Container(
+                    height: i % 4 == 0 ? 72 : 52,
+                    margin: EdgeInsets.only(
+                      left: alignRight ? 56 : 0,
+                      right: alignRight ? 0 : 36,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
   }
 
   /// True if user is near the bottom (newest) so we can auto-scroll on incoming message.
@@ -332,9 +425,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             children: [
               Expanded(
                 child: chatState.loading && messages.isEmpty
-                    ? Center(
-                        child: CircularProgressIndicator(color: ThemeHelper.getAccentColor(context)),
-                      )
+                    ? _buildChatMessagesSkeleton(context)
                     : chatState.error != null && messages.isEmpty
                         ? Center(
                             child: Padding(
@@ -354,19 +445,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                               itemCount: messages.length + (chatState.loadingOlder ? 1 : 0),
                               itemBuilder: (context, index) {
                                 if (chatState.loadingOlder && index == messages.length) {
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 16),
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: ThemeHelper.getAccentColor(context),
-                                        ),
-                                      ),
-                                    ),
-                                  );
+                                  return _buildOlderMessagesShimmer(context);
                                 }
                                 final msg = messages[messages.length - 1 - index];
                                 return AnimationConfiguration.staggeredList(
@@ -429,7 +508,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMe) ...[
-            _buildAvatar(message.sender.avatarUrl, 32),
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: ThemeHelper.getBorderColor(context).withValues(alpha: 0.45),
+                  width: 1,
+                ),
+              ),
+              child: ClipOval(
+                child: _buildAvatar(message.sender.avatarUrl, 32),
+              ),
+            ),
             const SizedBox(width: 8),
           ],
           Flexible(

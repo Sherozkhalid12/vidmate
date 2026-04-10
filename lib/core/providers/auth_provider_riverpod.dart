@@ -64,12 +64,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       );
 
       // Do not block splash on network; fire-and-forget with timeout.
-      unawaited(
-        LivestreamService()
-            .endAllActive()
-            .timeout(const Duration(seconds: 3))
-            .catchError((_) {}),
-      );
+      unawaited(() async {
+        try {
+          await LivestreamService()
+              .endAllActive()
+              .timeout(const Duration(seconds: 3));
+        } catch (_) {}
+      }());
     } catch (_) {
       // Invalid stored user; clear auth so user can log in again
       await _authService.clearAuth();

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:better_player/better_player.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
@@ -12,7 +13,6 @@ import '../long_videos/providers/long_videos_provider.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
-import '../../core/services/mock_data_service.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/comments_bottom_sheet.dart';
 import '../../core/widgets/share_bottom_sheet.dart';
@@ -46,7 +46,17 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
   int _commentCount = 0;
   Timer? _controlsTimer;
   VideoPlayerNotifier? _cachedNotifier;
-  List<PostModel>? _cachedSuggestedVideos;
+
+  /// Embedded long-video scroll: hide details until player is ready; suggested list loads async.
+  bool _embeddedDetailsReady = false;
+  bool _embeddedSuggestedReady = false;
+  bool _embeddedDetailsRevealScheduled = false;
+  bool _embeddedDetailsFallbackScheduled = false;
+
+  bool _deferEmbeddedShimmers() {
+    final p = widget.post;
+    return p == null || p.postType == 'longVideo';
+  }
 
   @override
   void initState() {
@@ -69,8 +79,41 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
         } catch (e) {
           // Provider might not be ready yet
         }
+        if (_deferEmbeddedShimmers()) {
+          unawaited(_loadEmbeddedSuggestedSectionReady());
+        }
       }
     });
+  }
+
+  Future<void> _loadEmbeddedSuggestedSectionReady() async {
+    if (!_deferEmbeddedShimmers() || !mounted) return;
+    setState(() => _embeddedSuggestedReady = false);
+
+    var waited = 0;
+    while (mounted && waited < 4000) {
+      final lv = ref.read(longVideosProvider);
+      if (!lv.isLoading || lv.initialFetchCompleted) break;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      waited += 100;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    if (!mounted) return;
+    setState(() => _embeddedSuggestedReady = true);
+  }
+
+  @override
+  void didUpdateWidget(VideoPlayerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoUrl != widget.videoUrl) {
+      _embeddedDetailsReady = false;
+      _embeddedSuggestedReady = false;
+      _embeddedDetailsRevealScheduled = false;
+      _embeddedDetailsFallbackScheduled = false;
+      if (_deferEmbeddedShimmers()) {
+        unawaited(_loadEmbeddedSuggestedSectionReady());
+      }
+    }
   }
 
   Future<void> _toggleLikeApi() async {
@@ -599,6 +642,26 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
     }
     
     final notifier = _cachedNotifier!;
+
+    if (_deferEmbeddedShimmers() && !_embeddedDetailsReady) {
+      final ready = playerState.isInitialized &&
+          playerState.hasValidController &&
+          playerState.controller != null;
+      if (ready && !_embeddedDetailsRevealScheduled) {
+        _embeddedDetailsRevealScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _embeddedDetailsReady = true);
+        });
+      }
+      if (!ready && !_embeddedDetailsFallbackScheduled) {
+        _embeddedDetailsFallbackScheduled = true;
+        Future<void>.delayed(const Duration(seconds: 12), () {
+          if (mounted && !_embeddedDetailsReady) {
+            setState(() => _embeddedDetailsReady = true);
+          }
+        });
+      }
+    }
 
     return WillPopScope(
       onWillPop: () async {
@@ -1695,83 +1758,220 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
     );
   }
 
-  Widget _buildVideoDescriptionContent(VideoPlayerState playerState, VideoPlayerNotifier notifier) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: ThemeHelper.getBackgroundGradient(context),
+  (Color, Color) _embeddedShimmerColors() {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  Widget _buildEmbeddedVideoDetailsShimmer() {
+    final (base, hi) = _embeddedShimmerColors();
+    return Shimmer.fromColors(
+      baseColor: base,
+      highlightColor: hi,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 14,
+                      width: 160,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      height: 11,
+                      width: 100,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                height: 32,
+                width: 88,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Container(
+                  height: 13,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            height: 13,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            height: 13,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            height: 13,
+            width: 200,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ],
       ),
-          child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-          // Video info section with glass card
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GlassCard(
-              padding: const EdgeInsets.all(20),
-              child: Column(
+    );
+  }
+
+  Widget _buildEmbeddedSuggestedSectionShimmer() {
+    final (base, hi) = _embeddedShimmerColors();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Shimmer.fromColors(
+            baseColor: base,
+            highlightColor: hi,
+            child: Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  height: 22,
+                  width: 180,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        ...List.generate(3, (i) {
+          return Padding(
+            key: ValueKey<String>('embedded_suggested_shimmer_$i'),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Shimmer.fromColors(
+              baseColor: base,
+              highlightColor: hi,
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Title
-                  // Text(
-                  //   widget.title,
-                  //   style: TextStyle(
-                  //     color: ThemeHelper.getTextPrimary(context),
-                  //     fontSize: 20,
-                  //     fontWeight: FontWeight.bold,
-                  //     height: 1.3,
-                  //   ),
-                  // ),
-                  // const SizedBox(height: 12),
-                  // // Metadata with icons
-                  // Row(
-                  //   children: [
-                  //     Icon(
-                  //       Icons.favorite,
-                  //       size: 16,
-                  //       color: Colors.red,
-                  //     ),
-                  //     const SizedBox(width: 4),
-                  //     Text(
-                  //       _formatCount(_likeCount),
-                  //       style: TextStyle(
-                  //         color: ThemeHelper.getTextSecondary(context),
-                  //         fontSize: 14,
-                  //         fontWeight: FontWeight.w600,
-                  //       ),
-                  //     ),
-                  //     const SizedBox(width: 20),
-                  //     Icon(
-                  //       Icons.comment,
-                  //       size: 16,
-                  //       color: Theme.of(context).colorScheme.primary,
-                  //     ),
-                  //     const SizedBox(width: 4),
-                  //     Text(
-                  //       _formatCount(_commentCount),
-                  //       style: TextStyle(
-                  //         color: ThemeHelper.getTextSecondary(context),
-                  //         fontSize: 14,
-                  //         fontWeight: FontWeight.w600,
-                  //       ),
-                  //     ),
-                  //   ],
-                  // ),
-                  // const SizedBox(height: 16),
-                  // Divider
-                  // Container(
-                  //   height: 1,
-                  //   decoration: BoxDecoration(
-                  //     gradient: LinearGradient(
-                  //       colors: [
-                  //         Colors.transparent,
-                  //         ThemeHelper.getBorderColor(context),
-                  //         Colors.transparent,
-                  //       ],
-                  //     ),
-                  //   ),
-                  // ),
-                  // const SizedBox(height: 16),
+                  Container(
+                    width: 140,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          height: 14,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 12,
+                          width: 120,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          height: 11,
+                          width: 90,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildEmbeddedVideoDetailsColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
                   // Author info and action buttons row
                   Row(
                     children: [
@@ -1998,47 +2198,74 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
                       height: 1.6,
                     ),
                   ),
-                ],
+      ],
+    );
+  }
+
+  Widget _buildVideoDescriptionContent(VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    final defer = _deferEmbeddedShimmers();
+    final showDetailsShimmer = defer && !_embeddedDetailsReady;
+    final showSuggestedShimmer = defer && !_embeddedSuggestedReady;
+    final longVideosState = ref.watch(longVideosProvider);
+    final suggestedLongVideos =
+        _suggestedLongVideosFromList(longVideosState.videos);
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: ThemeHelper.getBackgroundGradient(context),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: GlassCard(
+                padding: const EdgeInsets.all(20),
+                child: showDetailsShimmer
+                    ? _buildEmbeddedVideoDetailsShimmer()
+                    : _buildEmbeddedVideoDetailsColumn(),
               ),
             ),
-          ),
-          const SizedBox(height: 24),
-          // Suggested videos header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Container(
-                  width: 4,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.primary,
-                        Theme.of(context).colorScheme.primary.withOpacity(0.5),
-                      ],
+            const SizedBox(height: 24),
+            if (showSuggestedShimmer)
+              _buildEmbeddedSuggestedSectionShimmer()
+            else ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 4,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Theme.of(context).colorScheme.primary,
+                            Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Suggested Videos',
+                      style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(context),
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  'Suggested Videos',
-                  style: TextStyle(
-                    color: ThemeHelper.getTextPrimary(context),
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Suggested videos list
-          _buildSuggestedVideosList(),
-          const SizedBox(height: 16),
-        ],
-      ),
+              ),
+              const SizedBox(height: 16),
+              _buildSuggestedVideosList(suggestedLongVideos),
+            ],
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }
@@ -2068,41 +2295,41 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
     );
   }
 
-  List<PostModel> _getSuggestedVideos() {
-    // Return cached videos if they exist to prevent changing during playback
-    if (_cachedSuggestedVideos != null) {
-      return _cachedSuggestedVideos!;
-    }
+  /// Other long-form items from [longVideosProvider] (same list as the Long Videos tab), excluding the playing clip.
+  static const int _kMaxSuggestedLongVideos = 8;
 
-    // Prefer real fetched videos from state (long videos or posts)
-    final longVideos = ref.read(longVideosProvider).videos;
-    final feedPosts = ref.read(postsListProvider);
-    var pool = [
-      ...longVideos,
-      ...feedPosts.where((p) => p.isVideo),
-    ];
-    // Remove current video
-    pool = pool.where((p) => p.id != widget.post?.id).toList();
+  List<PostModel> _suggestedLongVideosFromList(List<PostModel> longVideos) {
+    final excludeId = widget.post?.id;
+    final excludeUrl = widget.videoUrl;
 
-    // If still empty, fallback to mock
-    if (pool.isEmpty) {
-      pool = MockDataService.getMockPosts()
-          .where((p) => p.isVideo && p.id != widget.post?.id)
-          .toList();
-    }
+    Iterable<PostModel> candidates = longVideos.where((p) {
+      if (excludeId != null && excludeId.isNotEmpty && p.id == excludeId) {
+        return false;
+      }
+      if (excludeUrl.isNotEmpty && (p.videoUrl ?? '') == excludeUrl) {
+        return false;
+      }
+      if ((p.videoUrl ?? '').isEmpty) return false;
+      return p.postType == 'longVideo' || p.isVideo;
+    });
 
-    pool.shuffle();
-    final suggestedVideos = pool.take(3).toList();
-
-    _cachedSuggestedVideos = suggestedVideos;
-    return suggestedVideos;
+    final list = candidates.take(_kMaxSuggestedLongVideos).toList();
+    return list;
   }
 
-  Widget _buildSuggestedVideosList() {
-    final suggestedVideos = _getSuggestedVideos();
-
+  Widget _buildSuggestedVideosList(List<PostModel> suggestedVideos) {
     if (suggestedVideos.isEmpty) {
-      return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        child: Text(
+          'More long videos will appear here when available.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: ThemeHelper.getTextSecondary(context),
+            fontSize: 13,
+          ),
+        ),
+      );
     }
 
     return ListView.builder(

@@ -1,17 +1,22 @@
 import 'dart:async';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
 
-/// Per-widget video player state for long videos
-/// Uses both videoUrl and widgetId to create unique instances
+import 'package:better_player/better_player.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/media/long_video_better_cache.dart';
+import '../../../core/perf/long_video_perf_metrics.dart';
+
+/// Per-widget Better Player state for long videos (Feature 3.4 / 3.8).
 class LongVideoWidgetState {
-  final VideoPlayerController? controller;
+  final BetterPlayerController? controller;
   final bool isPlaying;
   final bool isInitialized;
   final Duration duration;
   final Duration position;
   final bool showControls;
-  final bool isSeeking; // Track seeking state to prevent thumbnail flashing
+  final bool isSeeking;
   final String widgetId;
   final String videoUrl;
 
@@ -28,7 +33,7 @@ class LongVideoWidgetState {
   });
 
   LongVideoWidgetState copyWith({
-    VideoPlayerController? controller,
+    BetterPlayerController? controller,
     bool? isPlaying,
     bool? isInitialized,
     Duration? duration,
@@ -50,7 +55,6 @@ class LongVideoWidgetState {
   }
 }
 
-/// Unique key for per-widget video players
 class VideoWidgetKey {
   final String widgetId;
   final String videoUrl;
@@ -69,60 +73,103 @@ class VideoWidgetKey {
   int get hashCode => widgetId.hashCode ^ videoUrl.hashCode;
 }
 
-/// Per-widget video player provider - each widget gets its own instance
 final longVideoWidgetProvider = StateNotifierProvider.autoDispose
     .family<LongVideoWidgetNotifier, LongVideoWidgetState, VideoWidgetKey>(
   (ref, key) {
-    final notifier = LongVideoWidgetNotifier(key.widgetId, key.videoUrl);
-    
-    // Cleanup on dispose
-    ref.onDispose(() {
-      // Notifier's dispose will be called automatically
-    });
-    
-    return notifier;
+    return LongVideoWidgetNotifier(key.widgetId, key.videoUrl);
   },
 );
 
-/// Notifier for per-widget video player
 class LongVideoWidgetNotifier extends StateNotifier<LongVideoWidgetState> {
+  LongVideoWidgetNotifier(this.widgetId, this.videoUrl)
+      : super(LongVideoWidgetState(widgetId: widgetId, videoUrl: videoUrl));
+
   final String widgetId;
   final String videoUrl;
-  Timer? _positionUpdateTimer;
   bool _isInitializing = false;
+  Stopwatch? _firstFrameWatch;
+  bool _loggedFirstFrame = false;
 
-  LongVideoWidgetNotifier(this.widgetId, this.videoUrl)
-      : super(LongVideoWidgetState(widgetId: widgetId, videoUrl: videoUrl)) {
-    // DO NOT auto-initialize - only initialize when user wants to play
-    // This prevents black screens and unnecessary resource usage
+  void _onBetterEvent(BetterPlayerEvent event) {
+    if (!mounted) return;
+    switch (event.betterPlayerEventType) {
+      case BetterPlayerEventType.bufferingStart:
+        LongVideoPerfMetrics.logLongVideoRebuffer();
+        break;
+      case BetterPlayerEventType.bufferingEnd:
+      case BetterPlayerEventType.play:
+        if (!_loggedFirstFrame && _firstFrameWatch != null) {
+          _loggedFirstFrame = true;
+          LongVideoPerfMetrics.logLongVideoFirstFrameMs(
+            _firstFrameWatch!.elapsedMilliseconds,
+          );
+          _firstFrameWatch = null;
+        }
+        break;
+      default:
+        break;
+    }
   }
 
-  /// Lazy initialization - only called when user wants to play
   Future<void> _initializePlayer() async {
-    // Prevent multiple simultaneous initializations
     if (_isInitializing || state.isInitialized) return;
-    
     _isInitializing = true;
-    
-    try {
-      final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
-      await controller.initialize();
 
-      if (mounted) {
-        state = state.copyWith(
-          controller: controller,
-          isInitialized: true,
-          duration: controller.value.duration,
-          isPlaying: false, // Don't auto-play
-        );
-        
-        // Add listener for position updates
-        controller.addListener(_videoListener);
-      } else {
-        // If not mounted, dispose immediately
-        controller.dispose();
+    try {
+      final better = BetterPlayerController(
+        BetterPlayerConfiguration(
+          aspectRatio: 16 / 9,
+          fit: BoxFit.cover,
+          autoPlay: false,
+          looping: false,
+          handleLifecycle: false,
+          expandToFill: true,
+          controlsConfiguration: const BetterPlayerControlsConfiguration(
+            showControls: false,
+            enableProgressBar: false,
+            enableProgressText: false,
+            enableFullscreen: false,
+            enableMute: false,
+            enablePlayPause: false,
+            enableSkips: false,
+            enablePlaybackSpeed: false,
+            enableSubtitles: false,
+            enableOverflowMenu: false,
+          ),
+        ),
+      );
+      better.addEventsListener(_onBetterEvent);
+
+      await better.setupDataSource(
+        BetterPlayerDataSource.network(
+          videoUrl,
+          cacheConfiguration: longVideoNetworkCache(videoUrl),
+          bufferingConfiguration: const BetterPlayerBufferingConfiguration(
+            minBufferMs: 2000,
+            maxBufferMs: 50000,
+            bufferForPlaybackMs: 1000,
+            bufferForPlaybackAfterRebufferMs: 2000,
+          ),
+        ),
+      );
+
+      if (!mounted) {
+        better.dispose(forceDispose: true);
+        return;
       }
+
+      final vpc = better.videoPlayerController;
+      vpc?.addListener(_videoListener);
+
+      state = state.copyWith(
+        controller: better,
+        isInitialized: true,
+        duration: vpc?.value.duration ?? Duration.zero,
+      );
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[LongVideoWidget] init failed: $e');
+      }
       if (mounted) {
         state = state.copyWith(isInitialized: false);
       }
@@ -133,60 +180,52 @@ class LongVideoWidgetNotifier extends StateNotifier<LongVideoWidgetState> {
 
   void _videoListener() {
     if (!mounted || state.controller == null) return;
-
+    final vpc = state.controller!.videoPlayerController;
+    if (vpc == null) return;
     try {
-      final value = state.controller!.value;
-      if (mounted) {
-        state = state.copyWith(
-          position: value.position,
-          isPlaying: value.isPlaying,
-          duration: value.duration,
-        );
-      }
-    } catch (e) {
-      // Ignore errors
-    }
+      final value = vpc.value;
+      state = state.copyWith(
+        position: value.position,
+        isPlaying: value.isPlaying,
+        duration: value.duration,
+      );
+    } catch (_) {}
   }
 
   Future<void> play() async {
     if (!mounted) return;
-    
-    // Lazy initialization: Initialize player if not already initialized
     if (!state.isInitialized) {
       await _initializePlayer();
-      // After initialization, check again if mounted and initialized
       if (!mounted || !state.isInitialized || state.controller == null) return;
     }
-    
-    if (state.controller == null || !state.isInitialized) return;
-    
+
+    final c = state.controller;
+    if (c == null) return;
+
+    _firstFrameWatch = Stopwatch()..start();
+    _loggedFirstFrame = false;
+
     try {
-      await state.controller!.play();
+      await c.play();
       if (mounted) {
         state = state.copyWith(isPlaying: true);
       }
-    } catch (e) {
-      // Ignore errors
-    }
+    } catch (_) {}
   }
 
   Future<void> pause() async {
     if (state.controller == null || !state.isInitialized || !mounted) return;
-    
     try {
       await state.controller!.pause();
-      // Double-check mounted after async operation
       if (mounted) {
         state = state.copyWith(isPlaying: false);
       }
-    } catch (e) {
-      // Ignore errors - widget might be disposed
-    }
+    } catch (_) {}
   }
 
   Future<void> togglePlayPause() async {
     if (state.isPlaying) {
-      pause();
+      await pause();
     } else {
       await play();
     }
@@ -194,23 +233,18 @@ class LongVideoWidgetNotifier extends StateNotifier<LongVideoWidgetState> {
 
   Future<void> seekForward() async {
     if (state.controller == null || !state.isInitialized || !mounted) return;
-    
-    // Set seeking state to prevent thumbnail flashing
     if (mounted) {
       state = state.copyWith(isSeeking: true);
     }
-    
     try {
       final newPosition = state.position + const Duration(seconds: 10);
-      final targetPosition = newPosition > state.duration ? state.duration : newPosition;
-      await state.controller!.seekTo(targetPosition);
-      
-      // Clear seeking state after seek completes
+      final target =
+          newPosition > state.duration ? state.duration : newPosition;
+      await state.controller!.seekTo(target);
       if (mounted) {
         state = state.copyWith(isSeeking: false);
       }
-    } catch (e) {
-      // Clear seeking state on error
+    } catch (_) {
       if (mounted) {
         state = state.copyWith(isSeeking: false);
       }
@@ -219,23 +253,18 @@ class LongVideoWidgetNotifier extends StateNotifier<LongVideoWidgetState> {
 
   Future<void> seekBackward() async {
     if (state.controller == null || !state.isInitialized || !mounted) return;
-    
-    // Set seeking state to prevent thumbnail flashing
     if (mounted) {
       state = state.copyWith(isSeeking: true);
     }
-    
     try {
       final newPosition = state.position - const Duration(seconds: 10);
-      final targetPosition = newPosition < Duration.zero ? Duration.zero : newPosition;
-      await state.controller!.seekTo(targetPosition);
-      
-      // Clear seeking state after seek completes
+      final target =
+          newPosition < Duration.zero ? Duration.zero : newPosition;
+      await state.controller!.seekTo(target);
       if (mounted) {
         state = state.copyWith(isSeeking: false);
       }
-    } catch (e) {
-      // Clear seeking state on error
+    } catch (_) {
       if (mounted) {
         state = state.copyWith(isSeeking: false);
       }
@@ -250,24 +279,14 @@ class LongVideoWidgetNotifier extends StateNotifier<LongVideoWidgetState> {
 
   @override
   void dispose() {
-    _positionUpdateTimer?.cancel();
-    
-    final controller = state.controller;
-    if (controller != null) {
+    final c = state.controller;
+    if (c != null) {
       try {
-        controller.removeListener(_videoListener);
-        
-        if (controller.value.isInitialized && controller.value.isPlaying) {
-          controller.pause();
-        }
-        
-        controller.dispose();
-      } catch (e) {
-        // Ignore errors
-      }
+        c.removeEventsListener(_onBetterEvent);
+        c.videoPlayerController?.removeListener(_videoListener);
+        c.dispose(forceDispose: true);
+      } catch (_) {}
     }
-    
     super.dispose();
   }
 }
-

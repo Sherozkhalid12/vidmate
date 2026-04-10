@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/dio_client.dart';
+import '../../core/utils/feed_json_parser.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/models/comment_model.dart';
 import '../../core/models/post_response_model.dart';
@@ -41,15 +42,18 @@ class GetPostsResult {
   final bool success;
   final List<ApiPostWithAuthor> posts;
   final String? errorMessage;
+  /// True when failure was due to transport/timeout (authoritative offline-style signal).
+  final bool connectionError;
 
   GetPostsResult({
     required this.success,
     this.posts = const [],
     this.errorMessage,
+    this.connectionError = false,
   });
 
-  factory GetPostsResult.failure(String message) =>
-      GetPostsResult(success: false, errorMessage: message);
+  factory GetPostsResult.failure(String message, {bool connectionError = false}) =>
+      GetPostsResult(success: false, errorMessage: message, connectionError: connectionError);
 
   factory GetPostsResult.success(List<ApiPostWithAuthor> posts) =>
       GetPostsResult(success: true, posts: posts);
@@ -345,30 +349,46 @@ class PostsService {
     }
   }
 
-  /// GET all posts (home feed). Uses auth token.
-  Future<GetPostsResult> getPosts() async {
+  /// GET all posts (home feed). Uses auth token. JSON decode runs in [compute] isolate.
+  /// [skip] / [limit] are sent as query params when set (backend may ignore).
+  Future<GetPostsResult> getPosts({
+    CancelToken? cancelToken,
+    int skip = 0,
+    int? limit,
+  }) async {
     final token = await _getToken();
     if (token == null || token.isEmpty) {
       return GetPostsResult.failure('Not authenticated');
     }
     try {
       DioClient.setAuthToken(token);
-      final response = await _dio.get(ApiConstants.postList);
-      final data = response.data as Map<String, dynamic>?;
-      if (data == null || data['success'] != true) {
-        final err = data?['message'] as String? ??
-            data?['error'] as String? ??
-            'Failed to load posts';
-        return GetPostsResult.failure(err.toString());
+      final query = <String, dynamic>{};
+      if (skip > 0) query['skip'] = skip;
+      if (limit != null && limit > 0) {
+        query['limit'] = limit;
       }
-      final list = data['posts'];
-      if (list == null || list is! List) {
+      final response = await _dio.get<String>(
+        ApiConstants.postList,
+        queryParameters: query.isEmpty ? null : query,
+        options: Options(responseType: ResponseType.plain),
+        cancelToken: cancelToken,
+      );
+      final raw = response.data ?? '';
+      final parsed = await compute(parseFeedJson, raw);
+      if (parsed['success'] != true) {
+        final err = parsed['message']?.toString() ?? 'Failed to load posts';
+        return GetPostsResult.failure(err);
+      }
+      final list = parsed['items'];
+      if (list is! List) {
         return GetPostsResult.success([]);
       }
       final posts = <ApiPostWithAuthor>[];
       for (final e in list) {
         if (e is Map<String, dynamic>) {
           posts.add(ApiPostWithAuthor.fromJson(e));
+        } else if (e is Map) {
+          posts.add(ApiPostWithAuthor.fromJson(Map<String, dynamic>.from(e)));
         }
       }
       return GetPostsResult.success(posts);
@@ -378,9 +398,13 @@ class PostsService {
         final msg = d is Map ? (d['message'] ?? d['error'] ?? 'Request failed') : 'Request failed';
         return GetPostsResult.failure(msg.toString());
       }
-      return GetPostsResult.failure(_networkErrorMessage(e.message));
+      final conn = e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout;
+      return GetPostsResult.failure(_networkErrorMessage(e.message), connectionError: conn);
     } on TimeoutException catch (_) {
-      return GetPostsResult.failure('Request timed out');
+      return GetPostsResult.failure('Request timed out', connectionError: true);
     } catch (e) {
       return GetPostsResult.failure(
         e is Exception ? e.toString() : 'Something went wrong',

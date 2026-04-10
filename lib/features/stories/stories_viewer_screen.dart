@@ -1,11 +1,16 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
-import '../../core/utils/theme_helper.dart';
-import '../../core/services/mock_data_service.dart';
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+
+import '../../core/media/app_media_cache.dart';
 import '../../core/models/story_model.dart';
 import '../../core/models/user_model.dart';
-import 'package:video_player/video_player.dart';
+import '../../core/perf/stories_perf_metrics.dart';
+import '../../core/services/mock_data_service.dart';
+import '../../core/utils/theme_helper.dart';
+import '../../services/reels/reel_video_prefetch.dart';
 
 /// Vertical stories viewer (like reels) - swipe vertically between users
 /// Horizontal swipe within each user's multiple stories
@@ -16,12 +21,16 @@ class StoriesViewerScreen extends StatefulWidget {
   final List<UserModel>? users;
   final Map<String, List<StoryModel>>? userStoriesMap;
 
+  /// When true, video/story media loads only from disk cache where possible.
+  final bool offline;
+
   const StoriesViewerScreen({
     super.key,
     this.initialUserIndex = 0,
     this.initialStoryIndex = 0,
     this.users,
     this.userStoriesMap,
+    this.offline = false,
   });
 
   @override
@@ -40,10 +49,92 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   Timer? _progressTimer; // Timer for progress animation
   Map<int, bool> _storyLoaded = {}; // Track if story is loaded
   Map<String, bool> _videoErrors = {}; // Track video loading errors by "userHash_storyIndex"
+  final Set<String> _preloadReadyKeys = {};
+  late final Stopwatch _viewerOpenStopwatch;
+  bool _firstFrameLogged = false;
+  int? _metricsUserIndex;
+
+  String _preloadKey(int userHash, int storyIndex) => '${userHash}_$storyIndex';
+
+  void _logFirstFrameOnce() {
+    if (_firstFrameLogged) return;
+    _firstFrameLogged = true;
+    StoriesPerfMetrics.logStoryFirstFrameMs(_viewerOpenStopwatch.elapsedMilliseconds);
+  }
+
+  Widget _fullBleedMediaPlaceholder(BuildContext context) {
+    final accent = ThemeHelper.getAccentColor(context);
+    final surface = ThemeHelper.getSurfaceColor(context);
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            accent.withValues(alpha: 0.22),
+            const Color(0xFF0D0D0D),
+            surface.withValues(alpha: 0.5),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _recordPreloadForStory(int userHash, int storyIndex) {
+    if (!mounted) return;
+    setState(() {
+      _preloadReadyKeys.add(_preloadKey(userHash, storyIndex));
+    });
+  }
+
+  void _warmStoryMedia(int userHash, int storyIndex, StoryModel story) {
+    if (story.mediaUrl.isEmpty) return;
+    final key = _preloadKey(userHash, storyIndex);
+    if (_preloadReadyKeys.contains(key)) return;
+
+    if (story.isVideo) {
+      unawaited(_initializeVideo(userHash, storyIndex, story.mediaUrl, forPreloadOnly: true));
+    } else {
+      final provider = CachedNetworkImageProvider(
+        story.mediaUrl,
+        cacheManager: AppMediaCache.feedMedia,
+      );
+      // precacheImage reads MediaQuery from context; cannot run during initState.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_preloadReadyKeys.contains(key)) return;
+        precacheImage(provider, context)
+            .then((_) {
+              if (mounted) _recordPreloadForStory(userHash, storyIndex);
+            })
+            .catchError((_) {});
+      });
+    }
+  }
+
+  void _warmNextRelativeTo(int userIndex, int storyIndex) {
+    if (userIndex < 0 || userIndex >= _users.length) return;
+    final user = _users[userIndex];
+    final stories = _userStoriesMap[user.id] ?? [];
+    final nextIdx = storyIndex + 1;
+    if (nextIdx < stories.length) {
+      _warmStoryMedia(user.id.hashCode, nextIdx, stories[nextIdx]);
+    } else if (userIndex + 1 < _users.length) {
+      final nu = _users[userIndex + 1];
+      final ns = _userStoriesMap[nu.id] ?? [];
+      if (ns.isNotEmpty) {
+        _warmStoryMedia(nu.id.hashCode, 0, ns.first);
+      }
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    _viewerOpenStopwatch = Stopwatch()..start();
+    _metricsUserIndex = widget.initialUserIndex;
     _initializeStories();
     _currentUserIndex = widget.initialUserIndex;
     _userPageController = PageController(initialPage: widget.initialUserIndex);
@@ -121,7 +212,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
     // Initialize video if needed
     if (story.isVideo) {
-      _initializeVideo(userHash, storyIndex, story.mediaUrl);
+      unawaited(_initializeVideo(userHash, storyIndex, story.mediaUrl));
     } else {
       // For images, mark as loaded after a short delay
       Future.delayed(const Duration(milliseconds: 300), () {
@@ -166,6 +257,8 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
         });
       }
     });
+
+    _warmNextRelativeTo(userIndex, storyIndex);
   }
 
   void _animateProgress(int userHash, int userIndex, int storyIndex) {
@@ -219,57 +312,131 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     });
   }
 
-  void _initializeVideo(int userHash, int storyIndex, String videoUrl) {
+  Future<void> _initializeVideo(
+    int userHash,
+    int storyIndex,
+    String videoUrl, {
+    bool forPreloadOnly = false,
+  }) async {
     final errorKey = '${userHash}_$storyIndex';
-    
-    // If this story already has an error, skip initialization
-    if (_videoErrors[errorKey] == true) {
-      return;
-    }
-    
+
+    if (_videoErrors[errorKey] == true) return;
+
     if (_videoControllers[userHash]?.containsKey(storyIndex) ?? false) {
-      return; // Already initialized
-    }
-
-    try {
-      final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl))
-        ..setLooping(false);
-
-      _videoControllers[userHash] ??= {};
-      _videoControllers[userHash]![storyIndex] = controller;
-
-      controller.initialize().then((_) {
-        if (mounted) {
-          // Clear error if initialization succeeds
-          _videoErrors.remove(errorKey);
-          
-          final currentUser = _users[_currentUserIndex];
-          if (userHash == currentUser.id.hashCode &&
-              _currentStoryIndex[userHash] == storyIndex) {
-            try {
-              controller.play();
-            } catch (e) {
-              // Silently handle play error
-              _handleVideoError(userHash, storyIndex);
-            }
+      if (forPreloadOnly) {
+        final c0 = _videoControllers[userHash]![storyIndex]!;
+        if (c0.value.isInitialized) _recordPreloadForStory(userHash, storyIndex);
+        return;
+      }
+      final existing = _videoControllers[userHash]![storyIndex]!;
+      if (existing.value.isInitialized) {
+        _videoErrors.remove(errorKey);
+        final currentUser = _users[_currentUserIndex];
+        if (userHash == currentUser.id.hashCode &&
+            _currentStoryIndex[userHash] == storyIndex) {
+          try {
+            await existing.play();
+          } catch (_) {
+            _handleVideoError(userHash, storyIndex);
+            return;
           }
-          // Mark as loaded on success
-          setState(() {
-            _storyLoaded[userHash] = true;
-          });
         }
-      }).catchError((error) {
-        // Handle video initialization error gracefully - suppress repeated errors
+        if (mounted) {
+          setState(() => _storyLoaded[userHash] = true);
+        }
+        return;
+      }
+      try {
+        await existing.initialize();
+      } catch (_) {
         if (mounted && _videoErrors[errorKey] != true) {
           _handleVideoError(userHash, storyIndex);
         }
-      });
-    } catch (e) {
-      // Handle controller creation error
+        return;
+      }
+      if (!mounted) return;
+      _videoErrors.remove(errorKey);
+      final currentUser = _users[_currentUserIndex];
+      if (userHash == currentUser.id.hashCode &&
+          _currentStoryIndex[userHash] == storyIndex) {
+        try {
+          await existing.play();
+        } catch (_) {
+          _handleVideoError(userHash, storyIndex);
+          return;
+        }
+      }
+      setState(() => _storyLoaded[userHash] = true);
+      return;
+    }
+
+    if (videoUrl.isEmpty) {
+      if (!forPreloadOnly) _handleVideoError(userHash, storyIndex);
+      return;
+    }
+
+    late final VideoPlayerController controller;
+    try {
+      final cached = await ReelVideoPrefetchService.instance.getCachedFile(videoUrl);
+      if (cached != null && await cached.exists()) {
+        controller = VideoPlayerController.file(cached);
+      } else if (widget.offline) {
+        if (!forPreloadOnly) {
+          _videoErrors[errorKey] = true;
+          if (mounted) {
+            setState(() => _storyLoaded[userHash] = true);
+          }
+        }
+        return;
+      } else {
+        controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+      }
+    } catch (_) {
+      if (!forPreloadOnly) _handleVideoError(userHash, storyIndex);
+      return;
+    }
+
+    controller.setLooping(false);
+    _videoControllers[userHash] ??= {};
+    _videoControllers[userHash]![storyIndex] = controller;
+
+    try {
+      await controller.initialize();
+    } catch (_) {
+      if (forPreloadOnly) {
+        try {
+          controller.dispose();
+        } catch (_) {}
+        _videoControllers[userHash]?.remove(storyIndex);
+        return;
+      }
       if (mounted && _videoErrors[errorKey] != true) {
         _handleVideoError(userHash, storyIndex);
       }
+      return;
     }
+
+    if (!mounted) return;
+    _videoErrors.remove(errorKey);
+
+    if (forPreloadOnly) {
+      _recordPreloadForStory(userHash, storyIndex);
+      return;
+    }
+
+    final currentUser = _users[_currentUserIndex];
+    if (userHash == currentUser.id.hashCode &&
+        _currentStoryIndex[userHash] == storyIndex) {
+      try {
+        await controller.play();
+      } catch (_) {
+        _handleVideoError(userHash, storyIndex);
+        return;
+      }
+    }
+    setState(() {
+      _storyLoaded[userHash] = true;
+    });
   }
 
   void _handleVideoError(int userHash, int storyIndex) {
@@ -441,7 +608,20 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
   void _onUserPageChanged(int index) {
     if (index < 0 || index >= _users.length) return;
-    
+
+    if (_metricsUserIndex != null && _metricsUserIndex != index) {
+      final user = _users[index];
+      final uh = user.id.hashCode;
+      final si = _currentStoryIndex[uh] ?? 0;
+      final key = _preloadKey(uh, si);
+      if (_preloadReadyKeys.remove(key)) {
+        StoriesPerfMetrics.recordPreloadHit();
+      } else {
+        StoriesPerfMetrics.recordPreloadMiss();
+      }
+    }
+    _metricsUserIndex = index;
+
     // Cancel previous progress timer
     _progressTimer?.cancel();
     _progressTimer = null;
@@ -488,14 +668,22 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
   void _onStoryPageChanged(int userIndex, int storyIndex) {
     if (userIndex < 0 || userIndex >= _users.length) return;
-    
-    // Cancel previous progress timer
-    _progressTimer?.cancel();
-    _progressTimer = null;
-    
+
     final user = _users[userIndex];
     final userHash = user.id.hashCode;
     final previousStoryIdx = _currentStoryIndex[userHash] ?? 0;
+    if (previousStoryIdx != storyIndex) {
+      final pk = _preloadKey(userHash, storyIndex);
+      if (_preloadReadyKeys.remove(pk)) {
+        StoriesPerfMetrics.recordPreloadHit();
+      } else {
+        StoriesPerfMetrics.recordPreloadMiss();
+      }
+    }
+
+    // Cancel previous progress timer
+    _progressTimer?.cancel();
+    _progressTimer = null;
     
     // Pause ALL videos for this user (not just previous) - YouTube/Instagram style
     if (_videoControllers.containsKey(userHash)) {
@@ -571,14 +759,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                   _closeViewer();
                 }
               });
-              return Container(
-                color: Colors.black,
-                child: Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                  ),
-                ),
-              );
+              return _fullBleedMediaPlaceholder(context);
             }
             return _buildUserStories(userIndex);
           },
@@ -703,7 +884,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.5),
+                            color: Colors.black.withValues(alpha: 0.5),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -829,34 +1010,12 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
   Widget _buildVideoStory(VideoPlayerController controller, bool isCurrentStory, bool isLoaded) {
     if (!isLoaded || !controller.value.isInitialized) {
-      return Container(
-        color: Colors.black,
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: CircularProgressIndicator(
-                  strokeWidth: 3,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Loading video...',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _fullBleedMediaPlaceholder(context);
     }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && controller.value.isInitialized) _logFirstFrameOnce();
+    });
 
     // YouTube/Instagram style: Only play current story, pause all others immediately
     if (isCurrentStory) {
@@ -895,6 +1054,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   }
 
   Widget _buildVideoErrorFallback(StoryModel? story) {
+    final offlineHint = widget.offline ? 'Unavailable offline' : 'Skipping to next story...';
     return Container(
       color: Colors.black,
       child: Center(
@@ -917,7 +1077,8 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Skipping to next story...',
+              offlineHint,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.6),
                 fontSize: 14,
@@ -946,7 +1107,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Failed to load',
+                        widget.offline ? 'Unavailable offline' : 'Failed to load',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 14,
@@ -961,33 +1122,20 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: double.infinity,
-                placeholder: (context, url) => Container(
-                  color: Colors.black,
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 40,
-                          height: 40,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Loading...',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                cacheManager: AppMediaCache.feedMedia,
+                fadeInDuration: const Duration(milliseconds: 200),
+                imageBuilder: (context, imageProvider) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _logFirstFrameOnce();
+                  });
+                  return Image(
+                    image: imageProvider,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                  );
+                },
+                placeholder: (context, url) => _fullBleedMediaPlaceholder(context),
                 errorWidget: (context, url, error) => Container(
                   color: Colors.black,
                   child: Center(
@@ -995,17 +1143,18 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          Icons.error_outline,
-                          color: Colors.white,
+                          Icons.image_not_supported_outlined,
+                          color: Colors.white.withValues(alpha: 0.75),
                           size: 48,
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'Failed to load',
+                          widget.offline ? 'Unavailable offline' : 'Failed to load',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: Colors.white.withValues(alpha: 0.9),
                             fontSize: 14,
                           ),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                     ),

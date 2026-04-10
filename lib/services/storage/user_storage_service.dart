@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/models/message_model.dart';
+import '../../core/models/chat_conversation_api.dart';
+import '../../core/models/music_model.dart';
+import 'hive_content_store.dart';
 import '../../core/models/post_model.dart';
 import '../../core/models/user_preferences_model.dart';
 import '../notifications/notifications_service.dart';
@@ -198,68 +202,110 @@ class UserStorageService {
     required List<PostModel> posts,
     String? userId,
   }) async {
-    await _cacheUnseenContent(
-      section: 'posts',
-      seenKeyPrefix: _seenPostIdsPrefix,
-      items: posts,
-      userId: userId,
-    );
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty) return;
+    final seen = await _getSeenIds(_seenPostIdsPrefix, uid);
+    final unseen = posts.where((p) => !seen.contains(p.id)).take(10).toList();
+    final map = await _readUserMap(uid);
+    map['posts'] = unseen.map(_postToMap).toList();
+    map['postsUpdatedAt'] = DateTime.now().toIso8601String();
+    await _writeUserMap(uid, map);
+    final fullMaps = posts.map(_postToMap).toList();
+    try {
+      if (HiveContentStore.instance.isReady) {
+        await HiveContentStore.instance.savePosts(fullMaps);
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[UserStorage] cacheUnseenFeed Hive write failed: $e');
+        debugPrint('$st');
+      }
+    }
   }
 
   Future<void> cacheUnseenReels({
     required List<PostModel> reels,
     String? userId,
   }) async {
-    await _cacheUnseenContent(
-      section: 'reels',
-      seenKeyPrefix: _seenReelIdsPrefix,
-      items: reels,
-      userId: userId,
-    );
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty) return;
+    final seen = await _getSeenIds(_seenReelIdsPrefix, uid);
+    final unseen = reels.where((p) => !seen.contains(p.id)).take(10).toList();
+    final map = await _readUserMap(uid);
+    map['reels'] = unseen.map(_postToMap).toList();
+    map['reelsUpdatedAt'] = DateTime.now().toIso8601String();
+    await _writeUserMap(uid, map);
+    try {
+      if (HiveContentStore.instance.isReady) {
+        await HiveContentStore.instance.saveReels(reels.map(_postToMap).toList());
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[UserStorage] cacheUnseenReels Hive write failed: $e');
+        debugPrint('$st');
+      }
+    }
   }
 
   Future<void> cacheUnseenLongVideos({
     required List<PostModel> videos,
     String? userId,
   }) async {
-    await _cacheUnseenContent(
-      section: 'longVideos',
-      seenKeyPrefix: _seenLongVideoIdsPrefix,
-      items: videos,
-      userId: userId,
-    );
-  }
-
-  Future<void> _cacheUnseenContent({
-    required String section,
-    required String seenKeyPrefix,
-    required List<PostModel> items,
-    String? userId,
-  }) async {
     final uid = await _resolveUserId(userId);
     if (uid == null || uid.isEmpty) return;
-    final seen = await _getSeenIds(seenKeyPrefix, uid);
-    final unseen = items.where((p) => !seen.contains(p.id)).take(10).toList();
+    final seen = await _getSeenIds(_seenLongVideoIdsPrefix, uid);
+    final unseen = videos.where((p) => !seen.contains(p.id)).take(10).toList();
     final map = await _readUserMap(uid);
-    map[section] = unseen.map(_postToMap).toList();
-    map['${section}UpdatedAt'] = DateTime.now().toIso8601String();
+    map['longVideos'] = unseen.map(_postToMap).toList();
+    map['longVideosUpdatedAt'] = DateTime.now().toIso8601String();
     await _writeUserMap(uid, map);
+    try {
+      if (HiveContentStore.instance.isReady) {
+        await HiveContentStore.instance.saveLongVideos(videos.map(_postToMap).toList());
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[UserStorage] cacheUnseenLongVideos Hive write failed: $e');
+        debugPrint('$st');
+      }
+    }
   }
 
   Future<List<Map<String, dynamic>>> getCachedUnseenPosts({
     String? userId,
-  }) =>
-      _getCachedSection('posts', userId: userId);
+  }) async {
+    try {
+      if (HiveContentStore.instance.isReady) {
+        final fromHive = HiveContentStore.instance.postsMaps;
+        if (fromHive.isNotEmpty) return fromHive;
+      }
+    } catch (_) {}
+    return _getCachedSection('posts', userId: userId);
+  }
 
   Future<List<Map<String, dynamic>>> getCachedUnseenReels({
     String? userId,
-  }) =>
-      _getCachedSection('reels', userId: userId);
+  }) async {
+    try {
+      if (HiveContentStore.instance.isReady) {
+        final fromHive = HiveContentStore.instance.reelsMaps;
+        if (fromHive.isNotEmpty) return fromHive;
+      }
+    } catch (_) {}
+    return _getCachedSection('reels', userId: userId);
+  }
 
   Future<List<Map<String, dynamic>>> getCachedUnseenLongVideos({
     String? userId,
-  }) =>
-      _getCachedSection('longVideos', userId: userId);
+  }) async {
+    try {
+      if (HiveContentStore.instance.isReady) {
+        final fromHive = HiveContentStore.instance.longVideosMaps;
+        if (fromHive.isNotEmpty) return fromHive;
+      }
+    } catch (_) {}
+    return _getCachedSection('longVideos', userId: userId);
+  }
 
   Future<List<Map<String, dynamic>>> _getCachedSection(
     String key, {
@@ -274,6 +320,20 @@ class UserStorageService {
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
+  }
+
+  Future<int?> getDominantColorArgb(String postId) async {
+    try {
+      return HiveContentStore.instance.getDominantColorArgb(postId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveDominantColorArgb(String postId, int argb) async {
+    try {
+      await HiveContentStore.instance.setDominantColorArgb(postId, argb);
+    } catch (_) {}
   }
 
   Future<void> markPostSeen(String postId, {String? userId}) async {
@@ -309,6 +369,132 @@ class UserStorageService {
     return (prefs.getStringList('$keyPrefix$userId') ?? const []).toSet();
   }
 
+  static const String _conversationsCacheKey = 'conversationsCacheV1';
+  static const String _musicLibraryCacheKey = 'musicLibraryCacheV1';
+
+  /// Cached chat list for instant tray (current user only).
+  Future<void> cacheConversationsSnapshot({
+    required List<ChatConversationItem> items,
+    required Set<String> unreadConversationIds,
+    String? userId,
+  }) async {
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty) return;
+    final map = await _readUserMap(uid);
+    map[_conversationsCacheKey] = {
+      'items': items.map((e) => e.toJson()).toList(),
+      'unreadIds': unreadConversationIds.toList(),
+    };
+    await _writeUserMap(uid, map);
+  }
+
+  Future<({List<ChatConversationItem> items, Set<String> unreadIds})>
+      getCachedConversationsSnapshot({String? userId}) async {
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty) {
+      return (items: const <ChatConversationItem>[], unreadIds: <String>{});
+    }
+    final map = await _readUserMap(uid);
+    final raw = map[_conversationsCacheKey];
+    if (raw is! Map) {
+      return (items: const <ChatConversationItem>[], unreadIds: <String>{});
+    }
+    final list = raw['items'];
+    final unreadRaw = raw['unreadIds'];
+    final items = <ChatConversationItem>[];
+    if (list is List) {
+      for (final e in list) {
+        if (e is! Map) continue;
+        try {
+          items.add(ChatConversationItem.fromJson(Map<String, dynamic>.from(e)));
+        } catch (_) {}
+      }
+    }
+    final unread = unreadRaw is List
+        ? unreadRaw.map((e) => e.toString()).where((s) => s.isNotEmpty).toSet()
+        : <String>{};
+    return (items: items, unreadIds: unread);
+  }
+
+  /// First page of music list (same user prefs bucket as rest of app data).
+  Future<void> cacheMusicLibraryPage1({
+    required List<MusicModel> tracks,
+    required int total,
+    required int page,
+    required bool hasMore,
+    String? userId,
+  }) async {
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty) return;
+    final map = await _readUserMap(uid);
+    map[_musicLibraryCacheKey] = {
+      'tracks': tracks.map((t) => t.toJson()).toList(),
+      'total': total,
+      'page': page,
+      'hasMore': hasMore,
+    };
+    await _writeUserMap(uid, map);
+  }
+
+  Future<({List<MusicModel> tracks, int total, int page, bool hasMore})?>
+      getCachedMusicLibraryPage1({String? userId}) async {
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty) return null;
+    final map = await _readUserMap(uid);
+    final raw = map[_musicLibraryCacheKey];
+    if (raw is! Map) return null;
+    final list = raw['tracks'];
+    if (list is! List) return null;
+    final tracks = <MusicModel>[];
+    for (final e in list) {
+      if (e is! Map) continue;
+      try {
+        tracks.add(MusicModel.fromJson(Map<String, dynamic>.from(e)));
+      } catch (_) {}
+    }
+    final total = (raw['total'] is num) ? (raw['total'] as num).toInt() : 0;
+    final page = (raw['page'] is num) ? (raw['page'] as num).toInt() : 1;
+    final hasMore = raw['hasMore'] == true;
+    return (tracks: tracks, total: total, page: page, hasMore: hasMore);
+  }
+
+  String _profilePostsKey(String profileUserId) =>
+      'profilePosts_${profileUserId.trim()}';
+
+  Future<void> cacheProfileUserPosts(
+    String profileUserId,
+    List<PostModel> posts, {
+    String? userId,
+  }) async {
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty || profileUserId.trim().isEmpty) return;
+    final map = await _readUserMap(uid);
+    map[_profilePostsKey(profileUserId)] =
+        posts.map(_postToMap).toList();
+    await _writeUserMap(uid, map);
+  }
+
+  Future<List<PostModel>> getCachedProfileUserPosts(
+    String profileUserId, {
+    String? userId,
+  }) async {
+    final uid = await _resolveUserId(userId);
+    if (uid == null || uid.isEmpty || profileUserId.trim().isEmpty) {
+      return const [];
+    }
+    final map = await _readUserMap(uid);
+    final raw = map[_profilePostsKey(profileUserId)];
+    if (raw is! List) return const [];
+    final out = <PostModel>[];
+    for (final e in raw) {
+      if (e is! Map) continue;
+      try {
+        out.add(PostModel.fromCachedMap(Map<String, dynamic>.from(e)));
+      } catch (_) {}
+    }
+    return out;
+  }
+
   Map<String, dynamic> _postToMap(PostModel p) {
     return {
       'id': p.id,
@@ -317,6 +503,13 @@ class UserStorageService {
         'username': p.author.username,
         'displayName': p.author.displayName,
         'avatarUrl': p.author.avatarUrl,
+        'verified': p.author.verified,
+        'privateAccount': p.author.privateAccount,
+        'showActivityStatus': p.author.showActivityStatus,
+        'allowComments': p.author.allowComments,
+        'allowLikes': p.author.allowLikes,
+        'allowShares': p.author.allowShares,
+        'allowStoryReplies': p.author.allowStoryReplies,
       },
       'imageUrl': p.imageUrl,
       'imageUrls': p.imageUrls,
@@ -330,6 +523,10 @@ class UserStorageService {
       'isLiked': p.isLiked,
       'isVideo': p.isVideo,
       'postType': p.postType,
+      if (p.videoDuration != null) 'videoDurationMs': p.videoDuration!.inMilliseconds,
+      if (p.audioId != null) 'audioId': p.audioId,
+      if (p.audioName != null) 'audioName': p.audioName,
+      if (p.blurHash != null) 'blurHash': p.blurHash,
     };
   }
 

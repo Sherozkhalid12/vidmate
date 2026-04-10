@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/post_model.dart';
@@ -9,6 +10,7 @@ import '../../services/storage/user_storage_service.dart';
 class ReelsState {
   final List<PostModel> reels;
   final bool isLoading;
+  final bool isRefreshing;
   final String? error;
   final Map<String, bool> likedReels;
   final Map<String, int> likeCounts;
@@ -16,6 +18,7 @@ class ReelsState {
   ReelsState({
     this.reels = const [],
     this.isLoading = false,
+    this.isRefreshing = false,
     this.error,
     Map<String, bool>? likedReels,
     Map<String, int>? likeCounts,
@@ -25,6 +28,7 @@ class ReelsState {
   ReelsState copyWith({
     List<PostModel>? reels,
     bool? isLoading,
+    bool? isRefreshing,
     String? error,
     Map<String, bool>? likedReels,
     Map<String, int>? likeCounts,
@@ -33,6 +37,7 @@ class ReelsState {
     return ReelsState(
       reels: reels ?? this.reels,
       isLoading: isLoading ?? this.isLoading,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
       error: clearError ? null : (error ?? this.error),
       likedReels: likedReels ?? this.likedReels,
       likeCounts: likeCounts ?? this.likeCounts,
@@ -42,21 +47,69 @@ class ReelsState {
 
 class ReelsNotifier extends StateNotifier<ReelsState> {
   ReelsNotifier(this._ref) : super(ReelsState()) {
-    loadReels();
+    _bootstrap();
   }
 
   final Ref _ref;
   final ReelsService _service = ReelsService();
   final PostsService _postsService = PostsService();
 
+  /// Debug: should stay 1 after mount unless user pulls refresh (Feature 1.12).
+  int loadReelsInvocationCount = 0;
+
+  Future<void> _bootstrap() async {
+    await _hydrateFromCache();
+    // loadReels is triggered from Splash parallel bootstrap (Feature 2.9) or first access.
+  }
+
+  Future<void> _hydrateFromCache() async {
+    try {
+      final raw = await UserStorageService.instance.getCachedUnseenReels();
+      if (raw.isEmpty) return;
+      final hydrated = <PostModel>[];
+      final liked = <String, bool>{};
+      final counts = <String, int>{};
+      for (final m in raw) {
+        try {
+          final p = PostModel.fromCachedMap(m);
+          if (p.id.isEmpty) continue;
+          hydrated.add(p);
+          liked[p.id] = p.isLiked;
+          counts[p.id] = p.likes;
+        } catch (_) {}
+      }
+      if (hydrated.isEmpty) return;
+      state = state.copyWith(
+        reels: hydrated,
+        isLoading: false,
+        isRefreshing: true,
+        likedReels: liked,
+        likeCounts: counts,
+        clearError: true,
+      );
+    } catch (_) {}
+  }
+
   Future<void> loadReels() async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    loadReelsInvocationCount++;
+    if (kDebugMode) {
+      debugPrint('[ReelsNotifier] loadReels invocation #$loadReelsInvocationCount (reels=${state.reels.length})');
+    }
+    final hasCache = state.reels.isNotEmpty;
+    state = state.copyWith(
+      isLoading: !hasCache,
+      isRefreshing: hasCache,
+      clearError: true,
+    );
     try {
       final result = await _service.getReels();
       if (!result.success) {
         state = state.copyWith(
           isLoading: false,
-          error: result.errorMessage ?? 'Failed to load reels',
+          isRefreshing: false,
+          error: state.reels.isEmpty
+              ? (result.errorMessage ?? 'Failed to load reels')
+              : state.error,
         );
         return;
       }
@@ -64,6 +117,13 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
       final list = result.reels
           .map((r) => PostModel.fromReel(r, currentUserId: currentUserId))
           .toList();
+      if (list.isEmpty && state.reels.isNotEmpty) {
+        state = state.copyWith(
+          isLoading: false,
+          isRefreshing: false,
+        );
+        return;
+      }
       final liked = <String, bool>{};
       final counts = <String, int>{};
       for (var reel in list) {
@@ -73,6 +133,7 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
       state = state.copyWith(
         reels: list,
         isLoading: false,
+        isRefreshing: false,
         likedReels: liked,
         likeCounts: counts,
       );
@@ -82,7 +143,8 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        error: e.toString(),
+        isRefreshing: false,
+        error: state.reels.isEmpty ? e.toString() : state.error,
       );
     }
   }
@@ -223,13 +285,19 @@ List<PostModel> _updateReelsList(
               audioId: r.audioId,
               audioName: r.audioName,
               postType: r.postType,
+              blurHash: r.blurHash,
             )
           : r)
       .toList();
 }
 
 final reelsProvider = StateNotifierProvider<ReelsNotifier, ReelsState>((ref) {
+  ref.keepAlive();
   return ReelsNotifier(ref);
+});
+
+final reelsRefreshingProvider = Provider<bool>((ref) {
+  return ref.watch(reelsProvider).isRefreshing;
 });
 
 final reelsListProvider = Provider<List<PostModel>>((ref) {

@@ -1,13 +1,20 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shimmer/shimmer.dart';
 
-import '../../core/utils/theme_helper.dart';
+import '../../core/media/app_media_cache.dart';
 import '../../core/models/post_model.dart';
 import '../../core/models/user_model.dart';
 import '../../core/providers/explore_search_provider_riverpod.dart';
+import '../../core/providers/network_status_provider.dart';
+import '../../core/utils/theme_helper.dart';
+import '../../core/utils/video_thumbnail_helper.dart';
+import '../../core/widgets/feed_cached_post_image.dart';
+import '../../core/widgets/feed_image_precache.dart';
 import '../profile/profile_screen.dart';
 import '../profile/profile_post_viewer_screen.dart';
 
@@ -21,9 +28,14 @@ class SearchScreen extends ConsumerStatefulWidget {
   ConsumerState<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends ConsumerState<SearchScreen> {
+class _SearchScreenState extends ConsumerState<SearchScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  String? _precachedSearchThumbSig;
 
   @override
   void dispose() {
@@ -50,10 +62,70 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ref.read(exploreSearchProvider.notifier).clearRecent();
   }
 
+  void _precacheSearchResultThumbs(ExploreSearchState state) {
+    final sig =
+        '${state.query}|${state.users.length}|${state.posts.length}|${state.reels.length}|${state.longVideos.length}';
+    if (sig == _precachedSearchThumbSig) return;
+    _precachedSearchThumbSig = sig;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cell = (MediaQuery.sizeOf(context).width / 3 - 8).clamp(48.0, 400.0);
+      final memW = (cell * dpr).round().clamp(48, 420);
+      final memH = memW;
+
+      Iterable<String> urlsFromPosts(List<PostModel> list) sync* {
+        for (final p in list) {
+          final u = _searchPostThumbUrl(p);
+          if (u.isNotEmpty && !isProtectedVideoCdnThumbnailUrl(u)) yield u;
+        }
+      }
+
+      final urls = <String>[];
+      for (final u in urlsFromPosts(state.posts)) {
+        if (urls.length >= 12) break;
+        if (!urls.contains(u)) urls.add(u);
+      }
+      for (final u in urlsFromPosts(state.reels)) {
+        if (urls.length >= 12) break;
+        if (!urls.contains(u)) urls.add(u);
+      }
+      for (final u in urlsFromPosts(state.longVideos)) {
+        if (urls.length >= 12) break;
+        if (!urls.contains(u)) urls.add(u);
+      }
+      for (final u in urls) {
+        precacheFeedImageSafe(
+          ResizeImage(
+            CachedNetworkImageProvider(
+              u,
+              cacheManager: AppMediaCache.feedMedia,
+            ),
+            width: memW,
+            height: memH,
+          ),
+          context,
+        );
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final searchState = ref.watch(exploreSearchProvider);
     final isSearching = searchState.query.isNotEmpty;
+
+    if (isSearching &&
+        !searchState.loading &&
+        searchState.error == null &&
+        (searchState.users.isNotEmpty ||
+            searchState.posts.isNotEmpty ||
+            searchState.reels.isNotEmpty ||
+            searchState.longVideos.isNotEmpty)) {
+      _precacheSearchResultThumbs(searchState);
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -199,6 +271,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
 
     return ListView(
+      key: const PageStorageKey<String>('search_recent_list'),
       padding: EdgeInsets.only(
         bottom: (widget.bottomPadding ?? 0) + 16,
       ),
@@ -320,20 +393,141 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
-  Widget _buildSearchResults(ExploreSearchState state) {
-    if (state.loading) {
-      return Center(
-        child: CircularProgressIndicator(
-          color: ThemeHelper.getAccentColor(context),
+  (Color, Color) _shimmerColors() {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  Widget _buildSearchLoadingSkeleton() {
+    final (base, hi) = _shimmerColors();
+    return ListView(
+      key: const PageStorageKey<String>('search_results_skeleton'),
+      padding: EdgeInsets.only(
+        bottom: (widget.bottomPadding ?? 0) + 16,
+        top: 8,
+      ),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Shimmer.fromColors(
+            baseColor: base,
+            highlightColor: hi,
+            child: Row(
+              children: [
+                Container(
+                  width: 80,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      );
+        ...List.generate(6, (i) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Shimmer.fromColors(
+              baseColor: base,
+              highlightColor: hi,
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          height: 14,
+                          width: double.infinity,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 12,
+                          width: 120,
+                          color: Colors.white,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+          child: Shimmer.fromColors(
+            baseColor: base,
+            highlightColor: hi,
+            child: Container(
+              height: 18,
+              width: 100,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 4,
+              crossAxisSpacing: 4,
+              childAspectRatio: 1,
+            ),
+            itemCount: 9,
+            itemBuilder: (_, __) {
+              return Shimmer.fromColors(
+                baseColor: base,
+                highlightColor: hi,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchResults(ExploreSearchState state) {
+    final offline = ref.watch(isOfflineProvider);
+
+    if (state.loading) {
+      return _buildSearchLoadingSkeleton();
     }
     if (state.error != null) {
+      final message = offline
+          ? 'Search unavailable offline'
+          : state.error!;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            state.error!,
+            message,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: ThemeHelper.getTextMuted(context),
@@ -385,11 +579,38 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
 
     return ListView(
+      key: const PageStorageKey<String>('search_results_list'),
       padding: EdgeInsets.only(
         bottom: (widget.bottomPadding ?? 0) + 16,
         top: 8,
       ),
       children: [
+        if (offline && state.query.isNotEmpty)
+          Material(
+            color: ThemeHelper.getSurfaceColor(context).withValues(alpha: 0.9),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.wifi_off_rounded,
+                    size: 18,
+                    color: ThemeHelper.getTextSecondary(context),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Results may be incomplete while offline',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (state.users.isNotEmpty) ...[
           _buildSectionHeader('Users'),
           _buildUserGrid(state.users),
@@ -449,7 +670,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       itemCount: users.length,
       itemBuilder: (context, index) {
         final user = users[index];
-        return GestureDetector(
+        final dpr = MediaQuery.devicePixelRatioOf(context);
+        final avatarPx = (40 * dpr).round().clamp(40, 200);
+        return RepaintBoundary(
+          child: GestureDetector(
           onTap: () {
             Navigator.push(
               context,
@@ -470,23 +694,34 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             child: Row(
               children: [
                 ClipOval(
-                  child: Image.network(
-                    user.avatarUrl,
-                    width: 40,
-                    height: 40,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        width: 40,
-                        height: 40,
-                        color: ThemeHelper.getSurfaceColor(context),
-                        child: Icon(
-                          Icons.person,
-                          color: ThemeHelper.getTextSecondary(context),
+                  child: user.avatarUrl.isEmpty
+                      ? Container(
+                          width: 40,
+                          height: 40,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(
+                            Icons.person,
+                            color: ThemeHelper.getTextSecondary(context),
+                          ),
+                        )
+                      : CachedNetworkImage(
+                          imageUrl: user.avatarUrl,
+                          width: 40,
+                          height: 40,
+                          fit: BoxFit.cover,
+                          cacheManager: AppMediaCache.feedMedia,
+                          memCacheWidth: avatarPx,
+                          memCacheHeight: avatarPx,
+                          errorWidget: (_, __, ___) => Container(
+                            width: 40,
+                            height: 40,
+                            color: ThemeHelper.getSurfaceColor(context),
+                            child: Icon(
+                              Icons.person,
+                              color: ThemeHelper.getTextSecondary(context),
+                            ),
+                          ),
                         ),
-                      );
-                    },
-                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -520,6 +755,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               ],
             ),
           ),
+        ),
         );
       },
     );
@@ -552,10 +788,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
+  String _searchPostThumbUrl(PostModel post) {
+    final u = post.effectiveThumbnailUrl ?? post.thumbnailUrl ?? '';
+    if (u.isEmpty) return '';
+    if (!isProtectedVideoCdnThumbnailUrl(u)) return u;
+    final v = post.videoUrl ?? '';
+    final gen = VideoThumbnailHelper.thumbnailFromVideoUrl(v);
+    if (gen != null &&
+        gen.isNotEmpty &&
+        !isProtectedVideoCdnThumbnailUrl(gen)) {
+      return gen;
+    }
+    return u;
+  }
+
   Widget _buildPostTile(PostModel post, List<PostModel> list, int index) {
-    final thumb = post.effectiveThumbnailUrl ?? post.thumbnailUrl ?? '';
+    final thumb = _searchPostThumbUrl(post);
     final isVideo = post.isVideo;
-    return GestureDetector(
+    return RepaintBoundary(
+      child: GestureDetector(
       onTap: () {
         Navigator.push(
           context,
@@ -572,19 +823,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Container(
-              color: ThemeHelper.getSurfaceColor(context),
-              child: thumb.isNotEmpty
-                  ? Image.network(
-                      thumb,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: ThemeHelper.getSurfaceColor(context),
-                      ),
-                    )
-                  : Container(
-                      color: ThemeHelper.getSurfaceColor(context),
-                    ),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: FeedCachedPostImage(
+                imageUrl: thumb,
+                postId: post.id,
+                blurHash: post.blurHash,
+                fit: BoxFit.cover,
+                useShimmerWhileLoading: true,
+              ),
             ),
             if (isVideo)
               Align(
@@ -608,6 +855,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 }

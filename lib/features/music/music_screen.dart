@@ -3,9 +3,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:shimmer/shimmer.dart';
 import 'dart:ui';
 import '../../core/utils/theme_helper.dart';
-import '../../core/theme/theme_extensions.dart';
 import '../../core/models/music_model.dart';
 import '../../core/providers/music_provider_riverpod.dart';
 import '../../core/widgets/glass_card.dart';
@@ -32,9 +32,6 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
   @override
   void initState() {
     super.initState();
-    Future.microtask(
-      () => ref.read(musicProvider.notifier).loadInitial(),
-    );
     _searchAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -93,6 +90,69 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 
+  (Color, Color) _shimmerColors() {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  Widget _buildTrackSkeletonRow() {
+    final (base, hi) = _shimmerColors();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Shimmer.fromColors(
+        baseColor: base,
+        highlightColor: hi,
+        child: Row(
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 16,
+                    width: 200,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    height: 14,
+                    width: 120,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _formatCount(int count) {
     if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
     if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
@@ -104,6 +164,8 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     final musicState = ref.watch(musicProvider);
     final tracks = musicState.tracks;
     final filteredTracks = _filteredTracks(tracks);
+    final showMusicSkeleton =
+        !musicState.initialFetchCompleted && filteredTracks.isEmpty;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -153,6 +215,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
                 isLoading: musicState.isLoading,
                 isLoadingMore: musicState.isLoadingMore,
                 hasMore: musicState.hasMore,
+                showSkeleton: showMusicSkeleton,
               ),
             ],
           ),
@@ -488,12 +551,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     required bool isLoading,
     required bool isLoadingMore,
     required bool hasMore,
+    required bool showSkeleton,
   }) {
-    if (isLoading && filteredTracks.isEmpty) {
-      return const SliverFillRemaining(
-        hasScrollBody: false,
-        child: Center(
-          child: CupertinoActivityIndicator(),
+    if (showSkeleton) {
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => _buildTrackSkeletonRow(),
+            childCount: 8,
+          ),
         ),
       );
     }

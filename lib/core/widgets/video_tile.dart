@@ -9,9 +9,11 @@ import '../providers/follow_provider_riverpod.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/posts_provider_riverpod.dart';
 import '../models/post_model.dart';
+import '../media/app_media_cache.dart';
 import 'comments_bottom_sheet.dart';
 import 'share_bottom_sheet.dart';
 import 'safe_better_player.dart';
+import 'feed_cached_post_image.dart';
 import 'dart:async';
 import 'dart:ui';
 
@@ -30,6 +32,7 @@ class VideoTile extends ConsumerStatefulWidget {
   final String? videoUrl; // Add video URL for inline playback
   final bool isPlaying;
   final String? postId; // Post ID for Riverpod state management
+  final String? blurHash;
   /// Author user id - when set, Follow is hidden when this equals current user; used for profile navigation.
   final String? authorId;
   /// Called when author name or avatar is tapped (navigate to profile).
@@ -50,6 +53,7 @@ class VideoTile extends ConsumerStatefulWidget {
     this.videoUrl,
     this.isPlaying = false,
     this.postId,
+    this.blurHash,
     this.authorId,
     this.onAuthorTap,
   });
@@ -358,7 +362,8 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     final playerState = widget.videoUrl != null 
         ? ref.watch(videoPlayerProvider(widget.videoUrl!))
         : null;
-    final isVideoInitialized = playerState?.isInitialized ?? false && playerState?.hasValidController == true;
+    final isVideoInitialized = (playerState?.isInitialized ?? false) &&
+        (playerState?.hasValidController == true);
     final isPlaying = playerState?.isPlaying ?? false;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -404,6 +409,9 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                               width: 32,
                               height: 32,
                               fit: BoxFit.cover,
+                              memCacheWidth: (32 * MediaQuery.devicePixelRatioOf(context)).round().clamp(1, 512),
+                              memCacheHeight: (32 * MediaQuery.devicePixelRatioOf(context)).round().clamp(1, 512),
+                              cacheManager: AppMediaCache.feedMedia,
                               placeholder: (context, url) => Container(
                                 width: 32,
                                 height: 32,
@@ -545,31 +553,24 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
               }
             },
             behavior: HitTestBehavior.opaque,
-            child: Stack(
-              children: [
-                // Video player (HLS) or thumbnail — only build BetterPlayer when we have a valid controller
-                AspectRatio(
-                  aspectRatio: 1.0,
-                  child: isVideoInitialized && playerState?.hasValidController == true && playerState?.controller != null
-                      ? KeyedSubtree(
-                          key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
-                          child: SafeBetterPlayerWrapper(controller: playerState!.controller!),
-                        )
-                      : (widget.thumbnailUrl.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: widget.thumbnailUrl,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              height: double.infinity,
-                              placeholder: (context, url) => Container(
-                                color: ThemeHelper.getSurfaceColor(context),
-                                child: Center(
-                                  child: CupertinoActivityIndicator(
-                                    color: ThemeHelper.getTextSecondary(context),
-                                  ),
-                                ),
-                              ),
-                              errorWidget: (context, url, error) => Container(
+            child: RepaintBoundary(
+              child: Stack(
+                children: [
+                  // Video player (HLS) or thumbnail — only build BetterPlayer when we have a valid controller
+                  AspectRatio(
+                    aspectRatio: 1.0,
+                    child: isVideoInitialized && playerState?.hasValidController == true && playerState?.controller != null
+                        ? KeyedSubtree(
+                            key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
+                            child: SafeBetterPlayerWrapper(controller: playerState!.controller!),
+                          )
+                        : (widget.thumbnailUrl.isNotEmpty
+                            ? FeedCachedPostImage(
+                                imageUrl: widget.thumbnailUrl,
+                                postId: widget.postId ?? widget.videoUrl ?? 'video_tile',
+                                blurHash: widget.blurHash,
+                              )
+                            : Container(
                                 color: ThemeHelper.getSurfaceColor(context),
                                 child: Center(
                                   child: Icon(
@@ -578,20 +579,9 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                                     size: 48,
                                   ),
                                 ),
-                              ),
-                            )
-                          : Container(
-                              color: ThemeHelper.getSurfaceColor(context),
-                              child: Center(
-                                child: Icon(
-                                  CupertinoIcons.exclamationmark_triangle_fill,
-                                  color: ThemeHelper.getTextSecondary(context),
-                                  size: 48,
-                                ),
-                              ),
-                            )),
-                ),
-                
+                              )),
+                  ),
+
                 // Play/Pause button - centered, only handles taps on the button itself
                 if (isVideoInitialized && playerState != null && playerState.hasValidController)
                   Positioned.fill(
@@ -720,7 +710,8 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                     ),
                   ),
                 ),
-              ],
+                ],
+              ),
             ),
           ),
 

@@ -6,10 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_application_1/features/profile/profile_screen.dart';
 import 'dart:ui';
 import '../models/post_model.dart';
-import '../theme/app_colors.dart';
 import '../utils/theme_helper.dart';
 import '../utils/video_thumbnail_helper.dart';
 import '../utils/share_link_helper.dart';
+import '../media/app_media_cache.dart';
+import '../media/feed_image_decode_limits.dart';
 import '../providers/auth_provider_riverpod.dart';
 import '../providers/follow_provider_riverpod.dart';
 import '../providers/posts_provider_riverpod.dart';
@@ -17,15 +18,20 @@ import '../providers/saved_posts_provider_riverpod.dart';
 import 'comments_bottom_sheet.dart';
 import 'share_bottom_sheet.dart';
 import '../../services/posts/posts_service.dart';
+import 'feed_cached_post_image.dart';
+import 'feed_image_precache.dart';
 
 class InstagramPostCard extends ConsumerStatefulWidget {
   final PostModel post;
   final VoidCallback? onDelete;
+  /// When true (home feed), comment count comes from [postCommentCountProvider] only.
+  final bool useFeedCommentCounts;
 
   const InstagramPostCard({
     super.key,
     required this.post,
     this.onDelete,
+    this.useFeedCommentCounts = false,
   });
 
   @override
@@ -37,6 +43,28 @@ class _MediaSlot {
   final String url;
   final bool isVideo;
   _MediaSlot(this.url, this.isVideo);
+}
+
+/// Keeps off-screen carousel pages alive so [CachedNetworkImage] state is not torn down on swipe.
+class _CarouselKeepAlivePage extends StatefulWidget {
+  const _CarouselKeepAlivePage({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_CarouselKeepAlivePage> createState() => _CarouselKeepAlivePageState();
+}
+
+class _CarouselKeepAlivePageState extends State<_CarouselKeepAlivePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
 }
 
 class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with SingleTickerProviderStateMixin {
@@ -60,9 +88,50 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
     return list;
   }
 
+  void _schedulePrecacheAllCarouselUrls() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final urls = feedCarouselImageUrls(widget.post);
+      final mq = MediaQuery.sizeOf(context);
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final dims = feedMemCacheDimensions(mq, dpr);
+      for (final url in urls) {
+        if (url.isEmpty) continue;
+        final provider = ResizeImage(
+          CachedNetworkImageProvider(
+            url,
+            cacheManager: AppMediaCache.feedMedia,
+          ),
+          width: dims.w,
+          height: dims.h,
+        );
+        precacheFeedImageSafe(provider, context);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant InstagramPostCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.post.id != widget.post.id) {
+      _currentImageIndex = 0;
+      if (_imageCarouselController.hasClients) {
+        _imageCarouselController.jumpToPage(0);
+      }
+      _schedulePrecacheAllCarouselUrls();
+    } else {
+      final oldSig = feedCarouselImageUrls(oldWidget.post).join('|');
+      final newSig = feedCarouselImageUrls(widget.post).join('|');
+      if (oldSig != newSig) {
+        _schedulePrecacheAllCarouselUrls();
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _schedulePrecacheAllCarouselUrls();
     _likeAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -83,12 +152,12 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
     return count.toString();
   }
 
-  /// Comment count: from feed provider (backend + optimistic) when post is in feed, else from post model.
+  /// Comment count: from feed provider when [useFeedCommentCounts], else from post model.
   int _effectiveCommentCount(WidgetRef ref) {
-    final inFeed = ref.watch(postsListProvider).any((p) => p.id == widget.post.id);
-    return inFeed
-        ? ref.watch(postCommentCountProvider(widget.post.id))
-        : widget.post.comments;
+    if (widget.useFeedCommentCounts) {
+      return ref.watch(postCommentCountProvider(widget.post.id));
+    }
+    return widget.post.comments;
   }
 
   String _formatTimeAgo(DateTime dateTime) {
@@ -122,28 +191,12 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
         ),
       );
     }
-    return CachedNetworkImage(
-      imageUrl: imageUrl,
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-      placeholder: (context, url) => Container(
-        color: ThemeHelper.getSurfaceColor(context),
-        child: Center(
-          child: CupertinoActivityIndicator(
-            color: ThemeHelper.getTextSecondary(context),
-          ),
-        ),
-      ),
-      errorWidget: (context, url, error) => Container(
-        color: ThemeHelper.getSurfaceColor(context),
-        child: Center(
-          child: Icon(
-            CupertinoIcons.exclamationmark_triangle_fill,
-            color: ThemeHelper.getTextSecondary(context),
-            size: 48,
-          ),
-        ),
+    return KeyedSubtree(
+      key: ValueKey<String>('post_media_${widget.post.id}_$imageUrl'),
+      child: FeedCachedPostImage(
+        imageUrl: imageUrl,
+        postId: widget.post.id,
+        blurHash: widget.post.blurHash,
       ),
     );
   }
@@ -181,6 +234,8 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
   }
 
   Widget _buildCardContent() {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final avatarPx = (32 * dpr).round().clamp(1, 512);
     final currentUserId = ref.watch(currentUserProvider)?.id;
     final isOwner = currentUserId != null && currentUserId == widget.post.author.id;
     final canLike = widget.post.author.allowLikes || isOwner;
@@ -212,6 +267,9 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                             width: 32,
                             height: 32,
                             fit: BoxFit.cover,
+                            memCacheWidth: avatarPx,
+                            memCacheHeight: avatarPx,
+                            cacheManager: AppMediaCache.feedMedia,
                             placeholder: (context, url) => Container(
                               width: 32,
                               height: 32,
@@ -378,7 +436,11 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                   // Carousel when multiple media (images and/or video)
                   _mediaSlots.length > 1
                       ? PageView.builder(
+                          key: PageStorageKey<String>('post_carousel_${widget.post.id}'),
                           controller: _imageCarouselController,
+                          scrollDirection: Axis.horizontal,
+                          physics: const PageScrollPhysics(),
+                          allowImplicitScrolling: false,
                           onPageChanged: (index) {
                             setState(() {
                               _currentImageIndex = index;
@@ -386,7 +448,9 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                           },
                           itemCount: _mediaSlots.length,
                           itemBuilder: (context, index) {
-                            return _buildMediaSlot(_mediaSlots[index]);
+                            return _CarouselKeepAlivePage(
+                              child: _buildMediaSlot(_mediaSlots[index]),
+                            );
                           },
                         )
                       : _mediaSlots.isEmpty

@@ -1,20 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
+import 'package:shimmer/shimmer.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/models/post_model.dart';
-import '../../core/providers/video_player_provider.dart';
+import '../../core/widgets/safe_better_player.dart';
+import '../../core/widgets/feed_cached_post_image.dart';
+import '../../core/widgets/feed_image_precache.dart';
+import '../../core/media/app_media_cache.dart';
+import '../../core/utils/share_link_helper.dart';
+import '../../services/posts/posts_service.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/main_tab_index_provider.dart';
 import '../video/video_player_screen.dart';
 import '../profile/profile_screen.dart';
 import 'providers/long_videos_provider.dart';
 import 'providers/long_video_playback_provider.dart';
 import 'providers/long_video_widget_provider.dart';
-import '../../core/services/mock_data_service.dart';
 import 'dart:async';
 import 'dart:ui';
 
@@ -26,18 +32,35 @@ class LongVideosScreen extends ConsumerStatefulWidget {
   ConsumerState<LongVideosScreen> createState() => _LongVideosScreenState();
 }
 
-class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
+class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final ScrollController _scrollController = ScrollController();
   final Map<String, Timer> _controlsTimers = {};
   final Map<String, GlobalKey> _videoKeys = {}; // Track widget keys for position detection
   DateTime? _lastPlayActionTime; // Prevent rapid play/pause toggles
   Timer? _scrollThrottleTimer; // Throttle scroll events
-  DateTime? _lastScrollCheck; // Last time we checked scroll position
+  bool _ensuredInitialLoad = false;
   @override
   void initState() {
     super.initState();
     // Setup scroll listener for pagination
     _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final s = ref.read(longVideosProvider);
+      if (s.videos.isNotEmpty) {
+        _ensuredInitialLoad = true;
+        return;
+      }
+      if (_ensuredInitialLoad) return;
+      if (!s.isLoading && s.error == null && !s.initialFetchCompleted) {
+        _ensuredInitialLoad = true;
+        ref.read(longVideosProvider.notifier).loadVideos();
+      }
+    });
   }
 
   void _pauseVideoById(String videoId) {
@@ -47,9 +70,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
       if (video.videoUrl != null) {
         try {
           final key = VideoWidgetKey(video.id, video.videoUrl!);
-          final notifier = ref.read(longVideoWidgetProvider(key).notifier);
-          if (notifier.state.isPlaying) {
-            notifier.pause();
+          if (ref.read(longVideoWidgetProvider(key)).isPlaying) {
+            ref.read(longVideoWidgetProvider(key).notifier).pause();
           }
         } catch (e) {
           // Ignore errors
@@ -73,9 +95,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
       
       try {
         final key = VideoWidgetKey(video.id, video.videoUrl!);
-        final notifier = ref.read(longVideoWidgetProvider(key).notifier);
-        if (notifier.state.isPlaying) {
-          notifier.pause();
+        if (ref.read(longVideoWidgetProvider(key)).isPlaying) {
+          ref.read(longVideoWidgetProvider(key).notifier).pause();
         }
       } catch (e) {
         // Provider might not exist, ignore
@@ -122,6 +143,18 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
     }
   }
 
+  void _pauseAllInlinePlayers() {
+    final videos = ref.read(longVideosListProvider);
+    for (final video in videos) {
+      final u = video.videoUrl;
+      if (u == null || u.isEmpty) continue;
+      try {
+        ref.read(longVideoWidgetProvider(VideoWidgetKey(video.id, u)).notifier).pause();
+      } catch (_) {}
+    }
+    ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
+  }
+
   void _pauseAllOtherVideos(String currentVideoId, String? currentVideoUrl) {
     if (currentVideoUrl == null) return;
     
@@ -138,9 +171,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
       
       try {
         final key = VideoWidgetKey(video.id, video.videoUrl!);
-        final notifier = ref.read(longVideoWidgetProvider(key).notifier);
-        if (notifier.state.isPlaying) {
-          notifier.pause();
+        if (ref.read(longVideoWidgetProvider(key)).isPlaying) {
+          ref.read(longVideoWidgetProvider(key).notifier).pause();
         }
       } catch (e) {
         // Provider might not exist, ignore
@@ -250,11 +282,20 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final videosState = ref.watch(longVideosProvider);
+    super.build(context);
     final videos = ref.watch(longVideosListProvider);
     final isLoading = ref.watch(longVideosLoadingProvider);
+    final isRefreshing = ref.watch(longVideosRefreshingProvider);
     final error = ref.watch(longVideosErrorProvider);
-    
+    final offlineBanner = ref.watch(longVideosOfflineBannerProvider);
+
+    ref.listen<int>(mainTabIndexProvider, (prev, next) {
+      if (prev == 3 && next != 3) {
+        _pauseAllInlinePlayers();
+        ref.read(longVideosProvider.notifier).cancelPendingNetworkLoad();
+      }
+    });
+
     // Listen to playback state changes to pause other videos
     // This is called in build, which is safe for ref.listen
     // Only listen once per build cycle to prevent multiple subscriptions
@@ -271,15 +312,42 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
       },
     );
 
+    final showSkeleton = videos.isEmpty && isLoading;
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            // App Header
             _buildHeader(),
-            // Video Feed
+            if (offlineBanner && videos.isNotEmpty)
+              Material(
+                color: ThemeHelper.getSurfaceColor(context).withValues(alpha: 0.95),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.cloud_off_outlined,
+                        size: 18,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Showing saved long videos',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextSecondary(context),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Expanded(
               child: error != null && videos.isEmpty
                   ? Center(
@@ -302,19 +370,17 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                           const SizedBox(height: 8),
                           ElevatedButton(
                             onPressed: () {
-                              ref.read(longVideosProvider.notifier).loadVideos(refresh: true);
+                              ref
+                                  .read(longVideosProvider.notifier)
+                                  .loadVideos(refresh: true);
                             },
                             child: const Text('Retry'),
                           ),
                         ],
                       ),
                     )
-                  : isLoading && videos.isEmpty
-                      ? Center(
-                          child: CircularProgressIndicator(
-                            color: ThemeHelper.getAccentColor(context),
-                          ),
-                        )
+                  : showSkeleton
+                      ? _buildLongVideoSkeletonList()
                       : RefreshIndicator(
                           onRefresh: () async {
                             await ref
@@ -325,24 +391,21 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                           child: ListView.builder(
                             controller: _scrollController,
                             padding: EdgeInsets.zero,
-                            itemCount: videos.length + (isLoading ? 1 : 0),
+                            itemCount: videos.length +
+                                ((isLoading || isRefreshing) &&
+                                        videos.isNotEmpty
+                                    ? 1
+                                    : 0),
                             itemBuilder: (context, index) {
                               if (index == videos.length) {
-                                // Loading indicator at the bottom
-                                return const Padding(
-                                  padding: EdgeInsets.all(16.0),
-                                  child: Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                );
+                                return _buildLoadMoreSkeleton();
                               }
-                              // Create or get GlobalKey for this video
                               final video = videos[index];
                               if (!_videoKeys.containsKey(video.id)) {
                                 _videoKeys[video.id] = GlobalKey();
                               }
-                              // Use video ID as key to prevent unnecessary rebuilds
-                              return _buildVideoCard(video, key: _videoKeys[video.id]);
+                              return _buildVideoCard(video,
+                                  key: _videoKeys[video.id]);
                             },
                           ),
                         ),
@@ -350,6 +413,110 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLoadMoreSkeleton() {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Shimmer.fromColors(
+        baseColor: base,
+        highlightColor: base.withValues(alpha: 0.35),
+        child: Row(
+          children: [
+            Container(
+              width: 120,
+              height: 68,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 14,
+                    width: double.infinity,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 12,
+                    width: 120,
+                    color: Colors.white,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLongVideoSkeletonList() {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: 6,
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Shimmer.fromColors(
+            baseColor: base,
+            highlightColor: base.withValues(alpha: 0.35),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 120,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 10,
+                        width: 80,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        height: 14,
+                        width: double.infinity,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        height: 12,
+                        width: 160,
+                        color: Colors.white,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -459,20 +626,19 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                             width: 40,
                             height: 40,
                             fit: BoxFit.cover,
+                            cacheManager: AppMediaCache.feedMedia,
+                            memCacheWidth: (40 *
+                                    MediaQuery.devicePixelRatioOf(context))
+                                .round()
+                                .clamp(1, 256),
+                            memCacheHeight: (40 *
+                                    MediaQuery.devicePixelRatioOf(context))
+                                .round()
+                                .clamp(1, 256),
                             placeholder: (context, url) => Container(
                               width: 40,
                               height: 40,
                               color: ThemeHelper.getSurfaceColor(context),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: ThemeHelper.getAccentColor(context),
-                                  ),
-                                ),
-                              ),
                             ),
                             errorWidget: (context, url, error) => Container(
                               width: 40,
@@ -587,6 +753,15 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                     );
                   },
                 ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _showLongVideoMoreMenu(context, video),
+                  child: Icon(
+                    CupertinoIcons.ellipsis,
+                    color: ThemeHelper.getTextPrimary(context),
+                    size: 20,
+                  ),
+                ),
               ],
             ),
           ),
@@ -607,6 +782,109 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
         // Video Player/Thumbnail
         _buildVideoPlayer(video),
       ],
+    );
+  }
+
+  void _showLongVideoMoreMenu(BuildContext context, PostModel video) {
+    final parentContext = context;
+    final currentUserId = ref.read(authProvider).currentUser?.id ?? '';
+    final isOwner =
+        currentUserId.isNotEmpty && currentUserId == video.author.id;
+
+    showCupertinoModalPopup(
+      context: parentContext,
+      builder: (sheetContext) => CupertinoActionSheet(
+        actions: [
+          if (isOwner)
+            CupertinoActionSheetAction(
+              isDestructiveAction: true,
+              onPressed: () async {
+                Navigator.pop(sheetContext);
+
+                final result = await PostsService().deletePost(
+                  postId: video.id,
+                  currentUserId: currentUserId,
+                  postAuthorId: video.author.id,
+                );
+
+                if (!parentContext.mounted) return;
+                ScaffoldMessenger.of(parentContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result.success
+                          ? 'Post deleted'
+                          : (result.errorMessage ?? 'Delete failed'),
+                    ),
+                    backgroundColor: result.success
+                        ? ThemeHelper.getAccentColor(parentContext)
+                        : ThemeHelper.getSurfaceColor(parentContext),
+                  ),
+                );
+
+                if (result.success) {
+                  ref.read(longVideosProvider.notifier).removeVideoById(video.id);
+                  await ref.read(postsProvider.notifier).loadPosts();
+                }
+              },
+              child: const Text('Delete'),
+            ),
+          if (!isOwner)
+            CupertinoActionSheetAction(
+              child: const Text('Report'),
+              onPressed: () async {
+                Navigator.pop(sheetContext);
+
+                final result = await PostsService().reportPost(
+                  postId: video.id,
+                  currentUserId: currentUserId,
+                  postAuthorId: video.author.id,
+                );
+
+                if (!parentContext.mounted) return;
+                ScaffoldMessenger.of(parentContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result.success
+                          ? 'Reported'
+                          : (result.errorMessage ?? 'Report failed'),
+                    ),
+                    backgroundColor: result.success
+                        ? ThemeHelper.getAccentColor(parentContext)
+                        : ThemeHelper.getSurfaceColor(parentContext),
+                  ),
+                );
+              },
+            ),
+          CupertinoActionSheetAction(
+            child: const Text('Copy Link'),
+            onPressed: () {
+              final thumb = video.effectiveThumbnailUrl;
+              final link = ShareLinkHelper.build(
+                contentId: video.id,
+                thumbnailUrl: thumb,
+              );
+              Navigator.pop(sheetContext);
+              Clipboard.setData(ClipboardData(text: link));
+              if (!parentContext.mounted) return;
+              ScaffoldMessenger.of(parentContext).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Link copied!',
+                    style:
+                        TextStyle(color: ThemeHelper.getTextPrimary(parentContext)),
+                  ),
+                  backgroundColor:
+                      ThemeHelper.getSurfaceColor(parentContext).withOpacity(0.95),
+                ),
+              );
+            },
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          child: const Text('Cancel'),
+          onPressed: () => Navigator.pop(sheetContext),
+        ),
+      ),
     );
   }
 
@@ -729,54 +1007,36 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
               width: double.infinity,
               height: 220,
               color: Colors.black,
-              // CRITICAL: Show VideoPlayer when:
-              // 1. Video is playing, OR
-              // 2. Video is initialized and seeking (to prevent thumbnail flash)
-              // Show thumbnail otherwise
-              child: (isVideoInitialized && 
-                      widgetState.controller != null && 
+              child: (isVideoInitialized &&
+                      widgetState.controller != null &&
                       (isThisVideoPlaying || widgetState.isSeeking))
-                  ? VideoPlayer(widgetState.controller!)
+                  ? RepaintBoundary(
+                      child: ClipRect(
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 220,
+                          child: SafeBetterPlayerWrapper(
+                            controller: widgetState.controller!,
+                          ),
+                        ),
+                      ),
+                    )
                   : (() {
-                      final thumbnailUrl =
-                          video.thumbnailUrl ?? video.imageUrl ?? '';
-                      if (thumbnailUrl.isEmpty) {
-                        return Container(
-                          width: double.infinity,
-                          height: 220,
-                          color: ThemeHelper.getSurfaceColor(context),
-                          child: Icon(
-                            Icons.video_library,
-                            color: ThemeHelper.getTextSecondary(context),
-                            size: 48,
-                          ),
-                        );
-                      }
-                      return CachedNetworkImage(
-                        imageUrl: thumbnailUrl,
-                        width: double.infinity,
-                        height: 220,
+                      final rawThumb =
+                          video.effectiveThumbnailUrl ??
+                              video.thumbnailUrl ??
+                              video.imageUrl ??
+                              '';
+                      final networkThumb = rawThumb.isNotEmpty &&
+                              !isProtectedVideoCdnThumbnailUrl(rawThumb)
+                          ? rawThumb
+                          : '';
+                      return FeedCachedPostImage(
+                        imageUrl: networkThumb,
+                        postId: video.id,
+                        blurHash: video.blurHash,
                         fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          width: double.infinity,
-                          height: 220,
-                          color: ThemeHelper.getSurfaceColor(context),
-                          child: Center(
-                            child: CircularProgressIndicator(
-                              color: ThemeHelper.getAccentColor(context),
-                            ),
-                          ),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          width: double.infinity,
-                          height: 220,
-                          color: ThemeHelper.getSurfaceColor(context),
-                          child: Icon(
-                            Icons.video_library,
-                            color: ThemeHelper.getTextSecondary(context),
-                            size: 48,
-                          ),
-                        ),
+                        useShimmerWhileLoading: true,
                       );
                     })(),
             ),
@@ -810,7 +1070,12 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                     notifier.togglePlayPause().then((_) {
                       // Update currently playing video after async operation
                       if (mounted) {
-                        if (notifier.state.isPlaying) {
+                        final playing =
+                            ref.read(longVideoWidgetProvider(widgetKey)).isPlaying;
+                        if (playing) {
+                          ref
+                              .read(longVideosProvider.notifier)
+                              .prefetchNextAfter(video.id);
                           // Set this video as currently playing
                           ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(video.id);
                           _showControlsTemporarily(video.id);
@@ -912,6 +1177,9 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen> {
                         notifier.play().then((_) {
                           // Set this video as currently playing after initialization
                           if (mounted) {
+                            ref
+                                .read(longVideosProvider.notifier)
+                                .prefetchNextAfter(video.id);
                             ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(video.id);
                             _showControlsTemporarily(video.id);
                           }

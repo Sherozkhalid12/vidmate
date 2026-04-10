@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/api/dio_client.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/models/reel_response_model.dart';
+import '../../core/utils/reels_json_parser.dart';
 
 class CreateReelResult {
   final bool success;
@@ -201,22 +202,27 @@ class ReelsService {
     }
     try {
       DioClient.setAuthToken(token);
-      final response = await _dio.get(ApiConstants.reelList);
-      final data = response.data as Map<String, dynamic>?;
-      if (data == null || data['success'] != true) {
-        final err = data?['message'] as String? ??
-            data?['error'] as String? ??
-            'Failed to load reels';
-        return GetReelsResult.failure(err.toString());
+      final response = await _dio.get<String>(
+        ApiConstants.reelList,
+        options: Options(responseType: ResponseType.plain),
+      );
+      final body = response.data ?? '';
+      final envelope = await compute(parseReelsApiEnvelope, body);
+      final ok = envelope['success'] == true;
+      if (!ok) {
+        return GetReelsResult.failure(
+          envelope['message']?.toString() ?? 'Failed to load reels',
+        );
       }
-      final list = data['reels'] ?? data['data'];
-      if (list == null || list is! List) {
-        return GetReelsResult.success([]);
-      }
+      final items = envelope['items'];
       final reels = <ReelWithUserModel>[];
-      for (final e in list) {
-        if (e is Map<String, dynamic>) {
-          reels.add(ReelWithUserModel.fromJson(e));
+      if (items is List) {
+        for (final e in items) {
+          if (e is Map<String, dynamic>) {
+            reels.add(ReelWithUserModel.fromJson(e));
+          } else if (e is Map) {
+            reels.add(ReelWithUserModel.fromJson(Map<String, dynamic>.from(e)));
+          }
         }
       }
       return GetReelsResult.success(reels);

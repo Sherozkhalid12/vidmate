@@ -1,26 +1,36 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
-import '../../core/theme/theme_extensions.dart';
+import 'package:better_player/better_player.dart';
+import 'package:shimmer/shimmer.dart';
+import 'package:blurhash_dart/blurhash_dart.dart' as bh;
+import 'package:image/image.dart' as img;
 import '../../core/widgets/comments_bottom_sheet.dart';
 import '../../core/widgets/share_bottom_sheet.dart';
+import '../../core/widgets/safe_better_player.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/main_tab_index_provider.dart';
+import '../../core/media/app_media_cache.dart';
+import '../../core/perf/reels_perf_metrics.dart';
 import '../../services/posts/posts_service.dart';
-import '../../core/models/user_model.dart';
-import 'package:video_player/video_player.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/api/dio_client.dart';
 import '../../core/utils/create_content_visibility.dart';
 import '../../core/utils/share_link_helper.dart';
 import 'audio_detail_screen.dart';
-import 'audio_reels_screen.dart';
 
 /// Reels screen with full-screen vertical swipe videos.
+///
+/// Playback is driven by [_currentIndex], [_playSession] (invalidates stale async work), and a
+/// small index→[BetterPlayerController] pool with eviction (see [_poolRadius]).
 /// When [prependedReel] is set (from home feed), this reel is shown first, then the rest from API.
 /// When [initialPostId] is set, finds that reel in the list and opens at it. Shows back button when opened as a route.
 class ReelsScreen extends ConsumerStatefulWidget {
@@ -37,172 +47,596 @@ class ReelsScreen extends ConsumerStatefulWidget {
 class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   final PageController _pageController = PageController();
   int _currentIndex = 0;
-  final Map<int, VideoPlayerController> _controllers = {};
-  final Map<String, bool> _savedReels = {}; // Track saved/bookmarked reels
+  final Map<int, BetterPlayerController> _betterControllers = {};
+  final Map<String, Uint8List?> _localVideoThumbs = {};
+  final Map<String, bool> _savedReels = {};
   bool _hasAppliedInitialPostId = false;
+  bool _firstReelMetricLogged = false;
+  /// Bumps on each page switch / init so stale async [setupDataSource] cannot attach a second player.
+  int _playSession = 0;
+
+  /// Coalesces rapid vertical swipes: only the last [onPageChanged] runs activation (timer reset).
+  Timer? _pageSettleTimer;
+  static const Duration _pageSettleDelay = Duration(milliseconds: 16);
+
+  /// How many reels to keep on each side of the current page (±[_poolRadius]).
+  /// 2 → five controllers max; fewer dispose/recreate cycles when scrolling back through reels.
+  static const int _poolRadius = 2;
+
+  /// True while a post-frame bootstrap callback is queued (not necessarily finished).
+  bool _bootstrapPostFrameScheduled = false;
+
+  /// Second [addPostFrameCallback] must await this so two [setupDataSource] runs never race.
+  Future<void>? _bootstrapInFlightFuture;
+
+  final Map<String, void Function(BetterPlayerEvent)> _reelEventListeners = {};
+
+  static const BetterPlayerBufferingConfiguration _bufferingActive = BetterPlayerBufferingConfiguration(
+    minBufferMs: 2000,
+    maxBufferMs: 10000,
+    bufferForPlaybackMs: 500,
+    bufferForPlaybackAfterRebufferMs: 1000,
+  );
+
+  static const BetterPlayerBufferingConfiguration _bufferingPrewarm = BetterPlayerBufferingConfiguration(
+    minBufferMs: 4000,
+    maxBufferMs: 8000,
+    bufferForPlaybackMs: 2000,
+    bufferForPlaybackAfterRebufferMs: 1000,
+  );
+
+  /// HLS/DASH must **not** use ExoPlayer [SimpleCache] here: multiple loaders + one global
+  /// cache lock caused 700ms+ contention and AAC/Video codec failures on MediaTek (see logcat).
+  static BetterPlayerCacheConfiguration? _reelNetworkCache(String url) {
+    final u = url.toLowerCase();
+    if (u.contains('.m3u8') || u.contains('.mpd') || u.contains('/master') || u.contains('playlist')) {
+      return null;
+    }
+    return BetterPlayerCacheConfiguration(
+      useCache: true,
+      maxCacheSize: 256 * 1024 * 1024,
+      maxCacheFileSize: 80 * 1024 * 1024,
+      preCacheSize: 8 * 1024 * 1024,
+      key: url,
+    );
+  }
+
+  static BetterPlayerConfiguration _reelBetterConfig() {
+    return BetterPlayerConfiguration(
+      // Placeholder until [BetterPlayerEventType.initialized]; then we set the real ratio from the video.
+      aspectRatio: 9 / 16,
+      fit: BoxFit.contain,
+      looping: true,
+      autoPlay: false,
+      handleLifecycle: false,
+      expandToFill: true,
+      controlsConfiguration: BetterPlayerControlsConfiguration(
+        showControls: false,
+        enableProgressBar: false,
+        enableProgressText: false,
+        enableFullscreen: false,
+        enableMute: false,
+        enablePlayPause: false,
+        enableSkips: false,
+        enablePlaybackSpeed: false,
+        enableSubtitles: false,
+        enableOverflowMenu: false,
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     createContentVisibleNotifier.addListener(_onCreateContentVisibilityChanged);
+    ReelsPerfMetrics.instance.onScreenMount();
+  }
+
+  List<PostModel> _effectiveReelsList() {
+    final reelsFromProvider = ref.read(reelsListProvider);
+    final prependedReel = widget.prependedReel;
+    if (prependedReel != null) {
+      return [prependedReel, ...reelsFromProvider.where((r) => r.id != prependedReel.id)];
+    }
+    return reelsFromProvider;
   }
 
   void _onCreateContentVisibilityChanged() {
     if (createContentVisibleNotifier.value) {
-      _pauseAndDisposeAllVideos();
+      _cancelPendingPlayerAttach();
+      unawaited(_releaseAllVideoResources());
       if (mounted) setState(() {});
     }
   }
 
   @override
   void dispose() {
+    _pageSettleTimer?.cancel();
+    _bootstrapPostFrameScheduled = false;
     createContentVisibleNotifier.removeListener(_onCreateContentVisibilityChanged);
     _pageController.dispose();
-    _pauseAndDisposeAllVideos();
+    unawaited(_releaseAllVideoResources());
     super.dispose();
   }
 
-  /// Pause and dispose all reel videos (e.g. when opening AudioDetailScreen or CreateContentScreen)
-  void _pauseAndDisposeAllVideos() {
-    for (var entry in _controllers.entries.toList()) {
-      try {
-        final controller = entry.value;
-        if (controller.value.isInitialized && controller.value.isPlaying) {
-          controller.pause();
-        }
-        controller.dispose();
-      } catch (_) {}
-      _controllers.remove(entry.key);
+  void _cancelPendingPlayerAttach() {
+    _pageSettleTimer?.cancel();
+    _pageSettleTimer = null;
+  }
+
+  Future<void> _safeSetVolume(BetterPlayerController c, double value) async {
+    try {
+      await c.setVolume(value);
+    } catch (_) {}
+  }
+
+  Future<void> _safePause(BetterPlayerController c) async {
+    try {
+      await c.pause();
+    } catch (_) {}
+  }
+
+  Future<void> _safePlay(BetterPlayerController c) async {
+    try {
+      await c.play();
+    } catch (_) {}
+  }
+
+  Future<void> _safeSeekZero(BetterPlayerController c) async {
+    try {
+      await c.seekTo(Duration.zero);
+    } catch (_) {}
+  }
+
+  /// Fast path: cut audio before heavy teardown (rapid swipes).
+  Future<void> _muteAndPauseAllPlayers() async {
+    final snapshot = _betterControllers.values.toList(growable: false);
+    for (final c in snapshot) {
+      await _safeSetVolume(c, 0);
+      await _safePause(c);
     }
+  }
+
+  /// Dispose full pool (tab away, route leave, widget dispose).
+  Future<void> _releaseAllVideoResources() async {
+    final entries = _betterControllers.entries.toList();
+    _betterControllers.clear();
+    final reels = _effectiveReelsList();
+    for (final e in entries) {
+      final c = e.value;
+      final idx = e.key;
+      String? url;
+      if (idx >= 0 && idx < reels.length) {
+        url = reels[idx].videoUrl;
+      }
+      if (url != null && url.isNotEmpty) {
+        final l = _reelEventListeners.remove(url);
+        if (l != null) {
+          try {
+            c.removeEventsListener(l);
+          } catch (_) {}
+        }
+      }
+      await _safeSetVolume(c, 0);
+      await _safePause(c);
+      try {
+        c.dispose(forceDispose: true);
+      } catch (_) {}
+    }
+    _reelEventListeners.clear();
+  }
+
+  void _evictDistantControllers(int center) {
+    for (final idx in _betterControllers.keys.toList()) {
+      if ((idx - center).abs() > _poolRadius) {
+        unawaited(_disposeBetterAt(idx));
+      }
+    }
+  }
+
+  Future<void> _disposeBetterAt(int index) async {
+    final c = _betterControllers.remove(index);
+    if (c != null) {
+      final reels = _effectiveReelsList();
+      String? url;
+      if (index >= 0 && index < reels.length) {
+        url = reels[index].videoUrl;
+      }
+      if (url != null && url.isNotEmpty) {
+        final l = _reelEventListeners.remove(url);
+        if (l != null) {
+          try {
+            c.removeEventsListener(l);
+          } catch (_) {}
+        }
+      }
+      await _safeSetVolume(c, 0);
+      await _safePause(c);
+      try {
+        c.dispose(forceDispose: true);
+      } catch (_) {}
+    }
+  }
+
+  void _bindReelPlayerEvents(
+    BetterPlayerController controller,
+    String url,
+    int index,
+    int session,
+  ) {
+    final existing = _reelEventListeners.remove(url);
+    if (existing != null) {
+      try {
+        controller.removeEventsListener(existing);
+      } catch (_) {}
+    }
+    void listener(BetterPlayerEvent ev) {
+      if (session != _playSession) return;
+      if (ev.betterPlayerEventType == BetterPlayerEventType.bufferingStart) {
+        ReelsPerfMetrics.instance.recordRebuffer();
+      }
+      if (ev.betterPlayerEventType == BetterPlayerEventType.initialized) {
+        _syncReelVideoAspectRatio(controller);
+        // Playback is driven by [_ensureBetterPlayer] / [_resumeController] to avoid double [play]
+        // racing [setupDataSource] completion (first-reel stutter).
+        if (!_firstReelMetricLogged && index == _currentIndex && session == _playSession) {
+          _firstReelMetricLogged = true;
+          ReelsPerfMetrics.instance.onFirstReelVisible();
+        }
+        if (mounted && session == _playSession) setState(() {});
+      }
+      if (ev.betterPlayerEventType == BetterPlayerEventType.exception) {
+        if (mounted && _currentIndex == index && session == _playSession) {
+          _disposeBetterAt(index);
+          setState(() {});
+        }
+      }
+    }
+
+    _reelEventListeners[url] = listener;
+    controller.addEventsListener(listener);
+  }
+
+  bool _betterReady(BetterPlayerController? c) {
+    if (c == null) return false;
+    try {
+      return c.isVideoInitialized() == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _syncReelVideoAspectRatio(BetterPlayerController controller) {
+    try {
+      final vpc = controller.videoPlayerController;
+      if (vpc == null || !vpc.value.initialized) return;
+      final s = vpc.value.size;
+      if (s == null || s.width <= 0 || s.height <= 0) return;
+      controller.setOverriddenAspectRatio(s.width / s.height);
+      controller.setOverriddenFit(BoxFit.contain);
+    } catch (_) {}
+  }
+
+  /// Serialize bootstraps so two post-frame callbacks cannot overlap [setupDataSource] (stutter).
+  Future<void> _bootstrapPlayerImmediate(String debugTag) async {
+    final existing = _bootstrapInFlightFuture;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    final done = Completer<void>();
+    _bootstrapInFlightFuture = done.future;
+    try {
+      await _bootstrapPlayerImmediateBody(debugTag);
+    } finally {
+      if (!done.isCompleted) done.complete();
+      _bootstrapInFlightFuture = null;
+    }
+  }
+
+  Future<void> _bootstrapPlayerImmediateBody(String debugTag) async {
+    if (kDebugMode) {
+      debugPrint('[Reels] bootstrap ($debugTag) index=$_currentIndex');
+    }
+    final reels = _effectiveReelsList();
+    if (reels.isEmpty) return;
+    if (_currentIndex < 0 || _currentIndex >= reels.length) return;
+
+    _cancelPendingPlayerAttach();
+    _playSession++;
+    final session = _playSession;
+
+    if (_betterControllers.isNotEmpty) {
+      await _muteAndPauseAllPlayers();
+      await _releaseAllVideoResources();
+    }
+    if (!mounted || session != _playSession) return;
+    final listNow = _effectiveReelsList();
+    if (_currentIndex < 0 || _currentIndex >= listNow.length) return;
+    await _activateIndex(_currentIndex, listNow, session);
+    if (!mounted || session != _playSession) return;
+    _scheduleDeferredPrewarm(_currentIndex, listNow, session);
+  }
+
+  void _scheduleBootstrap() {
+    if (_bootstrapPostFrameScheduled) return;
+    _bootstrapPostFrameScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (!mounted) return;
+        await _bootstrapPlayerImmediate('postFrame');
+      } finally {
+        _bootstrapPostFrameScheduled = false;
+      }
+    });
+  }
+
+  /// Long delay after cold bootstrap so the first [setupDataSource] + decode is not starved.
+  static const Duration _deferredPrewarmDelayCold = Duration(milliseconds: 450);
+  /// Short delay after a swipe — user may scroll again; pool already keeps nearby indices.
+  static const Duration _deferredPrewarmDelaySwipe = Duration(milliseconds: 140);
+
+  void _scheduleDeferredPrewarm(
+    int center,
+    List<PostModel> reels,
+    int session, {
+    Duration delay = _deferredPrewarmDelayCold,
+  }) {
+    Future<void>.delayed(delay, () {
+      if (!mounted || session != _playSession || _currentIndex != center) return;
+      final list = _effectiveReelsList();
+      if (center < 0 || center >= list.length) return;
+      unawaited(_prewarmNeighbors(center, list, session));
+    });
   }
 
   void _initVideosForList(List<PostModel> reels) {
-    _initializeVideo(0, reels);
-    if (reels.length > 1) _initializeVideo(1, reels);
-    if (reels.length > 2) _initializeVideo(2, reels);
+    if (reels.isEmpty) return;
+    _scheduleBootstrap();
   }
 
-  void _initializeVideo(int index, List<PostModel> reels) {
-    if (index < 0 || index >= reels.length) return;
-    if (_controllers.containsKey(index)) {
-      if (index == _currentIndex && _controllers[index]!.value.isInitialized) {
-        if (!_controllers[index]!.value.isPlaying) {
-          try {
-            _controllers[index]!.play();
-          } catch (e) {}
-        }
+  Map<String, String>? _reelThumbHeaders() {
+    final auth = DioClient.instance.options.headers['Authorization'];
+    if (auth == null) return null;
+    final s = auth.toString();
+    if (s.isEmpty) return null;
+    return {'Authorization': s};
+  }
+
+  /// Parked controllers (muted + paused) need [seekTo] before [play] on Android so AAC restarts.
+  Future<void> _resumeController(
+    BetterPlayerController controller,
+    int index,
+    List<PostModel> reels,
+    int session,
+  ) async {
+    if (session != _playSession || !mounted) return;
+    final vpc = controller.videoPlayerController;
+    if (vpc == null) {
+      await _ensureBetterPlayer(index, reels, session, activateIfCurrent: true, forceRecreate: true);
+      return;
+    }
+    try {
+      Duration target = Duration.zero;
+      final pos = vpc.value.position;
+      final dur = vpc.value.duration;
+      if (pos > Duration.zero && dur != null && dur > Duration.zero && pos < dur) {
+        target = pos;
       }
+      await controller.seekTo(target);
+      if (session != _playSession || !mounted) return;
+      await _safeSetVolume(controller, 1.0);
+      if (session != _playSession || !mounted) return;
+      await _safePlay(controller);
+      if (mounted && session == _playSession) setState(() {});
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[Reels] resumeController failed $e');
+        debugPrint('$st');
+      }
+      if (session != _playSession || !mounted) return;
+      await _disposeBetterAt(index);
+      if (session != _playSession || !mounted) return;
+      await _ensureBetterPlayer(index, reels, session, activateIfCurrent: true, forceRecreate: true);
+    }
+  }
+
+  Future<void> _ensureBetterPlayer(
+    int index,
+    List<PostModel> reels,
+    int session, {
+    bool activateIfCurrent = false,
+    bool forceRecreate = false,
+  }) async {
+    if (index < 0 || index >= reels.length) return;
+    if (session != _playSession) return;
+
+    final reel = reels[index];
+    final url = reel.videoUrl;
+    if (url == null || url.isEmpty) return;
+
+    if (forceRecreate && _betterControllers.containsKey(index)) {
+      await _disposeBetterAt(index);
+    }
+    if (session != _playSession || !mounted) return;
+
+    final existing = _betterControllers[index];
+    if (existing != null && !forceRecreate) {
+      final isActiveSlot = activateIfCurrent && index == _currentIndex;
+      if (isActiveSlot) {
+        await _resumeController(existing, index, reels, session);
+      } else {
+        await _safeSetVolume(existing, 0);
+        await _safePause(existing);
+      }
+      if (mounted && session == _playSession) setState(() {});
       return;
     }
 
-    final reel = reels[index];
-    if (reel.videoUrl != null) {
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(reel.videoUrl!),
-      )..setLooping(true);
+    final cfg = _reelBetterConfig();
+    final controller = BetterPlayerController(cfg);
+    _bindReelPlayerEvents(controller, url, index, session);
 
-      _controllers[index] = controller;
+    try {
+      final BetterPlayerDataSource ds = BetterPlayerDataSource.network(
+        url,
+        cacheConfiguration: _reelNetworkCache(url),
+        bufferingConfiguration: activateIfCurrent && index == _currentIndex ? _bufferingActive : _bufferingPrewarm,
+      );
+      await controller.setupDataSource(ds);
+      if (!mounted || session != _playSession) {
+        final l = _reelEventListeners.remove(url);
+        if (l != null) {
+          try {
+            controller.removeEventsListener(l);
+          } catch (_) {}
+        }
+        controller.dispose(forceDispose: true);
+        return;
+      }
+      _betterControllers[index] = controller;
+      if (activateIfCurrent && index == _currentIndex && session == _playSession) {
+        await _resumeController(controller, index, reels, session);
+      } else {
+        await _safeSetVolume(controller, 0);
+        await _safePause(controller);
+        await _safeSeekZero(controller);
+      }
+    } catch (_) {
+      final l = _reelEventListeners.remove(url);
+      if (l != null) {
+        try {
+          controller.removeEventsListener(l);
+        } catch (_) {}
+      }
+      try {
+        controller.dispose(forceDispose: true);
+      } catch (_) {}
+    }
+    if (mounted && session == _playSession) setState(() {});
+  }
 
-      // Initialize asynchronously without blocking UI
-      controller.initialize().then((_) {
-        if (mounted && _controllers.containsKey(index)) {
-          // Only play if this is still the current index
-          if (index == _currentIndex) {
-            try {
-              controller.play();
-            } catch (e) {
-              // Ignore play errors
-            }
-          }
-          if (mounted) {
-            setState(() {});
-          }
-        }
-      }).catchError((error) {
-        // Handle error silently, UI will show loading state
-        if (mounted) {
-          setState(() {});
-        }
-      });
+  Future<void> _activateIndex(int index, List<PostModel> reels, int session) async {
+    if (index < 0 || index >= reels.length) return;
+    final pauseFutures = <Future<void>>[];
+    for (final entry in _betterControllers.entries) {
+      if (entry.key == index) continue;
+      final c = entry.value;
+      pauseFutures.add(() async {
+        try {
+          await c.setVolume(0);
+          await c.pause();
+        } catch (_) {}
+      }());
+    }
+    await Future.wait(pauseFutures);
+    if (session != _playSession || !mounted) return;
+
+    final existing = _betterControllers[index];
+    if (existing != null) {
+      await _resumeController(existing, index, reels, session);
+    } else {
+      await _ensureBetterPlayer(index, reels, session, activateIfCurrent: true);
+    }
+    if (session != _playSession || !mounted) return;
+    _evictDistantControllers(index);
+  }
+
+  Future<void> _prewarmNeighbors(int center, List<PostModel> reels, int session) async {
+    final neighbors = <int>[
+      center + 1,
+      center - 1,
+      center + 2,
+      center - 2,
+    ].where((i) => i >= 0 && i < reels.length).toList();
+
+    for (final i in neighbors) {
+      if (session != _playSession || !mounted) return;
+      if (_betterControllers.containsKey(i)) continue;
+      await _ensureBetterPlayer(i, reels, session);
+      final c = _betterControllers[i];
+      if (c != null && session == _playSession) {
+        await _safeSeekZero(c);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (session != _playSession) return;
     }
   }
 
-  void _onPageChanged(int index, List<PostModel> reels) {
+  /// After a list refresh removes items, keep [PageController] and player in range.
+  void _clampCurrentIndexIfNeeded() {
+    if (!mounted) return;
+    final reels = _effectiveReelsList();
+    if (reels.isEmpty) return;
+    if (_currentIndex < reels.length) return;
+    final n = reels.length - 1;
+    _cancelPendingPlayerAttach();
+    setState(() => _currentIndex = n);
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(n);
+    }
+    unawaited(_bootstrapPlayerImmediate('clampOvershoot'));
+  }
+
+  /// Fired when the vertical [PageView] settles on a new page.
+  ///
+  /// Bumps [_playSession] first (invalidates in-flight work), mutes the outgoing reel, updates
+  /// [_currentIndex], then after [_pageSettleDelay] runs [_activateIndex].
+  void _onPageChanged(int index) {
+    final reels = _effectiveReelsList();
     if (index < 0 || index >= reels.length) return;
 
-    // Pause ALL videos first (YouTube/Instagram style - only one plays at a time)
-    for (var entry in _controllers.entries) {
-      final controller = entry.value;
-      if (controller.value.isInitialized && controller.value.isPlaying) {
-        try {
-          controller.pause();
-        } catch (e) {
-          // Ignore errors during pause
-        }
-      }
+    if (index == _currentIndex) {
+      return;
     }
 
-    // Dispose previous video controller to free resources immediately
-    if (_controllers.containsKey(_currentIndex) && _currentIndex != index) {
-      try {
-        final oldController = _controllers[_currentIndex];
-        if (oldController != null) {
-          oldController.removeListener(() {});
-          if (oldController.value.isInitialized) {
-            oldController.pause();
-          }
-          oldController.dispose();
-          _controllers.remove(_currentIndex);
-        }
-      } catch (e) {
-        // Ignore errors during disposal
-      }
-    }
+    final session = ++_playSession;
+
+    _pageSettleTimer?.cancel();
+
+    final outgoing = _currentIndex;
+    try {
+      _betterControllers[outgoing]?.setVolume(0);
+    } catch (_) {}
 
     setState(() {
       _currentIndex = index;
     });
 
-    _initializeVideo(index, reels);
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted && _controllers.containsKey(index)) {
-        final controller = _controllers[index]!;
-        if (controller.value.isInitialized && !controller.value.isPlaying) {
-          try {
-            controller.play();
-          } catch (e) {}
-        }
-      }
+    _pageSettleTimer = Timer(_pageSettleDelay, () {
+      _pageSettleTimer = null;
+      if (!mounted) return;
+      if (session != _playSession) return;
+      if (_currentIndex != index) return;
+      final list = _effectiveReelsList();
+      if (index < 0 || index >= list.length) return;
+      unawaited(() async {
+        await _activateIndex(index, list, session);
+        if (!mounted || session != _playSession || _currentIndex != index) return;
+        _scheduleDeferredPrewarm(index, list, session, delay: _deferredPrewarmDelaySwipe);
+      }());
     });
-
-    if (index + 1 < reels.length) _initializeVideo(index + 1, reels);
-    if (index + 2 < reels.length) _initializeVideo(index + 2, reels);
-    if (index - 1 >= 0) _initializeVideo(index - 1, reels);
-
-    final disposeThreshold = 3;
-    final keysToRemove = <int>[];
-    _controllers.forEach((key, controller) {
-      if ((key - index).abs() > disposeThreshold) {
-        try {
-          controller.removeListener(() {});
-          if (controller.value.isInitialized) {
-            controller.pause();
-          }
-          controller.dispose();
-          keysToRemove.add(key);
-        } catch (e) {
-          // Ignore errors during disposal
-          keysToRemove.add(key);
-        }
-      }
-    });
-    for (var key in keysToRemove) {
-      _controllers.remove(key);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(mainTabIndexProvider, (prev, next) {
+      if (next != 1) {
+        _cancelPendingPlayerAttach();
+        unawaited(_releaseAllVideoResources());
+      } else if (prev != null && prev != 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final reels = _effectiveReelsList();
+          if (reels.isNotEmpty) {
+            // Single path: [_initVideosForList] → [_bootstrapPlayerImmediate] bumps [_playSession]
+            // once and activates — do not increment session again or activation is discarded.
+            _initVideosForList(reels);
+          }
+        });
+      }
+    });
+
     final reelsFromProvider = ref.watch(reelsListProvider);
     final isLoading = ref.watch(reelsLoadingProvider);
     final error = ref.watch(reelsErrorProvider);
@@ -221,6 +655,9 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _hasAppliedInitialPostId = true;
+        if (prependedReel == null && initialPostId == null) {
+          return;
+        }
         int targetIndex = 0;
         if (prependedReel != null) {
           targetIndex = 0;
@@ -229,21 +666,25 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
           if (idx >= 0) targetIndex = idx;
         }
         if (_pageController.hasClients && targetIndex < reels.length) {
+          setState(() {
+            _currentIndex = targetIndex;
+          });
           _pageController.jumpToPage(targetIndex);
-          _onPageChanged(targetIndex, reels);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            if (_betterControllers.isEmpty) {
+              unawaited(_bootstrapPlayerImmediate('routeInitialJump'));
+            }
+          });
         }
       });
     }
 
-    if (isLoading && reels.isEmpty) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: ThemeHelper.getAccentColor(context)),
-        ),
-      );
+    if (reels.isNotEmpty && _currentIndex >= reels.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _clampCurrentIndexIfNeeded());
     }
-    if (error != null && reels.isEmpty) {
+
+    if (error != null && reels.isEmpty && !isLoading) {
       return Scaffold(
         backgroundColor: Colors.black,
         body: Center(
@@ -265,45 +706,64 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         ),
       );
     }
-    if (reels.isEmpty) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: Text(
-            'No reels yet',
-            style: TextStyle(color: ThemeHelper.getTextSecondary(context), fontSize: 16, decoration: TextDecoration.none),
-          ),
-        ),
-      );
+    final tabIndex = ref.watch(mainTabIndexProvider);
+    final reelsTabVisible = tabIndex == 1 || isPushedRoute;
+    final needsRouteJump = isPushedRoute && (prependedReel != null || initialPostId != null);
+    if (reels.isNotEmpty && _betterControllers.isEmpty && reelsTabVisible && !needsRouteJump) {
+      _initVideosForList(_effectiveReelsList());
     }
 
-    if (reels.isNotEmpty && _controllers.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && reels.isNotEmpty) _initVideosForList(reels);
-      });
-    }
+    final pageStack = DefaultTextStyle(
+      style: const TextStyle(decoration: TextDecoration.none),
+      child: RefreshIndicator(
+        onRefresh: () => ref.read(reelsProvider.notifier).refresh(),
+        color: Colors.white,
+        backgroundColor: Colors.black54,
+        child: PageView.builder(
+          controller: _pageController,
+          scrollDirection: Axis.vertical,
+          onPageChanged: _onPageChanged,
+          itemCount: reels.length,
+          physics: const _ReelPageScrollPhysics(),
+          itemBuilder: (context, index) {
+            if (index < 0 || index >= reels.length) {
+              return Container(color: Colors.black);
+            }
+            return KeyedSubtree(
+              key: ValueKey<String>(reels[index].id),
+              child: _buildReelItem(reels[index], index),
+            );
+          },
+        ),
+      ),
+    );
+
+    final bodyChild = (reels.isEmpty && isLoading)
+        ? _reelFullBleedSkeleton(context)
+        : (reels.isEmpty
+            ? Center(
+                child: Text(
+                  'No reels yet',
+                  style: TextStyle(color: ThemeHelper.getTextSecondary(context), fontSize: 16, decoration: TextDecoration.none),
+                ),
+              )
+            : pageStack);
 
     final content = Scaffold(
       backgroundColor: Colors.black,
-      body: DefaultTextStyle(
-        style: TextStyle(decoration: TextDecoration.none),
-        child: RefreshIndicator(
-          onRefresh: () => ref.read(reelsProvider.notifier).refresh(),
-          color: Colors.white,
-          backgroundColor: Colors.black54,
-          child: PageView.builder(
-            controller: _pageController,
-            scrollDirection: Axis.vertical,
-            onPageChanged: (index) => _onPageChanged(index, reels),
-            itemCount: reels.length,
-            physics: const ClampingScrollPhysics(),
-            itemBuilder: (context, index) {
-              if (index < 0 || index >= reels.length) {
-                return Container(color: Colors.black);
-              }
-              return _buildReelItem(reels[index], index);
-            },
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 320),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        child: KeyedSubtree(
+          key: ValueKey(
+            reels.isEmpty && isLoading
+                ? 'reel_skeleton'
+                : reels.isEmpty
+                    ? 'reel_empty'
+                    : 'reel_feed',
           ),
+          child: bodyChild,
         ),
       ),
     );
@@ -329,62 +789,154 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     return content;
   }
 
-  Widget _buildReelItem(PostModel reel, int index) {
-    final controller = _controllers[index];
-    final isPlaying = controller?.value.isPlaying ?? false;
-    final isInitialized = controller?.value.isInitialized ?? false;
+  Widget _reelFullBleedSkeleton(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final h = constraints.maxHeight;
+        final w = constraints.maxWidth;
+        final ar = w / (h > 1 ? h : 1);
+        final targetW = (ar > 9 / 16) ? h * 9 / 16 : w;
+        return Center(
+          child: Shimmer.fromColors(
+            baseColor: Colors.grey.shade900,
+            highlightColor: Colors.grey.shade700,
+            child: Container(
+              width: targetW,
+              height: h,
+              color: Colors.white,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _reelBlurUnderlay(PostModel reel) {
+    final gradient = Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.grey.shade900,
+            Colors.grey.shade800,
+            Colors.black,
+          ],
+        ),
+      ),
+    );
+    final h = reel.blurHash;
+    if (h == null || h.length < 6) return gradient;
+    try {
+      final decoded = bh.BlurHash.decode(h);
+      final im = decoded.toImage(64, 64);
+      final jpg = img.encodeJpg(im, quality: 72);
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.memory(Uint8List.fromList(jpg), fit: BoxFit.cover),
+          gradient,
+        ],
+      );
+    } catch (_) {
+      return gradient;
+    }
+  }
+
+  /// API [thumbnailUrl] first (with auth headers), then network fallback, then first video frame.
+  Widget _reelPosterStack(PostModel reel, Uint8List? localThumb, Map<String, String>? headers) {
+    final apiThumb = reel.thumbnailUrl != null && reel.thumbnailUrl!.trim().isNotEmpty
+        ? reel.thumbnailUrl!.trim()
+        : null;
+    final fallbackNet = reel.effectiveThumbnailUrl;
+    final hasLocal = localThumb != null && localThumb.isNotEmpty;
+    final showShimmer = apiThumb == null &&
+        (fallbackNet == null || fallbackNet.isEmpty) &&
+        !hasLocal;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Video player with smooth loading
-        if (controller != null && isInitialized)
-          Container(
-            color: Colors.black,
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: controller.value.aspectRatio,
-                child: VideoPlayer(controller),
+        Positioned.fill(child: _reelBlurUnderlay(reel)),
+        if (apiThumb != null)
+          Positioned.fill(
+            child: CachedNetworkImage(
+              imageUrl: apiThumb,
+              fit: BoxFit.cover,
+              httpHeaders: headers,
+              cacheManager: AppMediaCache.reelsThumbnails,
+              errorWidget: (context, url, error) {
+                if (fallbackNet != null &&
+                    fallbackNet.isNotEmpty &&
+                    fallbackNet != apiThumb) {
+                  return CachedNetworkImage(
+                    imageUrl: fallbackNet,
+                    fit: BoxFit.cover,
+                    httpHeaders: headers,
+                    cacheManager: AppMediaCache.reelsThumbnails,
+                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        if (apiThumb == null && fallbackNet != null && fallbackNet.isNotEmpty)
+          Positioned.fill(
+            child: CachedNetworkImage(
+              imageUrl: fallbackNet,
+              fit: BoxFit.cover,
+              httpHeaders: headers,
+              cacheManager: AppMediaCache.reelsThumbnails,
+              errorWidget: (context, url, error) => const SizedBox.shrink(),
+            ),
+          ),
+        if (hasLocal)
+          Positioned.fill(
+            child: Image.memory(localThumb, fit: BoxFit.cover, gaplessPlayback: true),
+          ),
+        if (showShimmer)
+          Positioned.fill(
+            child: Shimmer.fromColors(
+              baseColor: Colors.black.withValues(alpha: 0.25),
+              highlightColor: Colors.white.withValues(alpha: 0.05),
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildReelItem(PostModel reel, int index) {
+    final controller = _betterControllers[index];
+    final isCurrent = index == _currentIndex;
+    final ready = _betterReady(controller);
+    final isPlaying = controller?.isPlaying() == true;
+    final vUrl = reel.videoUrl;
+    final localThumb = (vUrl != null && vUrl.isNotEmpty) ? _localVideoThumbs[vUrl] : null;
+    final thumbHeaders = _reelThumbHeaders();
+    final showPlayer = isCurrent && controller != null && ready;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (showPlayer)
+          RepaintBoundary(
+            key: ValueKey<Object>('reel_bc_${reel.id}_${controller.hashCode}'),
+            child: ColoredBox(
+              color: Colors.black,
+              child: Center(
+                child: SafeBetterPlayerWrapper(
+                  key: ObjectKey(controller),
+                  controller: controller,
+                ),
               ),
             ),
           )
         else
-          Container(
+          ColoredBox(
             color: Colors.black,
-            child: Stack(
-              children: [
-                // Show thumbnail if available
-                if (reel.thumbnailUrl != null && reel.thumbnailUrl!.isNotEmpty)
-                  Center(
-                    child: CachedNetworkImage(
-                      imageUrl: reel.thumbnailUrl!,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                    ),
-                  ),
-                // Loading overlay
-                Container(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 40,
-                          height: 40,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
-                            color: Colors.white,
-                          ),
-                        ),
-                        // Removed "Loading..." text as per requirements
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            child: _reelPosterStack(reel, localThumb, thumbHeaders),
           ),
         // Overlay UI
         Positioned(
@@ -418,7 +970,10 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                           CircleAvatar(
                             radius: 20,
                             backgroundImage: reel.author.avatarUrl.isNotEmpty
-                                ? CachedNetworkImageProvider(reel.author.avatarUrl)
+                                ? CachedNetworkImageProvider(
+                                    reel.author.avatarUrl,
+                                    cacheManager: AppMediaCache.reelsThumbnails,
+                                  )
                                 : null,
                             backgroundColor: Colors.grey[800],
                             onBackgroundImageError: reel.author.avatarUrl.isNotEmpty
@@ -509,9 +1064,9 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                       // Audio row (Instagram-style) - tappable to see reels with same audio
                       if (reel.audioName != null || reel.isVideo)
                         GestureDetector(
-                          onTap: () {
-                            // Pause and dispose ALL reel videos before navigating (stops audio when CreateContentScreen is opened)
-                            _pauseAndDisposeAllVideos();
+                            onTap: () {
+                            _cancelPendingPlayerAttach();
+                            unawaited(_releaseAllVideoResources());
                             if (mounted) setState(() {});
                             final audioId = reel.audioId ?? 'original_${reel.author.id}';
                             final audioName = reel.audioName ?? 'Original sound - ${reel.author.username}';
@@ -531,9 +1086,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                               // Re-initialize current video when returning from audio/create content screen
                               if (mounted) {
                                 final reelsList = ref.read(reelsListProvider);
-                                _initializeVideo(_currentIndex, reelsList);
-                                if (_currentIndex + 1 < reelsList.length) _initializeVideo(_currentIndex + 1, reelsList);
-                                if (_currentIndex + 2 < reelsList.length) _initializeVideo(_currentIndex + 2, reelsList);
+                                _initVideosForList(reelsList);
                               }
                             });
                           },
@@ -656,11 +1209,14 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                     _buildActionButton(
                       icon: isPlaying ? Icons.pause : Icons.play_arrow,
                       onTap: () {
-                        if (controller != null) {
+                        if (controller != null && identical(_betterControllers[index], controller)) {
                           if (isPlaying) {
-                            controller.pause();
+                            unawaited(_safePause(controller));
                           } else {
-                            controller.play();
+                            unawaited(() async {
+                              await _safeSetVolume(controller, 1.0);
+                              await _safePlay(controller);
+                            }());
                           }
                           setState(() {});
                         }
@@ -788,4 +1344,20 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     }
     return count.toString();
   }
+}
+
+/// Instagram-like snap paging without bounce, tuned to avoid accidental skips.
+class _ReelPageScrollPhysics extends PageScrollPhysics {
+  const _ReelPageScrollPhysics({super.parent});
+
+  @override
+  _ReelPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return _ReelPageScrollPhysics(parent: buildParent(ancestor));
+  }
+
+  @override
+  double get dragStartDistanceMotionThreshold => 2.0;
+
+  @override
+  double get minFlingVelocity => 16.0;
 }

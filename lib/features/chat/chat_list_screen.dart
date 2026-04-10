@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/widgets/glass_card.dart';
@@ -28,7 +29,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(socketConnectionProvider.notifier).ensureConnection();
-      ref.read(conversationsProvider.notifier).load();
     });
   }
 
@@ -92,13 +92,79 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     }
   }
 
+  (Color, Color) _shimmerColors(BuildContext context) {
+    final base = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white10
+        : Colors.black12;
+    return (base, base.withValues(alpha: 0.35));
+  }
+
+  Widget _buildConversationSkeletonTile(BuildContext context) {
+    final (base, hi) = _shimmerColors(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Shimmer.fromColors(
+        baseColor: base,
+        highlightColor: hi,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 14,
+                      width: 160,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      height: 12,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(conversationsProvider);
     final conversations = state.conversations
         .map((item) => _itemToConversation(item, state.unreadConversationIds))
         .toList();
-    final isEmpty = conversations.isEmpty && !state.loading;
+    final showSkeleton =
+        !state.initialFetchCompleted && conversations.isEmpty;
+    final isEmpty = conversations.isEmpty &&
+        !state.loading &&
+        state.initialFetchCompleted;
     final error = state.error;
 
     return Material(
@@ -182,11 +248,13 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
               ],
             ),
             Expanded(
-              child: state.loading && conversations.isEmpty
-                  ? Center(
-                      child: CircularProgressIndicator(
-                        color: ThemeHelper.getAccentColor(context),
-                      ),
+              child: showSkeleton
+                  ? ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      itemCount: 8,
+                      itemBuilder: (context, index) =>
+                          _buildConversationSkeletonTile(context),
                     )
                   : error != null && conversations.isEmpty
                       ? Center(

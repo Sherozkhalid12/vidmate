@@ -64,7 +64,8 @@ class ApiConstants {
   static const String postGetSavedPosts = '/post/get/savedPosts';
 
   // Post actions
-  static String postDelete(String postId) => '/post/delete/$postId';
+  /// DELETE post by id — full URL: `{baseUrl}/post/:id` (i.e. /api/v1/post/:id).
+  static String postDelete(String postId) => '/post/$postId';
   static String postReport(String postId) => '/post/report/$postId';
   static String postShare(String postId) => '/post/share/$postId';
 

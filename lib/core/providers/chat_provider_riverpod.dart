@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/user_model.dart';
@@ -23,54 +25,95 @@ class ConversationsState {
   final String? error;
   /// Conversation IDs that have unread messages (from peer).
   final Set<String> unreadConversationIds;
+  /// After first [ConversationsNotifier.load] attempt (success or failure).
+  final bool initialFetchCompleted;
 
   const ConversationsState({
     this.conversations = const [],
     this.loading = false,
     this.error,
     this.unreadConversationIds = const {},
+    this.initialFetchCompleted = false,
   });
+
+  ConversationsState copyWith({
+    List<ChatConversationItem>? conversations,
+    bool? loading,
+    String? error,
+    Set<String>? unreadConversationIds,
+    bool? initialFetchCompleted,
+    bool clearError = false,
+  }) {
+    return ConversationsState(
+      conversations: conversations ?? this.conversations,
+      loading: loading ?? this.loading,
+      error: clearError ? null : (error ?? this.error),
+      unreadConversationIds: unreadConversationIds ?? this.unreadConversationIds,
+      initialFetchCompleted: initialFetchCompleted ?? this.initialFetchCompleted,
+    );
+  }
 }
 
 class ConversationsNotifier extends StateNotifier<ConversationsState> {
-  ConversationsNotifier(this._ref) : super(const ConversationsState());
+  ConversationsNotifier(this._ref) : super(const ConversationsState()) {
+    unawaited(_bootstrap());
+  }
   final Ref _ref;
 
+  Future<void> _bootstrap() async {
+    final cache =
+        await UserStorageService.instance.getCachedConversationsSnapshot();
+    if (cache.items.isNotEmpty) {
+      state = ConversationsState(
+        conversations: cache.items,
+        unreadConversationIds: cache.unreadIds,
+        initialFetchCompleted: false,
+      );
+    }
+    await load();
+  }
+
   Future<void> load() async {
-    state = ConversationsState(
-      loading: true,
-      conversations: state.conversations,
-      unreadConversationIds: state.unreadConversationIds,
+    final hadData = state.conversations.isNotEmpty;
+    state = state.copyWith(
+      loading: !hadData,
+      clearError: true,
     );
     final service = _ref.read(chatServiceProvider);
     final result = await service.getConversations();
     if (!result.success) {
-      state = ConversationsState(
+      state = state.copyWith(
         loading: false,
         error: result.errorMessage,
-        conversations: state.conversations,
-        unreadConversationIds: state.unreadConversationIds,
+        initialFetchCompleted: true,
       );
       return;
     }
-    state = ConversationsState(
+    state = state.copyWith(
       loading: false,
       conversations: result.conversations,
-      error: null,
-      unreadConversationIds: state.unreadConversationIds,
+      clearError: true,
+      initialFetchCompleted: true,
     );
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheConversationsSnapshot(
+        items: result.conversations,
+        unreadConversationIds: state.unreadConversationIds,
+      );
+    });
   }
 
   void markConversationAsRead(String conversationId) {
     if (conversationId.isEmpty) return;
     final next = Set<String>.from(state.unreadConversationIds)..remove(conversationId);
     if (next.length == state.unreadConversationIds.length) return;
-    state = ConversationsState(
-      loading: state.loading,
-      conversations: state.conversations,
-      error: state.error,
-      unreadConversationIds: next,
-    );
+    state = state.copyWith(unreadConversationIds: next);
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheConversationsSnapshot(
+        items: state.conversations,
+        unreadConversationIds: state.unreadConversationIds,
+      );
+    });
   }
 
   /// Update last message for a conversation from socket (so chat list reflects new messages).
@@ -89,12 +132,7 @@ class ConversationsNotifier extends StateNotifier<ConversationsState> {
       load();
       if (isFromPeer) {
         final next = Set<String>.from(state.unreadConversationIds)..add(conversationId);
-        state = ConversationsState(
-          loading: state.loading,
-          conversations: state.conversations,
-          error: state.error,
-          unreadConversationIds: next,
-        );
+        state = state.copyWith(unreadConversationIds: next);
       }
       return;
     }
@@ -114,12 +152,16 @@ class ConversationsNotifier extends StateNotifier<ConversationsState> {
     if (isFromPeer) {
       unread = Set<String>.from(unread)..add(conversationId);
     }
-    state = ConversationsState(
-      loading: state.loading,
+    state = state.copyWith(
       conversations: newList,
-      error: state.error,
       unreadConversationIds: unread,
     );
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheConversationsSnapshot(
+        items: state.conversations,
+        unreadConversationIds: state.unreadConversationIds,
+      );
+    });
   }
 
   static String _normalizeConvId(String id) {
@@ -302,6 +344,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   final String _peerUserId;
   final Ref _ref;
 
+  /// Avatar/name from navigation (chat list / profile) so history can render before API fills `sender`.
+  UserModel? _peerFromRoute;
+
+  UserModel _peerFallback() =>
+      _peerFromRoute ??
+      UserModel(id: _peerUserId, username: '', displayName: '', avatarUrl: '');
+
   ChatService get _service => _ref.read(chatServiceProvider);
 
   static const int _pageSize = 20;
@@ -325,12 +374,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       );
       return;
     }
-    final peerUser = UserModel(
-      id: _peerUserId,
-      username: '',
-      displayName: '',
-      avatarUrl: '',
-    );
+    final peerUser = _peerFallback();
     final messages = result.messages
         .map((b) => _messageFromBubble(b, currentUser.id, currentUser, peerUser))
         .toList();
@@ -369,7 +413,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       );
       return;
     }
-    final peerUser = UserModel(id: _peerUserId, username: '', displayName: '', avatarUrl: '');
+    final peerUser = _peerFallback();
     final existingIds = state.messages.map((m) => m.id).toSet();
     final skip = state.messages.length;
     final result = await _service.getUserChat(_peerUserId, limit: _pageSize, skip: skip);
@@ -405,9 +449,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _cacheChatSnapshot();
   }
 
-  /// Call after load when we have peer user info (e.g. from conversation list) to set display name/avatar.
+  /// Call when opening a chat (list/profile) so history uses the correct peer avatar/name.
   void setPeerUser(UserModel peer) {
     if (peer.id != _peerUserId) return;
+    _peerFromRoute = peer;
     final currentUser = _ref.read(currentUserProvider);
     if (currentUser == null) return;
     final updated = state.messages.map((m) {
@@ -442,8 +487,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     required ChatMessageBubble chat,
     required UserModel currentUser,
   }) {
-    final peerUser =
-        UserModel(id: _peerUserId, username: '', displayName: '', avatarUrl: '');
+    final peerUser = _peerFallback();
     final sent = _messageFromBubble(chat, currentUser.id, currentUser, peerUser);
 
     final idx = state.messages.indexWhere((m) => m.id == localId);
@@ -664,7 +708,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
                 ? bubble.sender!.profilePicture
                 : (bubble.senderProfilePicture.isNotEmpty
                     ? bubble.senderProfilePicture
-                : (data['senderAvatar']?.toString() ?? data['profilePicture']?.toString() ?? ''))),
+                    : (data['senderAvatar']?.toString() ??
+                        data['profilePicture']?.toString() ??
+                        data['senderProfilePicture']?.toString() ??
+                        _peerFromRoute?.avatarUrl ??
+                        ''))),
       );
       final msg = _messageFromBubble(bubble, currentUser.id, currentUser, peerUser);
       if (senderId == currentUser.id) {
@@ -719,9 +767,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             ? currentUser
             : UserModel(
                 id: _peerUserId,
-                username: '',
-                displayName: '',
-                avatarUrl: '',
+                username: _peerFromRoute?.username ?? '',
+                displayName: _peerFromRoute?.displayName ?? '',
+                avatarUrl: _peerFromRoute?.avatarUrl ?? '',
               ),
         text: isShared ? (hasThumb ? '' : 'Shared content') : text.toString(),
         timestamp: DateTime.tryParse(data['createdAt']?.toString() ?? '') ?? DateTime.now(),

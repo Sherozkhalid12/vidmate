@@ -1,34 +1,49 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../core/models/post_model.dart';
+import '../../../core/perf/long_video_perf_metrics.dart';
 import '../../../core/providers/auth_provider_riverpod.dart';
+import '../../../core/providers/network_status_provider.dart';
 import '../../../services/posts/long_video_service.dart';
 import '../../../services/posts/posts_service.dart';
 import '../../../services/storage/user_storage_service.dart';
+import '../hls_segment_prefetch.dart';
 
-/// Long Videos State
+/// Long Videos State (Feature 3.2 SWR).
 class LongVideosState {
   final List<PostModel> videos;
   final bool isLoading;
+  final bool isRefreshing;
+  final bool initialFetchCompleted;
   final String? error;
   final bool hasMore;
   final int currentPage;
-  final Map<String, bool> likedVideos; // Track liked videos
-  final Map<String, int> likeCounts; // Track like counts
+  final Map<String, bool> likedVideos;
+  final Map<String, int> likeCounts;
+  final bool feedOfflineBanner;
 
   LongVideosState({
     this.videos = const [],
     this.isLoading = false,
+    this.isRefreshing = false,
+    this.initialFetchCompleted = false,
     this.error,
     this.hasMore = true,
     this.currentPage = 0,
     Map<String, bool>? likedVideos,
     Map<String, int>? likeCounts,
+    this.feedOfflineBanner = false,
   })  : likedVideos = likedVideos ?? {},
         likeCounts = likeCounts ?? {};
 
   LongVideosState copyWith({
     List<PostModel>? videos,
     bool? isLoading,
+    bool? isRefreshing,
+    bool? initialFetchCompleted,
     String? error,
     bool? hasMore,
     int? currentPage,
@@ -36,60 +51,173 @@ class LongVideosState {
     Map<String, int>? likeCounts,
     bool clearError = false,
     bool appendVideos = false,
+    bool? feedOfflineBanner,
   }) {
     return LongVideosState(
       videos: appendVideos
           ? [...this.videos, ...(videos ?? [])]
           : (videos ?? this.videos),
       isLoading: isLoading ?? this.isLoading,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
+      initialFetchCompleted:
+          initialFetchCompleted ?? this.initialFetchCompleted,
       error: clearError ? null : (error ?? this.error),
       hasMore: hasMore ?? this.hasMore,
       currentPage: currentPage ?? this.currentPage,
       likedVideos: likedVideos ?? this.likedVideos,
       likeCounts: likeCounts ?? this.likeCounts,
+      feedOfflineBanner: feedOfflineBanner ?? this.feedOfflineBanner,
     );
   }
 }
 
-/// Long Videos Notifier using Riverpod StateNotifier
 class LongVideosNotifier extends StateNotifier<LongVideosState> {
   LongVideosNotifier(this._ref) : super(LongVideosState()) {
-    loadVideos();
+    unawaited(_hydrateFromHiveAsync());
   }
 
   final Ref _ref;
   final LongVideoService _service = LongVideoService();
   final PostsService _postsService = PostsService();
+  bool _loadVideosInFlight = false;
+  CancelToken? _loadCancel;
 
-  /// Load initial videos or refresh from API
+  /// Debug: list fetch should not repeat on tab switch (Feature 3.9).
+  int loadVideosInvocationCount = 0;
+
+  Future<void> _hydrateFromHiveAsync() async {
+    final sw = Stopwatch()..start();
+    try {
+      final maps =
+          await UserStorageService.instance.getCachedUnseenLongVideos();
+      if (maps.isEmpty) return;
+
+      final hydrated = <PostModel>[];
+      final likedVideos = <String, bool>{};
+      final likeCounts = <String, int>{};
+
+      for (final m in maps) {
+        try {
+          final p = PostModel.fromCachedMap(m);
+          if (p.id.isEmpty) continue;
+          if (p.videoUrl == null || p.videoUrl!.isEmpty) continue;
+          hydrated.add(p);
+          likedVideos[p.id] = p.isLiked;
+          likeCounts[p.id] = p.likes;
+        } catch (_) {}
+      }
+      if (hydrated.isEmpty) return;
+
+      if (state.videos.isNotEmpty) return;
+
+      state = state.copyWith(
+        videos: hydrated,
+        isLoading: false,
+        isRefreshing: true,
+        likedVideos: likedVideos,
+        likeCounts: likeCounts,
+        clearError: true,
+        feedOfflineBanner: false,
+      );
+    } catch (_) {}
+    sw.stop();
+    LongVideoPerfMetrics.logLongVideoHydrateMs(sw.elapsedMilliseconds);
+  }
+
+  /// Remove one video locally after delete or optimistic UI.
+  void removeVideoById(String videoId) {
+    if (videoId.isEmpty) return;
+    final next = state.videos.where((v) => v.id != videoId).toList();
+    final liked = Map<String, bool>.from(state.likedVideos)..remove(videoId);
+    final counts = Map<String, int>.from(state.likeCounts)..remove(videoId);
+    state = state.copyWith(
+      videos: next,
+      likedVideos: liked,
+      likeCounts: counts,
+    );
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheUnseenLongVideos(videos: next);
+    });
+  }
+
+  /// Cancel in-flight list fetch (e.g. user left the tab mid-request).
+  void cancelPendingNetworkLoad() {
+    _loadCancel?.cancel();
+    _loadCancel = null;
+  }
+
+  /// Prefetch first HLS segments for the next video after [currentVideoId] (Feature 3.5).
+  void prefetchNextAfter(String currentVideoId) {
+    final list = state.videos;
+    final idx = list.indexWhere((v) => v.id == currentVideoId);
+    if (idx < 0 || idx + 1 >= list.length) return;
+    final next = list[idx + 1];
+    final url = next.videoUrl;
+    if (url == null || url.isEmpty) return;
+    unawaited(LongVideoHlsPrefetch.prefetchHeadSegments(url));
+  }
+
+  /// Load initial videos or refresh from API.
   Future<void> loadVideos({bool refresh = false}) async {
+    if (_loadVideosInFlight && !refresh) return;
+
+    if (!refresh &&
+        state.videos.isNotEmpty &&
+        state.initialFetchCompleted) {
+      LongVideoPerfMetrics.logLoadVideosSkipped();
+      return;
+    }
+
+    _loadVideosInFlight = true;
+    loadVideosInvocationCount++;
+    _loadCancel?.cancel();
+    _loadCancel = CancelToken();
+    final cancel = _loadCancel!;
+
     if (refresh) {
       state = state.copyWith(
-        isLoading: true,
+        isLoading: state.videos.isEmpty,
+        isRefreshing: state.videos.isNotEmpty,
         clearError: true,
-        currentPage: 0,
-        videos: [],
+        feedOfflineBanner: false,
       );
     } else {
-      state = state.copyWith(isLoading: true, clearError: true);
+      final hasCache = state.videos.isNotEmpty;
+      state = state.copyWith(
+        isLoading: !hasCache,
+        isRefreshing: hasCache,
+        clearError: true,
+        feedOfflineBanner: false,
+      );
     }
 
     try {
-      final result = await _service.getLongVideos();
+      final result = await _service.getLongVideos(cancelToken: cancel);
       if (!result.success) {
+        _ref.read(apiOfflineSignalProvider.notifier).state =
+            result.connectionError;
         state = state.copyWith(
           isLoading: false,
-          error: result.errorMessage ?? 'Failed to load long videos',
+          isRefreshing: false,
+          initialFetchCompleted: true,
+          error: state.videos.isEmpty
+              ? (result.connectionError
+                  ? null
+                  : (result.errorMessage ?? 'Failed to load long videos'))
+              : state.error,
+          feedOfflineBanner: result.connectionError && state.videos.isNotEmpty,
         );
         return;
       }
+      _ref.read(apiOfflineSignalProvider.notifier).state = false;
+
       final currentUserId = _ref.read(authProvider).currentUser?.id;
       final allVideos = result.videos
           .map((v) => PostModel.fromLongVideo(v, currentUserId: currentUserId))
           .toList();
       final likedVideos = <String, bool>{};
       final likeCounts = <String, int>{};
-      for (var video in allVideos) {
+      for (final video in allVideos) {
         likedVideos[video.id] = video.isLiked;
         likeCounts[video.id] = video.likes;
       }
@@ -97,10 +225,13 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
       state = state.copyWith(
         videos: allVideos,
         isLoading: false,
+        isRefreshing: false,
+        initialFetchCompleted: true,
         likedVideos: likedVideos,
         likeCounts: likeCounts,
         hasMore: false,
         currentPage: 1,
+        feedOfflineBanner: false,
       );
       UserStorageService.instance.runInBackground(() async {
         await UserStorageService.instance.cacheUnseenLongVideos(videos: allVideos);
@@ -108,24 +239,25 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        error: e.toString(),
+        isRefreshing: false,
+        initialFetchCompleted: true,
+        error: state.videos.isEmpty ? e.toString() : state.error,
       );
+    } finally {
+      _loadVideosInFlight = false;
     }
   }
 
-  /// Load more videos (pagination-ready; API may support later)
   Future<void> loadMoreVideos() async {
     if (state.isLoading || !state.hasMore) return;
     state = state.copyWith(isLoading: true);
     try {
-      // API currently returns all; keep structure for future pagination
       state = state.copyWith(isLoading: false, hasMore: false);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
 
-  /// Toggle like on a video
   void toggleLike(String videoId) {
     final currentLiked = state.likedVideos[videoId] ?? false;
     final currentCount = state.likeCounts[videoId] ?? 0;
@@ -210,7 +342,6 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
     });
   }
 
-  /// Get video by ID
   PostModel? getVideoById(String videoId) {
     try {
       return state.videos.firstWhere((v) => v.id == videoId);
@@ -247,18 +378,18 @@ List<PostModel> _updateVideosList(
               audioId: v.audioId,
               audioName: v.audioName,
               postType: v.postType,
+              blurHash: v.blurHash,
             )
           : v)
       .toList();
 }
 
-/// Long Videos Provider
 final longVideosProvider =
     StateNotifierProvider<LongVideosNotifier, LongVideosState>((ref) {
+  ref.keepAlive();
   return LongVideosNotifier(ref);
 });
 
-/// Convenience Providers
 final longVideosListProvider = Provider<List<PostModel>>((ref) {
   return ref.watch(longVideosProvider).videos;
 });
@@ -267,8 +398,20 @@ final longVideosLoadingProvider = Provider<bool>((ref) {
   return ref.watch(longVideosProvider).isLoading;
 });
 
+final longVideosRefreshingProvider = Provider<bool>((ref) {
+  return ref.watch(longVideosProvider).isRefreshing;
+});
+
+final longVideosInitialFetchCompletedProvider = Provider<bool>((ref) {
+  return ref.watch(longVideosProvider).initialFetchCompleted;
+});
+
 final longVideosErrorProvider = Provider<String?>((ref) {
   return ref.watch(longVideosProvider).error;
+});
+
+final longVideosOfflineBannerProvider = Provider<bool>((ref) {
+  return ref.watch(longVideosProvider).feedOfflineBanner;
 });
 
 final longVideosHasMoreProvider = Provider<bool>((ref) {
@@ -286,8 +429,3 @@ final longVideoLikeCountProvider = Provider.family<int, String>((ref, videoId) {
 final longVideoByIdProvider = Provider.family<PostModel?, String>((ref, videoId) {
   return ref.read(longVideosProvider.notifier).getVideoById(videoId);
 });
-
-
-
-
-

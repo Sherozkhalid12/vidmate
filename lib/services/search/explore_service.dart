@@ -1,10 +1,14 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/dio_client.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/models/post_model.dart';
 import '../../core/models/user_model.dart';
+import '../../core/utils/explore_search_response_parse.dart';
 
 class ExploreSearchResult {
   final String searchText;
@@ -26,11 +30,21 @@ class ExploreSearchResult {
 
 class ExploreService {
   static const String _tokenKey = 'auth_token';
+  static const int _computeParseThreshold = 20;
   final Dio _dio = DioClient.instance;
 
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_tokenKey);
+  }
+
+  static int _rawListItemCount(Map<String, dynamic> map) {
+    var n = 0;
+    for (final k in ['users', 'posts', 'reels', 'longVideos']) {
+      final v = map[k];
+      if (v is List) n += v.length;
+    }
+    return n;
   }
 
   Future<ExploreSearchResult> search({
@@ -40,6 +54,7 @@ class ExploreService {
     int reelLimit = 20,
     int longVideoLimit = 20,
     String? currentUserId,
+    CancelToken? cancelToken,
   }) async {
     final token = await _getToken();
     if (token == null || token.isEmpty) {
@@ -64,17 +79,29 @@ class ExploreService {
         ApiConstants.search,
         data: body,
         options: Options(contentType: Headers.jsonContentType),
+        cancelToken: cancelToken,
       );
-      final map = res.data as Map<String, dynamic>?;
-      if (map == null || map['success'] != true) {
-        final msg = map?['message']?.toString() ??
-            map?['error']?.toString() ??
+      final root = res.data;
+      if (root is! Map) {
+        throw Exception('Invalid search response');
+      }
+      final rawMap = Map<String, dynamic>.from(root);
+      final encoded = jsonEncode(rawMap);
+
+      final Map<String, dynamic> norm = _rawListItemCount(rawMap) >=
+              _computeParseThreshold
+          ? await compute(parseExploreSearchResponseJson, encoded)
+          : parseExploreSearchResponseJson(encoded);
+
+      if (norm['success'] != true) {
+        final msg = norm['message']?.toString() ??
+            norm['error']?.toString() ??
             'Failed to search data';
         throw Exception(msg);
       }
 
-      final countsRaw = map['counts'] is Map
-          ? Map<String, dynamic>.from(map['counts'] as Map)
+      final countsRaw = norm['counts'] is Map
+          ? Map<String, dynamic>.from(norm['counts'] as Map)
           : <String, dynamic>{};
       final counts = {
         'users': _int(countsRaw['users']),
@@ -83,13 +110,14 @@ class ExploreService {
         'longVideos': _int(countsRaw['longVideos']),
       };
 
-      final users = _usersFromList(map['users']);
-      final posts = _postsFromList(map['posts'], currentUserId);
-      final reels = _postsFromList(map['reels'], currentUserId);
-      final longVideos = _postsFromList(map['longVideos'], currentUserId);
+      final users = _usersFromMaps(_asMapList(norm['users']));
+      final posts = _postsFromMaps(_asMapList(norm['posts']), currentUserId);
+      final reels = _postsFromMaps(_asMapList(norm['reels']), currentUserId);
+      final longVideos =
+          _postsFromMaps(_asMapList(norm['longVideos']), currentUserId);
 
       return ExploreSearchResult(
-        searchText: map['searchText']?.toString() ?? query,
+        searchText: norm['searchText']?.toString() ?? query,
         counts: counts,
         users: users,
         posts: posts,
@@ -97,12 +125,28 @@ class ExploreService {
         longVideos: longVideos,
       );
     } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel) {
+        rethrow;
+      }
       final d = e.response?.data;
       final msg = d is Map
           ? (d['message'] ?? d['error'] ?? e.message).toString()
           : (e.message ?? 'Request failed');
       throw Exception(msg);
     }
+  }
+
+  static List<Map<String, dynamic>> _asMapList(dynamic v) {
+    if (v is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final e in v) {
+      if (e is Map<String, dynamic>) {
+        out.add(e);
+      } else if (e is Map) {
+        out.add(Map<String, dynamic>.from(e));
+      }
+    }
+    return out;
   }
 
   static int _int(dynamic v) {
@@ -113,7 +157,7 @@ class ExploreService {
 
   static String _str(dynamic v) => v?.toString() ?? '';
 
-  static List<String> _strList(dynamic v) {
+  static List<String> _strListFromValue(dynamic v) {
     if (v is! List) return const [];
     return v
         .map((e) => e?.toString() ?? '')
@@ -127,17 +171,15 @@ class ExploreService {
     return DateTime.tryParse(v.toString()) ?? DateTime.now();
   }
 
-  static List<UserModel> _usersFromList(dynamic v) {
-    if (v is! List) return const [];
-    return v.whereType<Map>().map((raw) {
-      return UserModel.fromJson(Map<String, dynamic>.from(raw));
-    }).toList();
+  static List<UserModel> _usersFromMaps(List<Map<String, dynamic>> raw) {
+    return raw.map(UserModel.fromJson).toList();
   }
 
-  static List<PostModel> _postsFromList(dynamic v, String? currentUserId) {
-    if (v is! List) return const [];
-    return v.whereType<Map>().map((raw) {
-      final json = Map<String, dynamic>.from(raw);
+  static List<PostModel> _postsFromMaps(
+    List<Map<String, dynamic>> raw,
+    String? currentUserId,
+  ) {
+    return raw.map((json) {
       final userJson = json['user'] is Map
           ? Map<String, dynamic>.from(json['user'] as Map)
           : null;
@@ -145,10 +187,10 @@ class ExploreService {
           ? UserModel.fromJson(userJson)
           : PostModel.authorPlaceholder(_str(json['userId']));
 
-      final images = _strList(json['images']);
+      final images = _strListFromValue(json['images']);
       final video = _str(json['video']);
       final thumbnail = _str(json['thumbnail']);
-      final likes = _strList(json['likes']);
+      final likes = _strListFromValue(json['likes']);
       final commentsVal = json['Comments'] ?? json['comments'];
       final commentsCount = commentsVal is int
           ? commentsVal

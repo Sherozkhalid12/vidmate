@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/music_model.dart';
 import '../../services/music/music_service.dart';
+import '../../services/storage/user_storage_service.dart';
 
 class MusicState {
   final List<MusicModel> tracks;
@@ -11,6 +14,7 @@ class MusicState {
   final int page;
   final bool hasMore;
   final int total;
+  final bool initialFetchCompleted;
 
   const MusicState({
     this.tracks = const [],
@@ -20,6 +24,7 @@ class MusicState {
     this.page = 0,
     this.hasMore = true,
     this.total = 0,
+    this.initialFetchCompleted = false,
   });
 
   MusicState copyWith({
@@ -30,6 +35,7 @@ class MusicState {
     int? page,
     bool? hasMore,
     int? total,
+    bool? initialFetchCompleted,
     bool clearError = false,
   }) {
     return MusicState(
@@ -40,19 +46,37 @@ class MusicState {
       page: page ?? this.page,
       hasMore: hasMore ?? this.hasMore,
       total: total ?? this.total,
+      initialFetchCompleted: initialFetchCompleted ?? this.initialFetchCompleted,
     );
   }
 }
 
 /// Music provider using Riverpod StateNotifier for API-backed tracks.
 class MusicNotifier extends StateNotifier<MusicState> {
-  MusicNotifier(this._service) : super(const MusicState());
+  MusicNotifier(this._service) : super(const MusicState()) {
+    unawaited(_bootstrap());
+  }
 
   final MusicService _service;
 
-  /// Load first page of tracks if not already loaded.
+  Future<void> _bootstrap() async {
+    final cached = await UserStorageService.instance.getCachedMusicLibraryPage1();
+    if (cached != null && cached.tracks.isNotEmpty) {
+      state = MusicState(
+        tracks: cached.tracks,
+        page: cached.page,
+        hasMore: cached.hasMore,
+        total: cached.total,
+        initialFetchCompleted: false,
+      );
+    }
+    await loadInitial();
+  }
+
+  /// Load first page (skips if a completed fetch already populated the list).
   Future<void> loadInitial() async {
-    if (state.tracks.isNotEmpty || state.isLoading) return;
+    if (state.initialFetchCompleted && state.tracks.isNotEmpty) return;
+    if (state.isLoading) return;
     await _loadPage(reset: true);
   }
 
@@ -68,10 +92,11 @@ class MusicNotifier extends StateNotifier<MusicState> {
 
   Future<void> _loadPage({required bool reset}) async {
     final nextPage = reset ? 1 : (state.page + 1);
+    final hadLocal = state.tracks.isNotEmpty;
 
     if (reset) {
       state = state.copyWith(
-        isLoading: true,
+        isLoading: !hadLocal,
         isLoadingMore: false,
         clearError: true,
         page: 0,
@@ -90,6 +115,7 @@ class MusicNotifier extends StateNotifier<MusicState> {
         isLoading: false,
         isLoadingMore: false,
         error: result.errorMessage ?? 'Failed to load music',
+        initialFetchCompleted: true,
       );
       return;
     }
@@ -106,7 +132,19 @@ class MusicNotifier extends StateNotifier<MusicState> {
       page: nextPage,
       hasMore: hasMore,
       total: total,
+      initialFetchCompleted: true,
     );
+
+    if (reset && combined.isNotEmpty) {
+      UserStorageService.instance.runInBackground(() async {
+        await UserStorageService.instance.cacheMusicLibraryPage1(
+          tracks: combined,
+          total: total,
+          page: nextPage,
+          hasMore: hasMore,
+        );
+      });
+    }
   }
 
   /// Simple local like toggle for UI only (no API yet).

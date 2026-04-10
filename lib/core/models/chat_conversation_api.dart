@@ -100,7 +100,14 @@ class ChatConversationUser {
     return ChatConversationUser(
       id: _str(json['id'] ?? json['_id']),
       username: _str(json['username'] ?? json['name']),
-      profilePicture: _str(json['profilePicture'] ?? json['image'] ?? json['avatarUrl'] ?? ''),
+      profilePicture: _str(
+        json['profilePicture'] ??
+            json['profile_picture'] ??
+            json['image'] ??
+            json['avatarUrl'] ??
+            json['avatar'] ??
+            '',
+      ),
     );
   }
 

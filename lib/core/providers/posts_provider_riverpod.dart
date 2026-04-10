@@ -1,31 +1,53 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart' show CancelToken;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/post_model.dart';
-import '../models/post_response_model.dart';
 import '../models/user_model.dart';
 import 'auth_provider_riverpod.dart';
 import '../../services/posts/posts_service.dart';
+import '../../services/storage/hive_content_store.dart';
 import '../../services/storage/user_storage_service.dart';
+import '../utils/hive_posts_payload_parse.dart';
+import '../perf/feed_perf_metrics.dart';
+import 'network_status_provider.dart';
+
+/// Home feed page size (API `limit` / pagination).
+const int kFeedPageSize = 10;
 
 /// Posts state
 class PostsState {
   final List<PostModel> posts;
   final bool isLoading;
+  final bool isRefreshing;
+  /// True after at least one network attempt finishes.
+  final bool initialFetchCompleted;
   final String? error;
   final Map<String, bool> likedPosts;
   final Map<String, int> likeCounts;
   final Map<String, int> commentCounts;
+  /// Show thin banner when offline but cached feed is shown.
+  final bool feedOfflineBanner;
+  /// More home-feed pages available (last fetch returned a full page).
+  final bool hasMoreFeed;
+  /// Appending next feed page.
+  final bool isLoadingMoreFeed;
 
   PostsState({
     this.posts = const [],
     this.isLoading = false,
+    this.isRefreshing = false,
+    this.initialFetchCompleted = false,
     this.error,
     Map<String, bool>? likedPosts,
     Map<String, int>? likeCounts,
     Map<String, int>? commentCounts,
+    this.feedOfflineBanner = false,
+    this.hasMoreFeed = true,
+    this.isLoadingMoreFeed = false,
   })  : likedPosts = likedPosts ?? {},
         likeCounts = likeCounts ?? {},
         commentCounts = commentCounts ?? {};
@@ -33,19 +55,29 @@ class PostsState {
   PostsState copyWith({
     List<PostModel>? posts,
     bool? isLoading,
+    bool? isRefreshing,
+    bool? initialFetchCompleted,
     String? error,
     Map<String, bool>? likedPosts,
     Map<String, int>? likeCounts,
     Map<String, int>? commentCounts,
     bool clearError = false,
+    bool? feedOfflineBanner,
+    bool? hasMoreFeed,
+    bool? isLoadingMoreFeed,
   }) {
     return PostsState(
       posts: posts ?? this.posts,
       isLoading: isLoading ?? this.isLoading,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
+      initialFetchCompleted: initialFetchCompleted ?? this.initialFetchCompleted,
       error: clearError ? null : (error ?? this.error),
       likedPosts: likedPosts ?? this.likedPosts,
       likeCounts: likeCounts ?? this.likeCounts,
       commentCounts: commentCounts ?? this.commentCounts,
+      feedOfflineBanner: feedOfflineBanner ?? this.feedOfflineBanner,
+      hasMoreFeed: hasMoreFeed ?? this.hasMoreFeed,
+      isLoadingMoreFeed: isLoadingMoreFeed ?? this.isLoadingMoreFeed,
     );
   }
 }
@@ -54,25 +86,111 @@ class PostsState {
 /// Like/comment counts come from backend; optimistic updates on user actions.
 class PostsNotifier extends StateNotifier<PostsState> {
   PostsNotifier(this._ref) : super(PostsState()) {
-    loadPosts();
+    unawaited(_hydrateFromHiveAsync());
   }
 
   final Ref _ref;
   final PostsService _postsService = PostsService();
+  CancelToken? _loadCancel;
+  bool _loadInFlight = false;
+  bool _loadMoreInFlight = false;
+
+  /// Debug: extra invocations should be rare (splash + empty-feed guard only).
+  int loadPostsInvocationCount = 0;
+
+  Future<void> _hydrateFromHiveAsync() async {
+    final sw = Stopwatch()..start();
+    try {
+      if (!HiveContentStore.instance.isReady) return;
+      final raw = HiveContentStore.instance.postsPayloadRaw;
+      if (raw == null || raw.isEmpty) return;
+      final maps = await compute(parseHivePostsPayloadJson, raw);
+      if (maps.isEmpty) return;
+      final hydrated = <PostModel>[];
+      final likedPosts = <String, bool>{};
+      final likeCounts = <String, int>{};
+      final commentCounts = <String, int>{};
+      for (final m in maps) {
+        try {
+          final p = PostModel.fromCachedMap(m);
+          if (p.id.isEmpty) continue;
+          hydrated.add(p);
+          likedPosts[p.id] = p.isLiked;
+          likeCounts[p.id] = p.likes;
+          commentCounts[p.id] = p.comments;
+        } catch (_) {}
+      }
+      if (hydrated.isEmpty) return;
+      // Network may have finished first; do not replace a live feed with stale Hive.
+      if (state.posts.isNotEmpty) return;
+      state = state.copyWith(
+        posts: hydrated,
+        isLoading: false,
+        isRefreshing: true,
+        likedPosts: likedPosts,
+        likeCounts: likeCounts,
+        commentCounts: commentCounts,
+        clearError: true,
+      );
+    } catch (_) {}
+    sw.stop();
+    FeedPerfMetrics.logFeedHydrateMs(sw.elapsedMilliseconds);
+  }
 
   /// Load posts from API (all users, home feed). Uses backend like/comment counts.
-  Future<void> loadPosts() async {
-    state = state.copyWith(isLoading: true, clearError: true);
+  Future<void> loadPosts({bool forceRefresh = false}) async {
+    if (_loadInFlight) {
+      FeedPerfMetrics.logLoadPostsSkipped();
+      return;
+    }
+    loadPostsInvocationCount++;
+    if (kDebugMode) {
+      debugPrint('[PostsNotifier] loadPosts #$loadPostsInvocationCount posts=${state.posts.length} force=$forceRefresh');
+    }
+    _loadInFlight = true;
+    _loadCancel?.cancel();
+    _loadCancel = CancelToken();
+    final cancel = _loadCancel!;
+
+    final hasCache = state.posts.isNotEmpty;
+    if (hasCache && !forceRefresh) {
+      state = state.copyWith(
+        isLoading: false,
+        isRefreshing: true,
+        clearError: true,
+        feedOfflineBanner: false,
+      );
+    } else {
+      state = state.copyWith(
+        isLoading: !hasCache,
+        isRefreshing: hasCache,
+        clearError: true,
+        feedOfflineBanner: false,
+      );
+    }
 
     try {
-      final result = await _postsService.getPosts();
+      final result = await _postsService.getPosts(
+        cancelToken: cancel,
+        skip: 0,
+        limit: kFeedPageSize,
+      );
       if (!result.success) {
+        _ref.read(apiOfflineSignalProvider.notifier).state = result.connectionError;
         state = state.copyWith(
           isLoading: false,
-          error: result.errorMessage ?? 'Failed to load posts',
+          isRefreshing: false,
+          initialFetchCompleted: true,
+          error: state.posts.isEmpty
+              ? (result.connectionError
+                  ? null
+                  : (result.errorMessage ?? 'Failed to load posts'))
+              : state.error,
+          feedOfflineBanner: result.connectionError && state.posts.isNotEmpty,
         );
         return;
       }
+      _ref.read(apiOfflineSignalProvider.notifier).state = false;
       final currentUserId = _ref.read(authProvider).currentUser?.id;
       final postModels = result.posts
           .map((p) => PostModel.fromApiPost(
@@ -89,12 +207,18 @@ class PostsNotifier extends StateNotifier<PostsState> {
         likeCounts[post.id] = post.likes;
         commentCounts[post.id] = post.comments;
       }
+      final hasMore = postModels.length >= kFeedPageSize;
       state = state.copyWith(
         posts: postModels,
         isLoading: false,
+        isRefreshing: false,
+        initialFetchCompleted: true,
         likedPosts: likedPosts,
         likeCounts: likeCounts,
         commentCounts: commentCounts,
+        feedOfflineBanner: false,
+        hasMoreFeed: hasMore,
+        isLoadingMoreFeed: false,
       );
       UserStorageService.instance.runInBackground(() async {
         await UserStorageService.instance.cacheUnseenFeed(posts: postModels);
@@ -102,9 +226,81 @@ class PostsNotifier extends StateNotifier<PostsState> {
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        error: e.toString(),
+        isRefreshing: false,
+        initialFetchCompleted: true,
+        error: state.posts.isEmpty ? e.toString() : state.error,
       );
+    } finally {
+      _loadInFlight = false;
     }
+  }
+
+  /// Append next feed page (home). Dedupes by post id.
+  Future<void> loadMoreFeedPosts() async {
+    if (!state.hasMoreFeed ||
+        _loadMoreInFlight ||
+        _loadInFlight ||
+        state.isLoadingMoreFeed) {
+      return;
+    }
+    _loadMoreInFlight = true;
+    state = state.copyWith(isLoadingMoreFeed: true);
+    try {
+      final result = await _postsService.getPosts(
+        skip: state.posts.length,
+        limit: kFeedPageSize,
+      );
+      if (!result.success) {
+        state = state.copyWith(isLoadingMoreFeed: false);
+        return;
+      }
+      final currentUserId = _ref.read(authProvider).currentUser?.id;
+      final existingIds = state.posts.map((p) => p.id).toSet();
+      final batch = result.posts
+          .map((p) => PostModel.fromApiPost(
+                p.post,
+                p.author ?? PostModel.authorPlaceholder(p.post.userId),
+                currentUserId: currentUserId,
+              ))
+          .where((p) => p.id.isNotEmpty && !existingIds.contains(p.id))
+          .toList();
+      if (batch.isEmpty) {
+        state = state.copyWith(
+          hasMoreFeed: false,
+          isLoadingMoreFeed: false,
+        );
+        return;
+      }
+      final newLiked = Map<String, bool>.from(state.likedPosts);
+      final newLikeCounts = Map<String, int>.from(state.likeCounts);
+      final newCommentCounts = Map<String, int>.from(state.commentCounts);
+      for (final post in batch) {
+        newLiked[post.id] = post.isLiked;
+        newLikeCounts[post.id] = post.likes;
+        newCommentCounts[post.id] = post.comments;
+      }
+      final combined = [...state.posts, ...batch];
+      final hasMore = batch.length >= kFeedPageSize;
+      state = state.copyWith(
+        posts: combined,
+        likedPosts: newLiked,
+        likeCounts: newLikeCounts,
+        commentCounts: newCommentCounts,
+        hasMoreFeed: hasMore,
+        isLoadingMoreFeed: false,
+      );
+      UserStorageService.instance.runInBackground(() async {
+        await UserStorageService.instance.cacheUnseenFeed(posts: combined);
+      });
+    } catch (_) {
+      state = state.copyWith(isLoadingMoreFeed: false);
+    } finally {
+      _loadMoreInFlight = false;
+    }
+  }
+
+  void dismissOfflineBanner() {
+    state = state.copyWith(feedOfflineBanner: false);
   }
 
   /// Toggle like on a post (local state only). Used for revert on API failure.
@@ -307,25 +503,26 @@ List<PostModel> _updatePostsList(
 
 /// Posts provider
 final postsProvider = StateNotifierProvider<PostsNotifier, PostsState>((ref) {
+  ref.keepAlive();
   return PostsNotifier(ref);
 });
 
 /// Convenience providers
 final postsListProvider = Provider<List<PostModel>>((ref) {
-  return ref.watch(postsProvider).posts;
+  return ref.watch(postsProvider.select((s) => s.posts));
 });
 
 final postLikedProvider = Provider.family<bool, String>((ref, postId) {
-  return ref.watch(postsProvider).likedPosts[postId] ?? false;
+  return ref.watch(postsProvider.select((s) => s.likedPosts[postId] ?? false));
 });
 
 final postLikeCountProvider = Provider.family<int, String>((ref, postId) {
-  return ref.watch(postsProvider).likeCounts[postId] ?? 0;
+  return ref.watch(postsProvider.select((s) => s.likeCounts[postId] ?? 0));
 });
 
 /// Effective comment count (from backend + optimistic increments).
 final postCommentCountProvider = Provider.family<int, String>((ref, postId) {
-  return ref.watch(postsProvider).commentCounts[postId] ?? 0;
+  return ref.watch(postsProvider.select((s) => s.commentCounts[postId] ?? 0));
 });
 
 // --- User posts (profile) ---
@@ -335,23 +532,27 @@ class UserPostsState {
   final List<PostModel> posts;
   final bool isLoading;
   final String? error;
+  final bool initialFetchCompleted;
 
   UserPostsState({
     this.posts = const [],
     this.isLoading = false,
     this.error,
+    this.initialFetchCompleted = false,
   });
 
   UserPostsState copyWith({
     List<PostModel>? posts,
     bool? isLoading,
     String? error,
+    bool? initialFetchCompleted,
     bool clearError = false,
   }) {
     return UserPostsState(
       posts: posts ?? this.posts,
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
+      initialFetchCompleted: initialFetchCompleted ?? this.initialFetchCompleted,
     );
   }
 }
@@ -359,13 +560,25 @@ class UserPostsState {
 /// Notifier for one user's posts. Used by profile. Uses backend like/comment counts.
 class UserPostsNotifier extends StateNotifier<UserPostsState> {
   UserPostsNotifier(this._userId, this._postsService, this._ref) : super(UserPostsState()) {
-    load();
+    unawaited(_bootstrap());
   }
 
   final String _userId;
   final PostsService _postsService;
   final Ref _ref;
   bool _hasLoaded = false;
+
+  Future<void> _bootstrap() async {
+    if (_userId.isEmpty) return;
+    final cached = await UserStorageService.instance.getCachedProfileUserPosts(_userId);
+    if (cached.isNotEmpty) {
+      state = UserPostsState(
+        posts: cached,
+        initialFetchCompleted: false,
+      );
+    }
+    await load();
+  }
 
   Future<void> load({bool force = false}) async {
     if (_userId.isEmpty) {
@@ -374,13 +587,15 @@ class UserPostsNotifier extends StateNotifier<UserPostsState> {
     }
     if (state.isLoading) return;
     if (!force && _hasLoaded && state.posts.isNotEmpty) return;
-    state = state.copyWith(isLoading: true, clearError: true);
+    final hasLocal = state.posts.isNotEmpty;
+    state = state.copyWith(isLoading: !hasLocal, clearError: true);
     try {
       final result = await _postsService.getUserPost(_userId);
       if (!result.success) {
         state = state.copyWith(
           isLoading: false,
           error: result.errorMessage ?? 'Failed to load posts',
+          initialFetchCompleted: true,
         );
         return;
       }
@@ -393,9 +608,20 @@ class UserPostsNotifier extends StateNotifier<UserPostsState> {
               ))
           .toList();
       _hasLoaded = true;
-      state = state.copyWith(posts: postModels, isLoading: false);
+      state = state.copyWith(
+        posts: postModels,
+        isLoading: false,
+        initialFetchCompleted: true,
+      );
+      UserStorageService.instance.runInBackground(() async {
+        await UserStorageService.instance.cacheProfileUserPosts(_userId, postModels);
+      });
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(
+        isLoading: false,
+        error: e.toString(),
+        initialFetchCompleted: true,
+      );
     }
   }
 }

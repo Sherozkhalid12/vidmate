@@ -13,7 +13,10 @@ import 'core/providers/calls_provider_riverpod.dart';
 import 'features/splash/splash_screen.dart';
 import 'features/calls/call_screen.dart';
 import 'services/notifications/push_notifications_service.dart';
+import 'services/background/content_prefetch_workmanager.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+import 'services/storage/hive_content_store.dart';
 
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
@@ -24,26 +27,26 @@ final RouteObserver<PageRoute<dynamic>> routeObserver =
     RouteObserver<PageRoute<dynamic>>();
 bool _callScreenOpen = false;
 
+/// [WidgetsFlutterBinding.ensureInitialized] and [runApp] must run in the **same**
+/// [Zone]. Do not use `async main()` + [runZonedGuarded] around only [runApp] — that
+/// triggers "Zone mismatch" in debug. Keep binding init + [runApp] inside one zone.
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Configure logging to suppress verbose logs in release mode.
-  _configureLogging();
-
-  // Needed before we initialize push notifications so snackbars can show.
-  PushNotificationsService.setScaffoldMessengerKey(scaffoldMessengerKey);
-
-  // Never block the first frame on slow/fragile native init (FCM, permissions).
   runZonedGuarded(() {
-    unawaited(_bootstrapSafely());
+    WidgetsFlutterBinding.ensureInitialized();
 
-    runApp(
-      const ProviderScope(
-        child: MyApp(),
-      ),
-    );
+    // Prevent unbounded [ImageCache] growth while scrolling long feeds (OOM on 256MB heaps).
+    PaintingBinding.instance.imageCache
+      ..maximumSize = 120
+      ..maximumSizeBytes = 48 << 20;
+
+    _configureLogging();
+
+    PushNotificationsService.setScaffoldMessengerKey(scaffoldMessengerKey);
+
+    // Async: Firebase default app + background handler + Hive must complete before [runApp]
+    // so [FirebaseMessaging.instance] and Hive cache are valid when listeners fire.
+    unawaited(_bootAndRun());
   }, (error, stackTrace) {
-    // Keep the app alive even if a background init step throws.
     if (kDebugMode) {
       debugPrint('[Startup] Uncaught error: $error');
       debugPrint(stackTrace.toString());
@@ -51,8 +54,54 @@ void main() {
   });
 }
 
-/// Run startup tasks without blocking app launch. Any failures are logged
-/// (in debug) but won't crash the release build.
+/// Firebase core + Hive in parallel, then [runApp], then permissions + FCM foreground pipeline.
+Future<void> _bootAndRun() async {
+  await Future.wait([
+    _ensureFirebaseCoreSafe(),
+    _initHiveSafely(),
+    _initWorkmanagerSafely(),
+  ]);
+
+  runApp(
+    const ProviderScope(
+      child: MyApp(),
+    ),
+  );
+
+  unawaited(_bootstrapSafely());
+}
+
+Future<void> _initWorkmanagerSafely() async {
+  try {
+    await ContentPrefetchWorkmanager.initialize();
+    await ContentPrefetchWorkmanager.schedule();
+    // Do not call triggerNow() on every cold start — it spawns duplicate one-off tasks
+    // and (with debug worker notifications) floods the notification shade.
+  } catch (e, st) {
+    _logStartupError('workmanager_init', e, st);
+  }
+}
+
+Future<void> _ensureFirebaseCoreSafe() async {
+  try {
+    await PushNotificationsService.ensureCoreBeforeRunApp();
+  } catch (e, st) {
+    _logStartupError('firebase_core', e, st);
+  }
+}
+
+Future<void> _initHiveSafely() async {
+  try {
+    await HiveContentStore.instance.init();
+  } catch (e, st) {
+    if (kDebugMode) {
+      debugPrint('[Startup] Hive init failed: $e');
+      debugPrint('$st');
+    }
+  }
+}
+
+/// After first frame: OS permissions + FCM foreground listeners (token sync, onMessage).
 Future<void> _bootstrapSafely() async {
   try {
     await _requestStartupPermissions();
@@ -61,7 +110,7 @@ Future<void> _bootstrapSafely() async {
   }
 
   try {
-    await PushNotificationsService.instance.initialize();
+    await PushNotificationsService.instance.attachForegroundPipeline();
   } catch (e, st) {
     _logStartupError('push_notifications', e, st);
   }

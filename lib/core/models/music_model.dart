@@ -28,6 +28,41 @@ class MusicModel {
     this.genre,
   });
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'artist': artist,
+        'album': album,
+        'coverUrl': coverUrl,
+        'audioUrl': audioUrl,
+        'durationMs': duration.inMilliseconds,
+        'plays': plays,
+        'likes': likes,
+        'isLiked': isLiked,
+        'releaseDate': releaseDate.toIso8601String(),
+        if (genre != null) 'genre': genre,
+      };
+
+  factory MusicModel.fromJson(Map<String, dynamic> json) {
+    final ms = json['durationMs'];
+    final durMs = ms is int ? ms : int.tryParse('$ms') ?? 0;
+    final rd = json['releaseDate']?.toString();
+    return MusicModel(
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      artist: json['artist']?.toString() ?? '',
+      album: json['album']?.toString() ?? '',
+      coverUrl: json['coverUrl']?.toString() ?? '',
+      audioUrl: json['audioUrl']?.toString() ?? '',
+      duration: Duration(milliseconds: durMs),
+      plays: (json['plays'] is int) ? json['plays'] as int : int.tryParse('${json['plays']}') ?? 0,
+      likes: (json['likes'] is int) ? json['likes'] as int : int.tryParse('${json['likes']}') ?? 0,
+      isLiked: json['isLiked'] == true,
+      releaseDate: DateTime.tryParse(rd ?? '') ?? DateTime.now(),
+      genre: json['genre']?.toString(),
+    );
+  }
+
   MusicModel copyWith({
     String? id,
     String? title,

@@ -26,6 +26,8 @@ class PostModel {
   final String? audioName;
   /// Content type from API: 'post' | 'reel' | 'longVideo' | 'story'
   final String postType;
+  /// Optional BlurHash string for reels/posts (instant placeholder).
+  final String? blurHash;
 
   /// Get all image URLs. Always returns a non-null list.
   List<String> get imageUrls => _imageUrls;
@@ -68,6 +70,7 @@ class PostModel {
     this.audioId,
     this.audioName,
     this.postType = 'post',
+    this.blurHash,
   }) : _imageUrls = imageUrls != null && imageUrls.isNotEmpty
             ? imageUrls
             : (imageUrl != null ? [imageUrl] : <String>[]);
@@ -92,13 +95,22 @@ class PostModel {
     final type = api.type.isEmpty ? 'post' : api.type;
     final likeCount = api.likes.length;
     final isLiked = currentUserId != null && currentUserId.isNotEmpty && api.likes.contains(currentUserId);
+    String? thumb = (api.thumbnailUrl != null && api.thumbnailUrl!.trim().isNotEmpty)
+        ? api.thumbnailUrl!.trim()
+        : null;
+    if (thumb == null || thumb.isEmpty) {
+      thumb = api.images.isNotEmpty ? api.images.first : null;
+    }
+    if ((thumb == null || thumb.isEmpty) && hasVideo) {
+      thumb = VideoThumbnailHelper.thumbnailFromVideoUrl(api.video);
+    }
     return PostModel(
       id: api.id,
       author: author,
       imageUrl: api.images.isNotEmpty ? api.images.first : null,
       imageUrls: api.images,
       videoUrl: hasVideo ? api.video : null,
-      thumbnailUrl: api.images.isNotEmpty ? api.images.first : null,
+      thumbnailUrl: thumb,
       caption: api.caption,
       createdAt: api.createdAt,
       likes: likeCount,
@@ -107,6 +119,7 @@ class PostModel {
       isLiked: isLiked,
       isVideo: hasVideo,
       postType: type,
+      blurHash: api.blurHash,
     );
   }
 
@@ -143,6 +156,52 @@ class PostModel {
       isLiked: isLiked,
       isVideo: true,
       postType: 'reel',
+      blurHash: r.reel.blurHash,
+    );
+  }
+
+  /// Hydrate from [UserStorageService] cached map (`_postToMap` shape).
+  factory PostModel.fromCachedMap(Map<String, dynamic> map) {
+    final authorRaw = map['author'];
+    final UserModel author = authorRaw is Map
+        ? UserModel.fromJson(Map<String, dynamic>.from(authorRaw))
+        : authorPlaceholder(map['userId']?.toString() ?? '');
+    DateTime created;
+    try {
+      created = DateTime.parse(map['createdAt']?.toString() ?? '');
+    } catch (_) {
+      created = DateTime.now();
+    }
+    final blur = map['blurHash']?.toString();
+    Duration? videoDuration;
+    final msRaw = map['videoDurationMs'];
+    if (msRaw is int) {
+      videoDuration = Duration(milliseconds: msRaw);
+    } else if (msRaw != null) {
+      final p = int.tryParse('$msRaw');
+      if (p != null && p > 0) videoDuration = Duration(milliseconds: p);
+    }
+    return PostModel(
+      id: map['id']?.toString() ?? '',
+      author: author,
+      imageUrl: map['imageUrl']?.toString(),
+      imageUrls: (map['imageUrls'] is List)
+          ? (map['imageUrls'] as List).map((e) => e.toString()).toList()
+          : null,
+      videoUrl: map['videoUrl']?.toString(),
+      thumbnailUrl: map['thumbnailUrl']?.toString(),
+      caption: map['caption']?.toString() ?? '',
+      createdAt: created,
+      likes: (map['likes'] is int) ? map['likes'] as int : int.tryParse('${map['likes']}') ?? 0,
+      comments: (map['comments'] is int) ? map['comments'] as int : int.tryParse('${map['comments']}') ?? 0,
+      shares: (map['shares'] is int) ? map['shares'] as int : int.tryParse('${map['shares']}') ?? 0,
+      isLiked: map['isLiked'] == true,
+      videoDuration: videoDuration,
+      isVideo: map['isVideo'] == true,
+      audioId: map['audioId']?.toString(),
+      audioName: map['audioName']?.toString(),
+      postType: map['postType']?.toString() ?? 'post',
+      blurHash: (blur != null && blur.isNotEmpty) ? blur : null,
     );
   }
 

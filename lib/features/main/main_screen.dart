@@ -1,15 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/bottom_nav_bar.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/providers/notifications_provider_riverpod.dart';
 import '../../core/providers/stories_provider_riverpod.dart';
+import '../../core/providers/main_tab_index_provider.dart';
+import '../long_videos/providers/long_videos_provider.dart';
 import '../home/home_feed_page.dart';
 import '../reels/reels_page.dart';
 import '../stories/story_page.dart';
 import '../long_videos/long_videos_page.dart';
 import '../music/music_page.dart';
 /// Root screen with persistent glassmorphic bottom navigation
-/// Uses Stack architecture: PageView for content, BottomNavBar as overlay
+/// Uses Stack architecture: IndexedStack keeps tab state, BottomNavBar as overlay
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key});
 
@@ -22,7 +30,6 @@ class MainScreen extends ConsumerStatefulWidget {
 }
 
 class _MainScreenState extends ConsumerState<MainScreen> {
-  late PageController _pageController;
   int _currentIndex = 0;
   
   @override
@@ -30,7 +37,25 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     super.initState();
     // Set the static instance reference
     MainScreen._instance = this;
-    _pageController = PageController(initialPage: 0);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!ref.read(isAuthenticatedProvider)) return;
+      unawaited(ref.read(postsProvider.notifier).loadPosts(forceRefresh: false));
+      Future.microtask(() {
+        if (!mounted) return;
+        if (!ref.read(isAuthenticatedProvider)) return;
+        unawaited(ref.read(reelsProvider.notifier).loadReels());
+        unawaited(ref.read(storiesProvider.notifier).loadStories());
+      });
+    });
+
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      if (!ref.read(isAuthenticatedProvider)) return;
+      unawaited(ref.read(notificationsProvider.notifier).loadNotifications());
+      unawaited(ref.read(longVideosProvider.notifier).loadVideos());
+    });
   }
   
   @override
@@ -39,47 +64,34 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (MainScreen._instance == this) {
       MainScreen._instance = null;
     }
-    _pageController.dispose();
     super.dispose();
   }
 
 
   void _onNavItemTapped(int index) {
     if (_currentIndex != index) {
-      // Update index immediately to prevent blinking
       setState(() {
         _currentIndex = index;
       });
-      // Use jumpToPage for instant switching without animating through intermediate pages
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(index);
-      }
+      _onTabSelected(index);
     }
   }
 
-  void _onPageChanged(int index) {
-    if (_currentIndex != index) {
-      setState(() {
-        _currentIndex = index;
-      });
-    }
-    // Always fetch fresh stories when user opens the Stories tab (index 2)
+  void _onTabSelected(int index) {
+    ref.read(mainTabIndexProvider.notifier).state = index;
+    // Stories tab: SWR background refresh (Hive tray stays visible).
     if (index == 2) {
-      ref.read(storiesProvider.notifier).refresh();
+      unawaited(ref.read(storiesProvider.notifier).loadStories());
     }
   }
 
   // Method to navigate to a specific index (can be called from anywhere)
   void navigateToIndex(int index) {
     if (_currentIndex != index) {
-      // Update index immediately
       setState(() {
         _currentIndex = index;
       });
-      // Use jumpToPage for instant switching
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(index);
-      }
+      _onTabSelected(index);
     }
   }
 
@@ -106,14 +118,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             // Main content layer - scrollable pages
             Padding(
               padding: const EdgeInsets.only(bottom: 72.0),
-              child: PageView.builder(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(), // Disable swipe, only tap nav
-                onPageChanged: _onPageChanged,
-                itemCount: 5,
-                itemBuilder: (context, index) {
-                  return _buildPage(index, totalBottomPadding);
-                },
+              child: IndexedStack(
+                index: _currentIndex,
+                sizing: StackFit.expand,
+                children: List.generate(
+                  5,
+                  (i) => _buildPage(i, totalBottomPadding),
+                ),
               ),
             ),
 

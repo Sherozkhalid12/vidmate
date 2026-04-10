@@ -118,7 +118,13 @@ class ChatMessageBubble {
       createdAt: _date(json['createdAt'] ?? json['created_at'] ?? json['timestamp']),
       updatedAt: _date(json['updatedAt'] ?? json['updated_at'] ?? json['createdAt'] ?? json['created_at']),
       version: _int(json['__v']),
-      senderProfilePicture: _str(json['senderProfilePicture']),
+      senderProfilePicture: _str(
+        json['senderProfilePicture'] ??
+            json['sender_profile_picture'] ??
+            json['senderPhoto'] ??
+            json['senderAvatar'] ??
+            json['senderImage'],
+      ),
       sender: senderJson is Map<String, dynamic>
           ? ChatSenderPreview.fromJson(senderJson)
           : (senderJson is Map
@@ -190,8 +196,16 @@ class ChatSenderPreview {
   factory ChatSenderPreview.fromJson(Map<String, dynamic> json) {
     return ChatSenderPreview(
       id: _str(json['id'] ?? json['_id']),
-      username: _str(json['username']),
-      profilePicture: _str(json['profilePicture'] ?? json['avatarUrl'] ?? json['image']),
+      username: _str(json['username'] ?? json['name'] ?? json['displayName']),
+      profilePicture: _str(
+        json['profilePicture'] ??
+            json['profile_picture'] ??
+            json['avatarUrl'] ??
+            json['avatar'] ??
+            json['image'] ??
+            json['photo'] ??
+            json['picture'],
+      ),
     );
   }
 

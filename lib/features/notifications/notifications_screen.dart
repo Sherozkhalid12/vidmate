@@ -5,6 +5,7 @@ import '../../core/utils/theme_helper.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/models/user_model.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/notifications_provider_riverpod.dart';
 import '../../services/notifications/notifications_service.dart';
 import '../../core/widgets/glass_card.dart';
@@ -59,10 +60,20 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     }
   }
 
+  /// Hide notifications where the actor is the signed-in user (e.g. own likes).
+  static bool _shouldShowNotification(NotificationItem n, String currentUserId) {
+    final from = n.fromUserId.trim();
+    if (currentUserId.isEmpty || from.isEmpty) return true;
+    return from != currentUserId;
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(notificationsProvider);
-    final notifications = state.notifications;
+    final currentUserId = ref.watch(authProvider).currentUser?.id ?? '';
+    final notifications = state.notifications
+        .where((n) => _shouldShowNotification(n, currentUserId))
+        .toList();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Material(
       color: ThemeHelper.getBackgroundColor(context),

@@ -4,6 +4,8 @@ class ReelModelApi {
   final String userId;
   final String videoUrl; // HLS or direct URL
   final String? thumbnailUrl;
+  /// Optional BlurHash / ThumbHash from API for instant placeholder.
+  final String? blurHash;
   final String caption;
   final List<String> locations;
   final List<String> taggedUsers;
@@ -19,6 +21,7 @@ class ReelModelApi {
     required this.userId,
     required this.videoUrl,
     this.thumbnailUrl,
+    this.blurHash,
     this.caption = '',
     this.locations = const [],
     this.taggedUsers = const [],
@@ -65,7 +68,7 @@ class ReelModelApi {
     final commentsVal = json['Comments'] ?? json['comments'];
     final commentsCount = commentsVal is int
         ? commentsVal
-        : (commentsVal is List ? (commentsVal as List).length : _int(commentsVal));
+        : (commentsVal is List ? commentsVal.length : _int(commentsVal));
     return ReelModelApi(
       id: _string(json['_id'] ?? json['id']),
       userId: _string(json['userId'] ?? json['user']),
@@ -73,6 +76,10 @@ class ReelModelApi {
       thumbnailUrl: _string(json['thumbnailUrl'] ?? json['thumbnail'] ?? '').isEmpty
           ? null
           : _string(json['thumbnailUrl'] ?? json['thumbnail']),
+      blurHash: () {
+        final b = _string(json['blurHash'] ?? json['blurhash'] ?? json['thumbHash'] ?? '');
+        return b.isEmpty ? null : b;
+      }(),
       caption: _string(json['caption']),
       locations: _stringList(json['locations']),
       taggedUsers: _stringList(json['taggedUsers']),
@@ -88,6 +95,7 @@ class ReelModelApi {
         'userId': userId,
         'video': videoUrl,
         if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+        if (blurHash != null) 'blurHash': blurHash,
         'caption': caption,
         'locations': locations,
         'taggedUsers': taggedUsers,
@@ -104,11 +112,10 @@ class ReelWithUserModel {
   ReelWithUserModel({required this.reel, this.user});
 
   factory ReelWithUserModel.fromJson(Map<String, dynamic> json) {
-    final reel = ReelModelApi.fromJson(
-      json is Map<String, dynamic> ? json : Map<String, dynamic>.from(json),
-    );
+    final reelJson = Map<String, dynamic>.from(json);
+    final userJson = reelJson.remove('user');
+    final reel = ReelModelApi.fromJson(reelJson);
     ReelUserModel? user;
-    final userJson = json['user'];
     if (userJson != null && userJson is Map<String, dynamic>) {
       try {
         user = ReelUserModel.fromJson(userJson);

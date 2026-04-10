@@ -49,6 +49,9 @@ class PushNotificationsService {
 
   PushNotificationsService._internal();
 
+  static bool _backgroundHandlerRegistered = false;
+  static bool _foregroundPipelineAttached = false;
+
   static GlobalKey<ScaffoldMessengerState>? _scaffoldMessengerKey;
 
   static void setScaffoldMessengerKey(GlobalKey<ScaffoldMessengerState> key) {
@@ -127,47 +130,65 @@ class PushNotificationsService {
     return prefs.getString(_tokenKey);
   }
 
-  Future<void> initialize() async {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  /// Must run before [runApp] (same zone as binding init). Registers the default app
+  /// and the background isolate handler so [FirebaseMessaging.instance] is valid later.
+  static Future<void> ensureCoreBeforeRunApp() async {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    }
+    if (!_backgroundHandlerRegistered) {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      _backgroundHandlerRegistered = true;
+    }
+  }
 
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  /// Local notifications + permission + foreground/refresh listeners. Safe to call after [runApp].
+  Future<void> attachForegroundPipeline() async {
+    if (_foregroundPipelineAttached) return;
+    if (Firebase.apps.isEmpty) {
+      await ensureCoreBeforeRunApp();
+    }
 
     await _initLocalNotificationsStatic();
 
     final messaging = FirebaseMessaging.instance;
 
-    // Request permission (Android 13+ / iOS). Android < 13 returns instantly.
     await messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
 
-    // Foreground messages
     FirebaseMessaging.onMessage.listen((message) async {
       final payload = PushNotificationPayload.fromRemoteMessage(message);
-
-      // Show in-app snackbar (foreground).
       _showInAppSnackbar(payload);
-
-      // Also show as local notification so user sees it even if snackbar is missed.
       await _showLocalNotificationStatic(payload);
     });
 
-    // When user taps notification to open app.
     FirebaseMessaging.onMessageOpenedApp.listen((message) async {
       final payload = PushNotificationPayload.fromRemoteMessage(message);
       _showInAppSnackbar(payload);
     });
 
-    // Token refresh
     messaging.onTokenRefresh.listen((newToken) async {
       await _syncTokenWithBackend(newToken);
     });
+
+    _foregroundPipelineAttached = true;
+  }
+
+  /// Full init: core (before UI) + foreground pipeline. Prefer [ensureCoreBeforeRunApp] +
+  /// [attachForegroundPipeline] from [main] for correct ordering.
+  Future<void> initialize() async {
+    await ensureCoreBeforeRunApp();
+    await attachForegroundPipeline();
   }
 
   /// Call when user logs in (or app starts) to register FCM token.
   Future<void> syncDeviceTokenWithBackend() async {
+    if (Firebase.apps.isEmpty) {
+      await ensureCoreBeforeRunApp();
+    }
     final messaging = FirebaseMessaging.instance;
     final token = await messaging.getToken();
     if (token == null || token.isEmpty) return;

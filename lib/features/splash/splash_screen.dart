@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/socket_provider_riverpod.dart';
+import '../../core/providers/stories_provider_riverpod.dart';
 import '../onboarding/onboarding_screen.dart';
 import '../main/main_screen.dart';
 
@@ -20,10 +23,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
+  late DateTime _started;
 
   @override
   void initState() {
     super.initState();
+    _started = DateTime.now();
 
     _controller = AnimationController(
       duration: const Duration(milliseconds: 2000),
@@ -52,42 +57,49 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
     _controller.forward();
 
-    // Navigate after animation + auth restore, but never stay stuck here.
-    Future.microtask(() async {
-      await Future.delayed(const Duration(milliseconds: 2500));
-      if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_runSplashFlow()));
+  }
 
-      try {
-        // Cap auth restore time so splash can't hang on network/disk issues.
-        await ref
-            .read(authProvider.notifier)
-            .loadFromStorage()
-            .timeout(const Duration(seconds: 3));
-      } catch (_) {
-        // Ignore; will fall back to onboarding.
-      }
+  Future<void> _runSplashFlow() async {
+    try {
+      await ref
+          .read(authProvider.notifier)
+          .loadFromStorage()
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {}
 
-      if (!mounted) return;
-      final isLoggedIn = ref.read(isAuthenticatedProvider);
-      if (isLoggedIn) {
-        ref.read(socketConnectionProvider.notifier).ensureConnection();
-      }
+    if (!mounted) return;
+    final loggedIn = ref.read(isAuthenticatedProvider);
+    if (loggedIn) {
+      ref.read(socketConnectionProvider.notifier).ensureConnection();
+      unawaited(ref.read(storiesProvider.notifier).loadStories());
+    }
 
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              isLoggedIn ? const MainScreen() : const OnboardingScreen(),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(
-              opacity: animation,
-              child: child,
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 400),
-        ),
-      );
-    });
+    final elapsed = DateTime.now().difference(_started);
+    const minSplash = Duration(milliseconds: 2500);
+    if (elapsed < minSplash) {
+      await Future.delayed(minSplash - elapsed);
+    }
+    if (!mounted) return;
+
+    final isLoggedIn = ref.read(isAuthenticatedProvider);
+    if (isLoggedIn) {
+      ref.read(socketConnectionProvider.notifier).ensureConnection();
+    }
+
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            isLoggedIn ? const MainScreen() : const OnboardingScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 400),
+      ),
+    );
   }
 
   @override
