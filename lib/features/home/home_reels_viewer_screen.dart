@@ -4,6 +4,7 @@ import 'package:better_player/better_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/post_model.dart';

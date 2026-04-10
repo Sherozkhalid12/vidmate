@@ -24,7 +24,6 @@ import 'live_agora_screen.dart';
 import 'post_crop_screen.dart';
 import 'post_edit_screen.dart';
 import 'reel_edit_screen.dart';
-import 'story_edit_screen.dart';
 import 'choose_cover_photo_screen.dart';
 import '../../core/providers/livestream_controller_riverpod.dart';
 
@@ -550,6 +549,101 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     }
   }
 
+  Future<void> _pushReelEditForStorySegment(int index) async {
+    if (index < 0 || index >= _storyMedia.length) return;
+    final item = _storyMedia[index];
+    final exported = await Navigator.push<File>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReelEditScreen(
+          mediaFile: item.file,
+          isImageMode: !item.isVideo,
+        ),
+      ),
+    );
+    if (exported != null && mounted) {
+      setState(() {
+        _storyMedia[index] = MediaItem(
+          file: exported,
+          isVideo: item.isVideo,
+          videoDuration: item.videoDuration,
+        );
+      });
+    }
+  }
+
+  Future<void> _openStoryMediaEditor() async {
+    if (_storyMedia.isEmpty) return;
+    if (_storyMedia.length == 1) {
+      await _pushReelEditForStorySegment(0);
+      return;
+    }
+    final idx = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Edit which clip?',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextPrimary(context),
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              ...List.generate(_storyMedia.length, (i) {
+                final item = _storyMedia[i];
+                return ListTile(
+                  leading: Icon(
+                    item.isVideo ? Icons.videocam_outlined : Icons.image_outlined,
+                    color: ThemeHelper.getAccentColor(context),
+                  ),
+                  title: Text(
+                    'Segment ${i + 1} · ${item.isVideo ? 'Video' : 'Photo'}',
+                    style: TextStyle(
+                      color: ThemeHelper.getTextPrimary(context),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(ctx, i),
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (idx != null && mounted) {
+      await _pushReelEditForStorySegment(idx);
+    }
+  }
+
+  Future<void> _pickStoryMusic() async {
+    final selected = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const SelectMusicScreen(),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() {
+        _selectedAudioId = selected['id'] as String?;
+        _selectedAudioName = selected['name'] as String?;
+        _selectedAudioUrl = selected['audioUrl'] as String?;
+      });
+    }
+  }
+
   /// Pick single video for Reel or Long Video
   Future<void> _pickVideo() async {
     try {
@@ -733,6 +827,10 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           _showErrorSnackBar('Please select a video for your reel.');
           return false;
         }
+        if (_coverPhoto == null) {
+          _showErrorSnackBar('Please choose a cover photo for your reel.');
+          return false;
+        }
         if (_videoDuration != null) {
           if (_videoDuration!.inSeconds < 5) {
             _showErrorSnackBar('Reel must be at least 5 seconds long.');
@@ -747,6 +845,10 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       case ContentType.longVideo:
         if (_videoFile == null) {
           _showErrorSnackBar('Please select a video.');
+          return false;
+        }
+        if (_coverPhoto == null) {
+          _showErrorSnackBar('Please choose a cover photo for your video.');
           return false;
         }
         if (_videoDuration != null && _videoDuration!.inSeconds < 30) {
@@ -2619,33 +2721,43 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () async {
-                        final result = await Navigator.push<Map<String, dynamic>>(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => StoryEditScreen(
-                              mediaItems: List<MediaItem>.from(_storyMedia),
-                              initialAudioId: _selectedAudioId,
-                              initialAudioName: _selectedAudioName,
-                              initialAudioUrl: _selectedAudioUrl,
-                            ),
-                          ),
-                        );
-                        if (result != null && mounted) {
-                          setState(() {
-                            _selectedAudioId = result['audioId'] as String?;
-                            _selectedAudioName = result['audioName'] as String?;
-                            _selectedAudioUrl = result['audioUrl'] as String?;
-                          });
-                        }
-                      },
+                      onPressed: _openStoryMediaEditor,
                       icon: Icon(
-                        Icons.edit_outlined,
+                        Icons.tune_rounded,
                         color: ThemeHelper.getTextPrimary(context),
                         size: 20,
                       ),
                       label: Text(
-                        'Edit story (text & music)',
+                        'Edit media',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_storyMedia.isNotEmpty) const SizedBox(height: 8),
+                if (_storyMedia.isNotEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _pickStoryMusic,
+                      icon: Icon(
+                        Icons.library_music_outlined,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        _selectedAudioName != null ? 'Change music' : 'Add music',
                         style: TextStyle(
                           color: ThemeHelper.getTextPrimary(context),
                           fontWeight: FontWeight.w600,
@@ -3004,7 +3116,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                         final exportedFile = await Navigator.push<File>(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => ReelEditScreen(videoFile: file),
+                            builder: (context) => ReelEditScreen(mediaFile: file),
                           ),
                         );
                         if (exportedFile != null && mounted) {

@@ -31,15 +31,18 @@ class GetLongVideosResult {
   final bool success;
   final List<LongVideoWithUserModel> videos;
   final String? errorMessage;
+  /// True when no HTTP response (offline / DNS / socket).
+  final bool connectionError;
 
   GetLongVideosResult({
     required this.success,
     this.videos = const [],
     this.errorMessage,
+    this.connectionError = false,
   });
 
-  factory GetLongVideosResult.failure(String message) =>
-      GetLongVideosResult(success: false, errorMessage: message);
+  factory GetLongVideosResult.failure(String message, {bool connectionError = false}) =>
+      GetLongVideosResult(success: false, errorMessage: message, connectionError: connectionError);
 
   factory GetLongVideosResult.success(List<LongVideoWithUserModel> videos) =>
       GetLongVideosResult(success: true, videos: videos);
@@ -179,14 +182,17 @@ class LongVideoService {
     }
   }
 
-  Future<GetLongVideosResult> getLongVideos() async {
+  Future<GetLongVideosResult> getLongVideos({CancelToken? cancelToken}) async {
     final token = await _getToken();
     if (token == null || token.isEmpty) {
       return GetLongVideosResult.failure('Not authenticated');
     }
     try {
       DioClient.setAuthToken(token);
-      final response = await _dio.get(ApiConstants.longVideoList);
+      final response = await _dio.get(
+        ApiConstants.longVideoList,
+        cancelToken: cancelToken,
+      );
       final data = response.data as Map<String, dynamic>?;
       if (data == null || data['success'] != true) {
         final err = data?['message'] as String? ??
@@ -211,7 +217,10 @@ class LongVideoService {
         final msg = d is Map ? (d['message'] ?? d['error'] ?? 'Request failed') : 'Request failed';
         return GetLongVideosResult.failure(msg.toString());
       }
-      return GetLongVideosResult.failure(_networkErrorMessage(e.message));
+      return GetLongVideosResult.failure(
+        _networkErrorMessage(e.message),
+        connectionError: true,
+      );
     } on TimeoutException catch (_) {
       return GetLongVideosResult.failure('Request timed out');
     } catch (e) {
