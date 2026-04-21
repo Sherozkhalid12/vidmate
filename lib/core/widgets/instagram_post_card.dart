@@ -20,6 +20,7 @@ import 'share_bottom_sheet.dart';
 import '../../services/posts/posts_service.dart';
 import 'feed_cached_post_image.dart';
 import 'feed_image_precache.dart';
+import 'music_sticker_row.dart';
 
 class InstagramPostCard extends ConsumerStatefulWidget {
   final PostModel post;
@@ -693,6 +694,12 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                 ],
               ),
             ),
+          ),
+          MusicStickerRow(
+            previewUrl: widget.post.musicPreviewUrl,
+            musicName: widget.post.musicName,
+            musicTitle: widget.post.musicTitle,
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
           ),
 
           const SizedBox(height: 8),

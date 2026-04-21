@@ -250,17 +250,25 @@ class _BetterPlayerVideoFitWidgetState
   @override
   void didUpdateWidget(_BetterPlayerVideoFitWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.betterPlayerController.videoPlayerController != controller) {
-      if (_initializedListener != null) {
-        oldWidget.betterPlayerController.videoPlayerController!
-            .removeListener(_initializedListener!);
+    final oldVpc = oldWidget.betterPlayerController.videoPlayerController;
+    final newVpc = widget.betterPlayerController.videoPlayerController;
+    if (!identical(oldVpc, newVpc)) {
+      if (_initializedListener != null && oldVpc != null) {
+        try {
+          oldVpc.removeListener(_initializedListener!);
+        } catch (_) {}
       }
+      _initializedListener = null;
+      _controllerEventSubscription?.cancel();
+      _controllerEventSubscription = null;
       _initialized = false;
       _initialize();
     }
   }
 
   void _initialize() {
+    _controllerEventSubscription?.cancel();
+    _controllerEventSubscription = null;
     if (controller?.value.initialized == false) {
       _initializedListener = () {
         if (!mounted) {
@@ -308,7 +316,10 @@ class _BetterPlayerVideoFitWidgetState
               child: SizedBox(
                 width: controller!.value.size?.width ?? 0,
                 height: controller!.value.size?.height ?? 0,
-                child: VideoPlayer(controller),
+                child: VideoPlayer(
+                  controller,
+                  key: ObjectKey(controller!),
+                ),
               ),
             ),
           ),

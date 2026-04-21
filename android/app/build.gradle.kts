@@ -10,7 +10,7 @@ plugins {
 
 android {
     namespace = "com.example.flutter_application_1"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = maxOf(flutter.compileSdkVersion, 35)
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -36,9 +36,9 @@ android {
         // Strip unused locale resources from dependencies.
         resConfigs("en")
 
-        // Clear any ABI filters injected by tooling; we build a single universal APK by default.
+        // List common ABIs explicitly (avoids empty abiFilters surprises on some installs).
         ndk {
-            abiFilters.clear()
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
     }
 

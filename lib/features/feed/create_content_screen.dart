@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
-// audioplayers: Run `flutter pub get` to install. Restore import for real audio playback.
+
+import '../../core/audio/music_preview_player.dart';
 import '../../core/utils/create_content_visibility.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
@@ -100,8 +103,13 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   String? _selectedAudioName;
   /// Audio URL for playback (from Select Music; fallback for "Use this audio")
   String? _selectedAudioUrl;
+  /// Song title from picker (attribution + API-adjacent state).
+  String? _selectedMusicName;
+  /// Artist from picker (paired with [_selectedMusicName] for attribution).
+  String? _selectedMusicTitle;
   /// Play/pause state for audio chip - never auto-play when screen is shown
   bool _isAudioPlaying = false;
+  late final MusicPreviewPlayer _audioPreview;
   /// Selected location, tagged users, feeling (shown on screen when set)
   String? _selectedLocation;
   final List<String> _taggedUsers = [];
@@ -115,11 +123,23 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   @override
   void initState() {
     super.initState();
-    createContentVisibleNotifier.value = true; // Pause Reels/background media
+    // Defer: setting the notifier synchronously notifies ReelsScreen, which calls
+    // setState — that must not run during this widget's first build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        createContentVisibleNotifier.value = true; // Pause Reels/background media
+      }
+    });
     _selectedType = widget.initialType;
     _selectedAudioId = widget.selectedAudioId;
     _selectedAudioName = widget.selectedAudioName;
     _selectedAudioUrl = null;
+    _audioPreview = MusicPreviewPlayer(
+      onIsPlayingChanged: (playing) {
+        if (!mounted) return;
+        setState(() => _isAudioPlaying = playing);
+      },
+    );
     // Do not auto-play audio or video in this screen
   }
 
@@ -131,7 +151,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     _postVideoController?.dispose();
     _videoController?.dispose();
     _disposeLiveCamera();
-    _stopAndDisposeAudio();
+    _isAudioPlaying = false;
+    unawaited(_audioPreview.dispose());
     super.dispose();
   }
 
@@ -179,6 +200,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   void _stopAndDisposeAudio() {
     _isAudioPlaying = false;
+    unawaited(_audioPreview.stop());
   }
 
   /// Dispose video when switching content type; dispose audio when navigating to select music
@@ -209,24 +231,13 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     return null;
   }
 
-  /// Play/pause audio. Pause icon stops playback; no auto-play when screen is shown.
-  /// Note: Real audio requires `audioplayers`. Run `flutter pub get` and restore
-  /// the AudioPlayer implementation for actual playback.
+  /// Play/pause selected music preview (Deezer etc.), capped at 30s.
   Future<void> _toggleAudioPlayPause() async {
-    if (_playbackUrl == null) return;
-    if (_isAudioPlaying) {
-      if (mounted) {
-        setState(() => _isAudioPlaying = false);
-      } else {
-        _isAudioPlaying = false;
-      }
-      return;
-    }
-    if (mounted) {
-      setState(() => _isAudioPlaying = true);
-    } else {
-      _isAudioPlaying = true;
-    }
+    final url = _playbackUrl;
+    if (url == null || url.isEmpty) return;
+    await _audioPreview.toggle(url);
+    if (!mounted) return;
+    setState(() => _isAudioPlaying = _audioPreview.isPlaying);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -311,7 +322,14 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           _postVideo = videoFile;
           _postVideoDuration = duration;
           _postVideoController = controller;
+          _selectedAudioId = null;
+          _selectedAudioName = null;
+          _selectedAudioUrl = null;
+          _selectedMusicName = null;
+          _selectedMusicTitle = null;
+          _isAudioPlaying = false;
         });
+        unawaited(_audioPreview.stop());
       }
     } catch (e) {
       if (mounted) {
@@ -539,7 +557,14 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
               isVideo: true,
               videoDuration: duration,
             ));
+            _selectedAudioId = null;
+            _selectedAudioName = null;
+            _selectedAudioUrl = null;
+            _selectedMusicName = null;
+            _selectedMusicTitle = null;
+            _isAudioPlaying = false;
           });
+          unawaited(_audioPreview.stop());
         }
       }
     } catch (e) {
@@ -628,6 +653,46 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     }
   }
 
+  bool get _postShowsMusicTile => _postVideo == null;
+
+  bool get _storyShowsMusicTile =>
+      _storyMedia.isNotEmpty && !_storyMedia.any((m) => m.isVideo);
+
+  bool get _hasMusicPreview =>
+      _selectedAudioUrl != null && _selectedAudioUrl!.trim().isNotEmpty;
+
+  void _applyMusicPickerResult(Map<String, dynamic> selected) {
+    final preview =
+        (selected['previewUrl'] ?? selected['audioUrl'])?.toString().trim() ?? '';
+    final mn = selected['musicName']?.toString().trim() ?? '';
+    final mt = selected['musicTitle']?.toString().trim() ?? '';
+    setState(() {
+      _selectedAudioId = selected['id']?.toString();
+      _selectedAudioUrl = preview.isEmpty ? null : preview;
+      _selectedMusicName = mn.isEmpty ? null : mn;
+      _selectedMusicTitle = mt.isEmpty ? null : mt;
+      if (mn.isNotEmpty && mt.isNotEmpty) {
+        _selectedAudioName = '$mn · $mt';
+      } else {
+        _selectedAudioName = selected['name']?.toString();
+      }
+      _isAudioPlaying = false;
+    });
+  }
+
+  void _clearMusicSelection() {
+    if (!mounted) return;
+    setState(() {
+      _selectedAudioId = null;
+      _selectedAudioName = null;
+      _selectedAudioUrl = null;
+      _selectedMusicName = null;
+      _selectedMusicTitle = null;
+      _isAudioPlaying = false;
+    });
+    unawaited(_audioPreview.stop());
+  }
+
   Future<void> _pickStoryMusic() async {
     final selected = await Navigator.push<Map<String, dynamic>>(
       context,
@@ -636,13 +701,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       ),
     );
     if (selected != null && mounted) {
-      setState(() {
-        _selectedAudioId = selected['id'] as String?;
-        _selectedAudioName = selected['name'] as String?;
-        _selectedAudioUrl = selected['audioUrl'] as String?;
-      });
+      _applyMusicPickerResult(selected);
     }
   }
+
+  Future<void> _pickPostMusic() => _pickStoryMusic();
 
   /// Pick single video for Reel or Long Video
   Future<void> _pickVideo() async {
@@ -880,6 +943,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         locations: _selectedLocation != null ? [_selectedLocation!] : [],
         taggedUsers: _taggedUsers.isEmpty ? [] : List.from(_taggedUsers),
         feelings: _selectedFeeling != null ? [_selectedFeeling!] : [],
+        music: (_postVideo == null &&
+                _selectedAudioUrl != null &&
+                _selectedAudioUrl!.trim().isNotEmpty)
+            ? _selectedAudioUrl!.trim()
+            : null,
       );
       if (!mounted) return;
       ref.read(createPostProvider.notifier).clearError();
@@ -934,6 +1002,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           locations: locations,
           taggedUsers: taggedUsers,
           feelings: feelings,
+          music: (_storyShowsMusicTile &&
+                  _selectedAudioUrl != null &&
+                  _selectedAudioUrl!.trim().isNotEmpty)
+              ? _selectedAudioUrl!.trim()
+              : null,
         ));
         success = result.success;
         errorMessage = result.errorMessage;
@@ -1050,6 +1123,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     _selectedAudioId = null;
     _selectedAudioName = null;
     _selectedAudioUrl = null;
+    _selectedMusicName = null;
+    _selectedMusicTitle = null;
     _postVideoController?.dispose();
     _postVideoController = null;
     _videoController?.dispose();
@@ -1510,7 +1585,10 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                   child: _buildMediaSection(minMediaHeight),
                 ),
               ),
-              if (_selectedType == ContentType.reel && _selectedAudioName != null) ...[
+              if (_selectedAudioName != null &&
+                  ((_selectedType == ContentType.reel) ||
+                      (_selectedType == ContentType.post && _postShowsMusicTile) ||
+                      (_selectedType == ContentType.story && _storyShowsMusicTile))) ...[
                 const SliverToBoxAdapter(child: SizedBox(height: 12)),
                 SliverToBoxAdapter(child: _buildSelectedAudioChip()),
                 const SliverToBoxAdapter(child: SizedBox(height: 8)),
@@ -2451,6 +2529,35 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       ),
                     ),
                   ),
+                if (_postShowsMusicTile) const SizedBox(height: 8),
+                if (_postShowsMusicTile)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _pickPostMusic,
+                      icon: Icon(
+                        Icons.library_music_outlined,
+                        color: ThemeHelper.getTextPrimary(context),
+                        size: 20,
+                      ),
+                      label: Text(
+                        _hasMusicPreview ? 'Change music' : 'Add music',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
+                        backgroundColor: ThemeHelper.getSurfaceColor(context),
+                        foregroundColor: ThemeHelper.getTextPrimary(context),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (_postImages.isNotEmpty) const SizedBox(height: 8),
                 if (_postImages.isNotEmpty)
                   SizedBox(
@@ -2465,6 +2572,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                               initialAudioId: _selectedAudioId,
                               initialAudioName: _selectedAudioName,
                               initialAudioUrl: _selectedAudioUrl,
+                              initialMusicName: _selectedMusicName,
+                              initialMusicTitle: _selectedMusicTitle,
                             ),
                           ),
                         );
@@ -2473,6 +2582,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                             _selectedAudioId = result['audioId'] as String?;
                             _selectedAudioName = result['audioName'] as String?;
                             _selectedAudioUrl = result['audioUrl'] as String?;
+                            _selectedMusicName = result['musicName'] as String?;
+                            _selectedMusicTitle = result['musicTitle'] as String?;
                           });
                         }
                       },
@@ -2745,8 +2856,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       ),
                     ),
                   ),
-                if (_storyMedia.isNotEmpty) const SizedBox(height: 8),
-                if (_storyMedia.isNotEmpty)
+                if (_storyShowsMusicTile) const SizedBox(height: 8),
+                if (_storyShowsMusicTile)
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -2757,7 +2868,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                         size: 20,
                       ),
                       label: Text(
-                        _selectedAudioName != null ? 'Change music' : 'Add music',
+                        _hasMusicPreview ? 'Change music' : 'Add music',
                         style: TextStyle(
                           color: ThemeHelper.getTextPrimary(context),
                           fontWeight: FontWeight.w600,
@@ -3172,12 +3283,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
             ),
           );
           if (selected != null && mounted) {
-            setState(() {
-              _selectedAudioId = selected['id'] as String?;
-              _selectedAudioName = selected['name'] as String?;
-              _selectedAudioUrl = selected['audioUrl'] as String?;
-              _isAudioPlaying = false;
-            });
+            _applyMusicPickerResult(selected);
           }
         },
         child: Container(
@@ -3199,7 +3305,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
               ),
               const SizedBox(width: 14),
               Text(
-                _selectedAudioName != null ? 'Change Music' : 'Add Music',
+                ((_selectedAudioName != null &&
+                            _selectedAudioName!.trim().isNotEmpty) ||
+                        _hasMusicPreview)
+                    ? 'Change Music'
+                    : 'Add Music',
                 style: TextStyle(
                   color: context.textPrimary,
                   fontSize: 16,
@@ -3221,7 +3331,18 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   /// Build chip showing selected audio with play/pause - no auto-play when screen is shown
   Widget _buildSelectedAudioChip() {
-    if (_selectedAudioName == null) return const SizedBox.shrink();
+    final hasLine = (_selectedMusicName != null &&
+            _selectedMusicName!.trim().isNotEmpty &&
+            _selectedMusicTitle != null &&
+            _selectedMusicTitle!.trim().isNotEmpty) ||
+        (_selectedAudioName != null && _selectedAudioName!.trim().isNotEmpty);
+    if (!hasLine) return const SizedBox.shrink();
+    final displayLine = (_selectedMusicName != null &&
+            _selectedMusicName!.trim().isNotEmpty &&
+            _selectedMusicTitle != null &&
+            _selectedMusicTitle!.trim().isNotEmpty)
+        ? '${_selectedMusicName!.trim()} · ${_selectedMusicTitle!.trim()}'
+        : _selectedAudioName!.trim();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
@@ -3257,7 +3378,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _selectedAudioName!,
+                    displayLine,
                     style: TextStyle(
                       color: ThemeHelper.getTextPrimary(context),
                       fontSize: 14,

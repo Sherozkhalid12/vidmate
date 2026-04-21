@@ -664,6 +664,7 @@ class CreatePostNotifier extends StateNotifier<CreatePostState> {
     List<String>? locations,
     List<String>? taggedUsers,
     List<String>? feelings,
+    String? music,
   }) async {
     if (state.isCreating) {
       debugPrint('[CreatePost] ignored duplicate submit (already creating)');
@@ -682,6 +683,7 @@ class CreatePostNotifier extends StateNotifier<CreatePostState> {
       locations: locations ?? [],
       taggedUsers: taggedUsers ?? [],
       feelings: feelings ?? [],
+      music: (music != null && music.trim().isNotEmpty) ? music.trim() : null,
     );
     debugPrint('[CreatePost] params: ${imageList.length} image(s), video: ${video != null}, caption: ${caption != null && caption.trim().isNotEmpty}');
 

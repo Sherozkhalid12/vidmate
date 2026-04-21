@@ -10,6 +10,12 @@ class StoryModel {
   final bool isViewed;
   final List<String> locations;
   final List<String> taggedUsers;
+  /// Song title (only for attribution when [musicTitle] is also set).
+  final String? musicName;
+  /// Artist / performer name (paired with [musicName] for display).
+  final String? musicTitle;
+  /// Preview URL for short playback (parent story; same for all segments).
+  final String? musicPreviewUrl;
 
   StoryModel({
     required this.id,
@@ -20,6 +26,9 @@ class StoryModel {
     this.isViewed = false,
     this.locations = const [],
     this.taggedUsers = const [],
+    this.musicName,
+    this.musicTitle,
+    this.musicPreviewUrl,
   });
 
   /// Hive tray cache (author stored on parent user row).
@@ -31,6 +40,10 @@ class StoryModel {
         'isViewed': isViewed,
         'locations': locations,
         'taggedUsers': taggedUsers,
+        if (musicName != null && musicName!.isNotEmpty) 'musicName': musicName,
+        if (musicTitle != null && musicTitle!.isNotEmpty) 'musicTitle': musicTitle,
+        if (musicPreviewUrl != null && musicPreviewUrl!.trim().isNotEmpty)
+          'musicPreviewUrl': musicPreviewUrl,
       };
 
   factory StoryModel.fromCachedMap(
@@ -39,6 +52,9 @@ class StoryModel {
   ) {
     final loc = m['locations'];
     final tags = m['taggedUsers'];
+    final mn = m['musicName']?.toString();
+    final mt = m['musicTitle']?.toString();
+    final mp = (m['musicPreviewUrl'] ?? m['music'])?.toString();
     return StoryModel(
       id: m['id']?.toString() ?? '',
       author: author,
@@ -53,6 +69,9 @@ class StoryModel {
       taggedUsers: tags is List
           ? tags.map((e) => e.toString()).where((s) => s.isNotEmpty).toList()
           : const [],
+      musicName: (mn != null && mn.isNotEmpty) ? mn : null,
+      musicTitle: (mt != null && mt.isNotEmpty) ? mt : null,
+      musicPreviewUrl: (mp != null && mp.trim().isNotEmpty) ? mp.trim() : null,
     );
   }
 }

@@ -18,10 +18,13 @@ class _ReelsPageState extends State<ReelsPage> with AutomaticKeepAliveClientMixi
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return SafeArea(
-      bottom: false,
+    return MediaQuery.removePadding(
+      context: context,
+      removeTop: true,
+      removeBottom: true,
       child: ReelsScreen(
         key: const PageStorageKey<String>('reels_tab_scroll'),
+        bottomPadding: widget.bottomPadding,
       ),
     );
   }

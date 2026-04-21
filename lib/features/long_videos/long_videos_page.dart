@@ -9,7 +9,7 @@ class LongVideosPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const LongVideosScreen();
+    return LongVideosScreen(bottomPadding: bottomPadding);
   }
 }
 

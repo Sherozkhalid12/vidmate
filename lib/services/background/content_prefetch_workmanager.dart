@@ -15,10 +15,13 @@ import '../posts/reels_service.dart';
 import '../posts/stories_service.dart';
 import '../storage/hive_content_store.dart';
 import '../storage/user_storage_service.dart';
+import 'music_prefetch_runner.dart';
 
 class ContentPrefetchWorkmanager {
   static const String periodicTaskName = 'content_prefetch_periodic';
   static const String onDemandTaskName = 'content_prefetch_on_demand';
+  static const String musicPrefetchPeriodicName = 'music_prefetch_periodic';
+  static const String musicPrefetchTaskName = 'music_prefetch_task';
   static bool _initialized = false;
 
   static Future<void> initialize() async {
@@ -40,6 +43,33 @@ class ContentPrefetchWorkmanager {
         networkType: NetworkType.connected,
       ),
     );
+    await Workmanager().registerPeriodicTask(
+      musicPrefetchPeriodicName,
+      musicPrefetchPeriodicName,
+      frequency: const Duration(hours: 4),
+      initialDelay: const Duration(minutes: 12),
+      existingWorkPolicy: ExistingWorkPolicy.update,
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
+    );
+    await Workmanager().registerOneOffTask(
+      'music_prefetch_task_startup',
+      musicPrefetchTaskName,
+      initialDelay: const Duration(seconds: 25),
+      existingWorkPolicy: ExistingWorkPolicy.replace,
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
+    );
+  }
+
+  /// Clears any previously queued workers at app startup.
+  ///
+  /// This is intentionally aggressive to remove stale one-off jobs from older
+  /// builds (especially debug-mode jobs that spam Android notifications).
+  static Future<void> clearQueuedTasksOnStartup() async {
+    await Workmanager().cancelAll();
   }
 
   static Future<void> triggerNow() async {
@@ -54,6 +84,9 @@ class ContentPrefetchWorkmanager {
   static void _callbackDispatcher() {
     Workmanager().executeTask((task, inputData) async {
       WidgetsFlutterBinding.ensureInitialized();
+      if (task == musicPrefetchTaskName || task == musicPrefetchPeriodicName) {
+        return MusicPrefetchRunner.run();
+      }
       try {
         await HiveContentStore.instance.init();
 

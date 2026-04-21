@@ -35,6 +35,8 @@ class _StoryEditScreenState extends State<StoryEditScreen> {
   String? _audioId;
   String? _audioName;
   String? _audioUrl;
+  String? _musicName;
+  String? _musicTitle;
 
   @override
   void initState() {
@@ -53,6 +55,8 @@ class _StoryEditScreenState extends State<StoryEditScreen> {
       'audioId': _audioId,
       'audioName': _audioName,
       'audioUrl': _audioUrl,
+      'musicName': _musicName,
+      'musicTitle': _musicTitle,
       // Text overlays are visual only in this version
     });
   }
@@ -110,10 +114,20 @@ class _StoryEditScreenState extends State<StoryEditScreen> {
       ),
     );
     if (selected == null) return;
+    final preview =
+        (selected['previewUrl'] ?? selected['audioUrl'])?.toString().trim() ?? '';
+    final mn = selected['musicName']?.toString().trim() ?? '';
+    final mt = selected['musicTitle']?.toString().trim() ?? '';
     setState(() {
-      _audioId = selected['id'] as String?;
-      _audioName = selected['name'] as String?;
-      _audioUrl = selected['audioUrl'] as String?;
+      _audioId = selected['id']?.toString();
+      _audioUrl = preview.isEmpty ? null : preview;
+      _musicName = mn.isEmpty ? null : mn;
+      _musicTitle = mt.isEmpty ? null : mt;
+      if (mn.isNotEmpty && mt.isNotEmpty) {
+        _audioName = '$mn · $mt';
+      } else {
+        _audioName = selected['name']?.toString();
+      }
     });
   }
 

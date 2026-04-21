@@ -54,6 +54,8 @@ class CreateStoryParams {
   final List<String> locations;
   final List<String> taggedUsers;
   final List<String> feelings;
+  /// Optional music preview URL (`music` field in multipart body).
+  final String? music;
 
   CreateStoryParams({
     this.storyFiles = const [],
@@ -61,6 +63,7 @@ class CreateStoryParams {
     this.locations = const [],
     this.taggedUsers = const [],
     this.feelings = const [],
+    this.music,
   });
 
   String? validate() {
@@ -107,6 +110,9 @@ class StoriesService {
       }
       if (params.feelings.isNotEmpty) {
         formData.fields.add(MapEntry('feelings', jsonEncode(params.feelings)));
+      }
+      if (params.music != null && params.music!.trim().isNotEmpty) {
+        formData.fields.add(MapEntry('music', params.music!.trim()));
       }
 
       int fileIndex = 0;

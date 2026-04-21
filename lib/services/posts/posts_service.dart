@@ -188,6 +188,8 @@ class CreatePostParams {
   final List<String> locations;
   final List<String> taggedUsers;
   final List<String> feelings;
+  /// Optional music preview URL (`music` field in multipart body).
+  final String? music;
 
   CreatePostParams({
     this.images = const [],
@@ -198,6 +200,7 @@ class CreatePostParams {
     this.locations = const [],
     this.taggedUsers = const [],
     this.feelings = const [],
+    this.music,
   });
 
   /// Validates payload: max 10 images, max 1 video.
@@ -256,6 +259,9 @@ class PostsService {
       }
       if (params.feelings.isNotEmpty) {
         formData.fields.add(MapEntry('feelings', jsonEncode(params.feelings)));
+      }
+      if (params.music != null && params.music!.trim().isNotEmpty) {
+        formData.fields.add(MapEntry('music', params.music!.trim()));
       }
 
       // Thumbnail: either file (preferred) OR URL string

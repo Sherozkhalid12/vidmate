@@ -526,6 +526,10 @@ class UserStorageService {
       if (p.videoDuration != null) 'videoDurationMs': p.videoDuration!.inMilliseconds,
       if (p.audioId != null) 'audioId': p.audioId,
       if (p.audioName != null) 'audioName': p.audioName,
+      if (p.musicName != null && p.musicName!.isNotEmpty) 'musicName': p.musicName,
+      if (p.musicTitle != null && p.musicTitle!.isNotEmpty) 'musicTitle': p.musicTitle,
+      if (p.musicPreviewUrl != null && p.musicPreviewUrl!.trim().isNotEmpty)
+        'musicPreviewUrl': p.musicPreviewUrl,
       if (p.blurHash != null) 'blurHash': p.blurHash,
     };
   }

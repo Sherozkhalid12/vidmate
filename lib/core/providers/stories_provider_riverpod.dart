@@ -95,6 +95,9 @@ void _groupStories(
       outUsers.add(user);
     }
     final list = outMap.putIfAbsent(user.id, () => []);
+    final mn = story.musicName.trim().isNotEmpty ? story.musicName.trim() : null;
+    final mt = story.musicTitle.trim().isNotEmpty ? story.musicTitle.trim() : null;
+    final mp = story.music.trim().isNotEmpty ? story.music.trim() : null;
     for (var i = 0; i < story.segments.length; i++) {
       final seg = story.segments[i];
       list.add(StoryModel(
@@ -106,6 +109,9 @@ void _groupStories(
         isViewed: false,
         locations: story.locations,
         taggedUsers: story.taggedUsers,
+        musicName: mn,
+        musicTitle: mt,
+        musicPreviewUrl: mp,
       ));
     }
   }

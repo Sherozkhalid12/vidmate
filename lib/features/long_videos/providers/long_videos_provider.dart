@@ -60,7 +60,7 @@ class LongVideosState {
       isLoading: isLoading ?? this.isLoading,
       isRefreshing: isRefreshing ?? this.isRefreshing,
       initialFetchCompleted:
-          initialFetchCompleted ?? this.initialFetchCompleted,
+      initialFetchCompleted ?? this.initialFetchCompleted,
       error: clearError ? null : (error ?? this.error),
       hasMore: hasMore ?? this.hasMore,
       currentPage: currentPage ?? this.currentPage,
@@ -89,7 +89,7 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
     final sw = Stopwatch()..start();
     try {
       final maps =
-          await UserStorageService.instance.getCachedUnseenLongVideos();
+      await UserStorageService.instance.getCachedUnseenLongVideos();
       if (maps.isEmpty) return;
 
       final hydrated = <PostModel>[];
@@ -107,11 +107,12 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
         } catch (_) {}
       }
       if (hydrated.isEmpty) return;
+      final dedupedHydrated = _dedupeByIdPreserveOrder(hydrated);
 
       if (state.videos.isNotEmpty) return;
 
       state = state.copyWith(
-        videos: hydrated,
+        videos: dedupedHydrated,
         isLoading: false,
         isRefreshing: true,
         likedVideos: likedVideos,
@@ -202,8 +203,8 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
           initialFetchCompleted: true,
           error: state.videos.isEmpty
               ? (result.connectionError
-                  ? null
-                  : (result.errorMessage ?? 'Failed to load long videos'))
+              ? null
+              : (result.errorMessage ?? 'Failed to load long videos'))
               : state.error,
           feedOfflineBanner: result.connectionError && state.videos.isNotEmpty,
         );
@@ -215,15 +216,16 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
       final allVideos = result.videos
           .map((v) => PostModel.fromLongVideo(v, currentUserId: currentUserId))
           .toList();
+      final dedupedVideos = _dedupeByIdPreserveOrder(allVideos);
       final likedVideos = <String, bool>{};
       final likeCounts = <String, int>{};
-      for (final video in allVideos) {
+      for (final video in dedupedVideos) {
         likedVideos[video.id] = video.isLiked;
         likeCounts[video.id] = video.likes;
       }
 
       state = state.copyWith(
-        videos: allVideos,
+        videos: dedupedVideos,
         isLoading: false,
         isRefreshing: false,
         initialFetchCompleted: true,
@@ -234,7 +236,7 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
         feedOfflineBanner: false,
       );
       UserStorageService.instance.runInBackground(() async {
-        await UserStorageService.instance.cacheUnseenLongVideos(videos: allVideos);
+        await UserStorageService.instance.cacheUnseenLongVideos(videos: dedupedVideos);
       });
     } catch (e) {
       state = state.copyWith(
@@ -351,41 +353,54 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
   }
 }
 
+List<PostModel> _dedupeByIdPreserveOrder(List<PostModel> videos) {
+  if (videos.length < 2) return videos;
+  final seen = <String>{};
+  final out = <PostModel>[];
+  for (final v in videos) {
+    if (v.id.isEmpty) continue;
+    if (seen.add(v.id)) {
+      out.add(v);
+    }
+  }
+  return out;
+}
+
 List<PostModel> _updateVideosList(
-  List<PostModel> videos, {
-  required String videoId,
-  bool? isLiked,
-  int? likes,
-}) {
+    List<PostModel> videos, {
+      required String videoId,
+      bool? isLiked,
+      int? likes,
+    }) {
   if (videos.isEmpty) return videos;
   return videos
       .map((v) => v.id == videoId
-          ? PostModel(
-              id: v.id,
-              author: v.author,
-              imageUrl: v.imageUrl,
-              imageUrls: v.imageUrls,
-              videoUrl: v.videoUrl,
-              thumbnailUrl: v.thumbnailUrl,
-              caption: v.caption,
-              createdAt: v.createdAt,
-              likes: likes ?? v.likes,
-              comments: v.comments,
-              shares: v.shares,
-              isLiked: isLiked ?? v.isLiked,
-              videoDuration: v.videoDuration,
-              isVideo: v.isVideo,
-              audioId: v.audioId,
-              audioName: v.audioName,
-              postType: v.postType,
-              blurHash: v.blurHash,
-            )
-          : v)
+      ? PostModel(
+    id: v.id,
+    author: v.author,
+    imageUrl: v.imageUrl,
+    imageUrls: v.imageUrls,
+    videoUrl: v.videoUrl,
+    thumbnailUrl: v.thumbnailUrl,
+    caption: v.caption,
+    createdAt: v.createdAt,
+    likes: likes ?? v.likes,
+    comments: v.comments,
+    shares: v.shares,
+    isLiked: isLiked ?? v.isLiked,
+    videoDuration: v.videoDuration,
+    isVideo: v.isVideo,
+    audioId: v.audioId,
+    audioName: v.audioName,
+    postType: v.postType,
+    blurHash: v.blurHash,
+  )
+      : v)
       .toList();
 }
 
 final longVideosProvider =
-    StateNotifierProvider<LongVideosNotifier, LongVideosState>((ref) {
+StateNotifierProvider<LongVideosNotifier, LongVideosState>((ref) {
   ref.keepAlive();
   return LongVideosNotifier(ref);
 });

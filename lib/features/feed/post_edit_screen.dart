@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
+import '../../core/widgets/music_attribution_label.dart';
 import 'select_music_screen.dart';
 
 /// Lightweight post edit screen.
@@ -16,6 +17,8 @@ class PostEditScreen extends StatefulWidget {
   final String? initialAudioId;
   final String? initialAudioName;
   final String? initialAudioUrl;
+  final String? initialMusicName;
+  final String? initialMusicTitle;
 
   const PostEditScreen({
     super.key,
@@ -23,6 +26,8 @@ class PostEditScreen extends StatefulWidget {
     this.initialAudioId,
     this.initialAudioName,
     this.initialAudioUrl,
+    this.initialMusicName,
+    this.initialMusicTitle,
   });
 
   @override
@@ -36,6 +41,8 @@ class _PostEditScreenState extends State<PostEditScreen> {
   String? _audioId;
   String? _audioName;
   String? _audioUrl;
+  String? _musicName;
+  String? _musicTitle;
 
   @override
   void initState() {
@@ -47,6 +54,8 @@ class _PostEditScreenState extends State<PostEditScreen> {
     _audioId = widget.initialAudioId;
     _audioName = widget.initialAudioName;
     _audioUrl = widget.initialAudioUrl;
+    _musicName = widget.initialMusicName;
+    _musicTitle = widget.initialMusicTitle;
   }
 
   void _finish() {
@@ -54,6 +63,8 @@ class _PostEditScreenState extends State<PostEditScreen> {
       'audioId': _audioId,
       'audioName': _audioName,
       'audioUrl': _audioUrl,
+      'musicName': _musicName,
+      'musicTitle': _musicTitle,
       // Text overlays are visual-only for now.
     });
   }
@@ -111,10 +122,19 @@ class _PostEditScreenState extends State<PostEditScreen> {
       ),
     );
     if (selected == null) return;
+    final preview = (selected['previewUrl'] ?? selected['audioUrl'])?.toString().trim() ?? '';
+    final mn = selected['musicName']?.toString().trim() ?? '';
+    final mt = selected['musicTitle']?.toString().trim() ?? '';
     setState(() {
-      _audioId = selected['id'] as String?;
-      _audioName = selected['name'] as String?;
-      _audioUrl = selected['audioUrl'] as String?;
+      _audioId = selected['id']?.toString();
+      _audioUrl = preview.isEmpty ? null : preview;
+      _musicName = mn.isEmpty ? null : mn;
+      _musicTitle = mt.isEmpty ? null : mt;
+      if (mn.isNotEmpty && mt.isNotEmpty) {
+        _audioName = '$mn · $mt';
+      } else {
+        _audioName = selected['name']?.toString();
+      }
     });
   }
 
@@ -349,7 +369,16 @@ class _PostEditScreenState extends State<PostEditScreen> {
               ),
             ],
           ),
-          if (_audioName != null) ...[
+          if (_musicName != null &&
+              _musicName!.isNotEmpty &&
+              _musicTitle != null &&
+              _musicTitle!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            MusicAttributionLabel(
+              musicName: _musicName,
+              musicTitle: _musicTitle,
+            ),
+          ] else if (_audioName != null && _audioName!.isNotEmpty) ...[
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,

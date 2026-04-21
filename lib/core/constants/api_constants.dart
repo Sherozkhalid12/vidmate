@@ -90,6 +90,13 @@ class ApiConstants {
   /// Music library – paginated list of tracks.
   static const String musicList = '/music';
 
+  /// Deezer curated playlists + songs (optional query: limit, playlistLimit).
+  static const String musicDeezerPlaylists = '/music/deezer/playlists';
+
+  /// Deezer playlist by id (optional query: limit).
+  static String musicDeezerPlaylist(String playlistId) =>
+      '/music/deezer/playlists/$playlistId';
+
   // Notifications
   /// GET – current user's notifications list.
   static const String notificationsList = '/notifications';

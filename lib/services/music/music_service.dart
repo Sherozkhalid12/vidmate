@@ -6,6 +6,52 @@ import '../../core/api/dio_client.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/models/music_model.dart';
 
+/// One Deezer playlist row from `/music/deezer/playlists`.
+class DeezerPlaylistSummary {
+  final String id;
+  final String title;
+  final String picture;
+  final int trackCount;
+
+  const DeezerPlaylistSummary({
+    required this.id,
+    required this.title,
+    required this.picture,
+    required this.trackCount,
+  });
+}
+
+/// First screen payload: playlist strip + songs for the selected playlist.
+class DeezerBrowseResult {
+  final bool success;
+  final List<DeezerPlaylistSummary> playlists;
+  final List<MusicModel> songs;
+  final DeezerPlaylistSummary? selectedPlaylist;
+  final String? errorMessage;
+
+  const DeezerBrowseResult({
+    required this.success,
+    this.playlists = const [],
+    this.songs = const [],
+    this.selectedPlaylist,
+    this.errorMessage,
+  });
+
+  const DeezerBrowseResult.failure(String message)
+      : success = false,
+        playlists = const [],
+        songs = const [],
+        selectedPlaylist = null,
+        errorMessage = message;
+
+  const DeezerBrowseResult.ok({
+    required this.playlists,
+    required this.songs,
+    this.selectedPlaylist,
+  })  : success = true,
+        errorMessage = null;
+}
+
 class MusicListResult {
   final bool success;
   final List<MusicModel> tracks;
@@ -99,7 +145,7 @@ class MusicService {
       for (final item in rawSongs) {
         if (item is! Map<String, dynamic>) continue;
         try {
-          tracks.add(_mapSongToMusicModel(item));
+          tracks.add(mapSongJsonToMusicModel(item));
         } catch (_) {
           // Ignore malformed items
         }
@@ -119,7 +165,7 @@ class MusicService {
     }
   }
 
-  MusicModel _mapSongToMusicModel(Map<String, dynamic> json) {
+  MusicModel mapSongJsonToMusicModel(Map<String, dynamic> json) {
     final id = (json['_id'] ?? json['id'] ?? '').toString();
     final name = (json['name'] ?? '').toString();
     final album = json['album'] is Map<String, dynamic>
@@ -166,6 +212,127 @@ class MusicService {
       releaseDate: releaseDate,
       genre: null,
     );
+  }
+
+  List<DeezerPlaylistSummary> _parsePlaylistSummaries(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <DeezerPlaylistSummary>[];
+    for (final item in raw) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = (item['id'] ?? '').toString();
+      if (id.isEmpty) continue;
+      out.add(
+        DeezerPlaylistSummary(
+          id: id,
+          title: (item['title'] ?? '').toString(),
+          picture: (item['picture'] ?? '').toString(),
+          trackCount: item['trackCount'] is num
+              ? (item['trackCount'] as num).toInt()
+              : int.tryParse('${item['trackCount']}') ?? 0,
+        ),
+      );
+    }
+    return out;
+  }
+
+  DeezerPlaylistSummary? _parseSelectedPlaylist(dynamic raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    final id = (raw['id'] ?? '').toString();
+    if (id.isEmpty) return null;
+    return DeezerPlaylistSummary(
+      id: id,
+      title: (raw['title'] ?? '').toString(),
+      picture: (raw['picture'] ?? '').toString(),
+      trackCount: raw['trackCount'] is num
+          ? (raw['trackCount'] as num).toInt()
+          : int.tryParse('${raw['trackCount']}') ?? 0,
+    );
+  }
+
+  List<MusicModel> _parseSongsList(dynamic raw) {
+    if (raw is! List) return const [];
+    final tracks = <MusicModel>[];
+    for (final item in raw) {
+      if (item is! Map<String, dynamic>) continue;
+      try {
+        tracks.add(mapSongJsonToMusicModel(item));
+      } catch (_) {}
+    }
+    return tracks;
+  }
+
+  /// GET `/music/deezer/playlists` — playlist strip + `songs` for selected playlist.
+  Future<DeezerBrowseResult> fetchDeezerPlaylistsBrowse({
+    int limit = 20,
+    int playlistLimit = 20,
+  }) async {
+    try {
+      final response = await _dio.get(
+        ApiConstants.musicDeezerPlaylists,
+        queryParameters: {
+          'limit': limit,
+          'playlistLimit': playlistLimit,
+        },
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic> || data['success'] != true) {
+        final message = data is Map<String, dynamic>
+            ? (data['message']?.toString() ?? 'Failed to load playlists')
+            : 'Failed to load playlists';
+        return DeezerBrowseResult.failure(message);
+      }
+      final playlists = _parsePlaylistSummaries(data['playlists']);
+      final songs = _parseSongsList(data['songs']);
+      final selected = _parseSelectedPlaylist(data['selectedPlaylist']);
+      return DeezerBrowseResult.ok(
+        playlists: playlists,
+        songs: songs,
+        selectedPlaylist: selected,
+      );
+    } on DioException catch (e) {
+      final d = e.response?.data;
+      final msg = d is Map
+          ? (d['message'] ?? d['error'] ?? 'Failed to load playlists')
+              .toString()
+          : 'Failed to load playlists';
+      return DeezerBrowseResult.failure(msg);
+    } catch (e) {
+      return DeezerBrowseResult.failure(e.toString());
+    }
+  }
+
+  /// GET `/music/deezer/playlists/:playlistId` — tracks for one playlist.
+  Future<MusicListResult> fetchDeezerPlaylistSongs(
+    String playlistId, {
+    int limit = 30,
+  }) async {
+    if (playlistId.isEmpty) {
+      return const MusicListResult.failure('Invalid playlist');
+    }
+    try {
+      final response = await _dio.get(
+        ApiConstants.musicDeezerPlaylist(playlistId),
+        queryParameters: {'limit': limit},
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic> || data['success'] != true) {
+        final message = data is Map<String, dynamic>
+            ? (data['message']?.toString() ?? 'Failed to load tracks')
+            : 'Failed to load tracks';
+        return MusicListResult.failure(message);
+      }
+      final songs = _parseSongsList(data['songs']);
+      final total = songs.length;
+      return MusicListResult.success(tracks: songs, total: total);
+    } on DioException catch (e) {
+      final d = e.response?.data;
+      final msg = d is Map
+          ? (d['message'] ?? d['error'] ?? 'Failed to load tracks').toString()
+          : 'Failed to load tracks';
+      return MusicListResult.failure(msg);
+    } catch (e) {
+      return MusicListResult.failure(e.toString());
+    }
   }
 }
 

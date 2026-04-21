@@ -4,12 +4,14 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/audio/attached_music_preview.dart';
 import '../../core/media/app_media_cache.dart';
 import '../../core/models/story_model.dart';
 import '../../core/models/user_model.dart';
 import '../../core/perf/stories_perf_metrics.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/widgets/music_sticker_row.dart';
 import '../../services/reels/reel_video_prefetch.dart';
 
 /// Vertical stories viewer (like reels) - swipe vertically between users
@@ -53,6 +55,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   late final Stopwatch _viewerOpenStopwatch;
   bool _firstFrameLogged = false;
   int? _metricsUserIndex;
+  int _storyMusicGeneration = 0;
 
   String _preloadKey(int userHash, int storyIndex) => '${userHash}_$storyIndex';
 
@@ -150,6 +153,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     for (var controller in _storyPageControllers.values) {
       controller.dispose();
     }
+    unawaited(AttachedMusicPreview.instance.stop());
     for (var userControllers in _videoControllers.values) {
       for (var controller in userControllers.values) {
         controller.dispose();
@@ -259,6 +263,20 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     });
 
     _warmNextRelativeTo(userIndex, storyIndex);
+    final gen = ++_storyMusicGeneration;
+    unawaited(_scheduleStoryMusic(story, gen));
+  }
+
+  /// Autoplay sticker preview once per segment (capped at 30s in [MusicPreviewPlayer]).
+  Future<void> _scheduleStoryMusic(StoryModel story, int generation) async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted || generation != _storyMusicGeneration) return;
+    final url = story.musicPreviewUrl?.trim() ?? '';
+    if (url.isEmpty) {
+      await AttachedMusicPreview.instance.stop();
+      return;
+    }
+    await AttachedMusicPreview.instance.playFromStart(url);
   }
 
   void _animateProgress(int userHash, int userIndex, int storyIndex) {
@@ -540,7 +558,8 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     // Cancel any timers
     _progressTimer?.cancel();
     _progressTimer = null;
-    
+    unawaited(AttachedMusicPreview.instance.stop());
+
     // Pause all videos
     for (var userControllers in _videoControllers.values) {
       for (var controller in userControllers.values) {
@@ -849,7 +868,12 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundImage: CachedNetworkImageProvider(user.avatarUrl),
+                        backgroundImage: user.avatarUrl.isNotEmpty
+                            ? CachedNetworkImageProvider(
+                                user.avatarUrl,
+                                cacheManager: AppMediaCache.feedMedia,
+                              )
+                            : null,
                         backgroundColor: Colors.grey,
                         onBackgroundImageError: (exception, stackTrace) {
                           // Error will show backgroundColor
@@ -912,6 +936,11 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     final errorKey = '${userHash}_$storyIndex';
     final hasVideoError = _videoErrors[errorKey] ?? false;
     final hasTags = story.locations.isNotEmpty || story.taggedUsers.isNotEmpty;
+    final hasMusicSticker = (story.musicName != null &&
+            story.musicName!.trim().isNotEmpty &&
+            story.musicTitle != null &&
+            story.musicTitle!.trim().isNotEmpty) ||
+        (story.musicPreviewUrl != null && story.musicPreviewUrl!.trim().isNotEmpty);
 
     return Container(
       width: double.infinity,
@@ -925,6 +954,20 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                   ? _buildVideoErrorFallback(story)
                   : _buildVideoStory(videoController, isCurrentStory, isLoaded)
               : _buildImageStory(story, isLoaded),
+          if (hasMusicSticker)
+            Positioned(
+              bottom: hasTags ? 88 : 24,
+              left: 12,
+              right: 12,
+              child: MusicStickerRow(
+                previewUrl: story.musicPreviewUrl,
+                musicName: story.musicName,
+                musicTitle: story.musicTitle,
+                textColor: ThemeHelper.getTextPrimary(context).withValues(alpha: 0.92),
+                iconColor: ThemeHelper.getTextMuted(context).withValues(alpha: 0.95),
+                playButtonColor: Colors.white,
+              ),
+            ),
           if (hasTags)
             Positioned(
               bottom: 24,
@@ -1042,14 +1085,30 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
       }
     }
 
-    return Container(
-      color: Colors.black,
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: controller.value.aspectRatio,
-          child: VideoPlayer(controller),
-        ),
-      ),
+    final ar = controller.value.aspectRatio;
+    if (ar <= 0) {
+      return Container(color: Colors.black, child: const SizedBox.expand());
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        final maxH = constraints.maxHeight;
+        var w = maxW;
+        var h = w / ar;
+        if (h > maxH) {
+          h = maxH;
+          w = h * ar;
+        }
+        return Container(
+          color: Colors.black,
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: w,
+            height: h,
+            child: VideoPlayer(controller),
+          ),
+        );
+      },
     );
   }
 
@@ -1117,49 +1176,61 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                   ),
                 ),
               )
-            : CachedNetworkImage(
-                imageUrl: story.mediaUrl,
-                fit: BoxFit.cover,
-                width: double.infinity,
-                height: double.infinity,
-                cacheManager: AppMediaCache.feedMedia,
-                fadeInDuration: const Duration(milliseconds: 200),
-                imageBuilder: (context, imageProvider) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) _logFirstFrameOnce();
-                  });
-                  return Image(
-                    image: imageProvider,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: double.infinity,
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final w = constraints.maxWidth;
+                  final h = constraints.maxHeight;
+                  return CachedNetworkImage(
+                    imageUrl: story.mediaUrl,
+                    fit: BoxFit.contain,
+                    width: w,
+                    height: h,
+                    cacheManager: AppMediaCache.feedMedia,
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
+                    imageBuilder: (context, imageProvider) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _logFirstFrameOnce();
+                      });
+                      return Center(
+                        child: Image(
+                          image: imageProvider,
+                          fit: BoxFit.contain,
+                          width: w,
+                          height: h,
+                        ),
+                      );
+                    },
+                    placeholder: (context, url) =>
+                        _fullBleedMediaPlaceholder(context),
+                    errorWidget: (context, url, error) => Container(
+                      color: Colors.black,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.image_not_supported_outlined,
+                              color: Colors.white.withValues(alpha: 0.75),
+                              size: 48,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              widget.offline
+                                  ? 'Unavailable offline'
+                                  : 'Failed to load',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.9),
+                                fontSize: 14,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   );
                 },
-                placeholder: (context, url) => _fullBleedMediaPlaceholder(context),
-                errorWidget: (context, url, error) => Container(
-                  color: Colors.black,
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.image_not_supported_outlined,
-                          color: Colors.white.withValues(alpha: 0.75),
-                          size: 48,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          widget.offline ? 'Unavailable offline' : 'Failed to load',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            fontSize: 14,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
               ),
         Container(
           decoration: BoxDecoration(

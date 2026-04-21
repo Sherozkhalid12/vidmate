@@ -32,6 +32,10 @@ class StoryModelApi {
   final List<String> feelings;
   final List<StorySegmentModel> segments;
   final DateTime createdAt;
+  /// Optional preview URL used when creating the story (server may echo as `music`).
+  final String music;
+  final String musicName;
+  final String musicTitle;
 
   StoryModelApi({
     required this.id,
@@ -42,6 +46,9 @@ class StoryModelApi {
     this.feelings = const [],
     this.segments = const [],
     required this.createdAt,
+    this.music = '',
+    this.musicName = '',
+    this.musicTitle = '',
   });
 
   static String _string(dynamic value) {
@@ -82,6 +89,8 @@ class StoryModelApi {
 
   factory StoryModelApi.fromJson(Map<String, dynamic> json) {
     final segmentsRaw = json['storySegments'] ?? json['segments'] ?? json['storyFiles'] ?? json['files'] ?? json['media'];
+    final mn = _string(json['musicName'] ?? json['music_name'] ?? json['songName'] ?? json['trackTitle']);
+    final mt = _string(json['musicTitle'] ?? json['music_title'] ?? json['artistName'] ?? json['artist']);
     return StoryModelApi(
       id: _string(json['_id'] ?? json['id']),
       userId: _string(json['userId'] ?? json['user']),
@@ -91,6 +100,9 @@ class StoryModelApi {
       feelings: _stringList(json['feelings']),
       segments: _segmentList(segmentsRaw),
       createdAt: _dateTime(json['createdAt']),
+      music: _string(json['music'] ?? json['musicUrl'] ?? json['musicPreviewUrl']),
+      musicName: mn,
+      musicTitle: mt,
     );
   }
 
@@ -104,6 +116,9 @@ class StoryModelApi {
       'feelings': feelings,
       'segments': segments.map((s) => s.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
+      if (music.isNotEmpty) 'music': music,
+      if (musicName.isNotEmpty) 'musicName': musicName,
+      if (musicTitle.isNotEmpty) 'musicTitle': musicTitle,
     };
   }
 }

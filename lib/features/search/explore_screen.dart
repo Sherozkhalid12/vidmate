@@ -1,8 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shimmer/shimmer.dart';
 
@@ -15,7 +13,10 @@ import '../../core/utils/theme_helper.dart';
 import '../../core/utils/video_thumbnail_helper.dart';
 import '../../core/widgets/feed_cached_post_image.dart';
 import '../../core/widgets/feed_image_precache.dart';
+import '../long_videos/long_video_embedded_session_host.dart';
+import '../long_videos/providers/long_videos_provider.dart';
 import '../reels/reels_screen.dart';
+import '../video/video_player_screen.dart';
 import 'search_screen.dart';
 
 /// Explore screen: staggered grid of reels from [reelsProvider] (Hive-backed SWR, Feature 4.2).
@@ -62,9 +63,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
     if (_gridPaintLogged || reels.isEmpty) return;
     _gridPaintLogged = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !context.mounted) return;
       _gridPaintSw.stop();
-      ExplorePerfMetrics.logExploreGridPaintMs(_gridPaintSw.elapsedMilliseconds);
+      ExplorePerfMetrics.logExploreGridPaintMs(
+          _gridPaintSw.elapsedMilliseconds);
     });
   }
 
@@ -74,7 +76,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
     _precachedForReelSignature = sig;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !context.mounted) return;
       final mq = MediaQuery.sizeOf(context);
       final dpr = MediaQuery.devicePixelRatioOf(context);
       final cellW = ((mq.width - 4) / 3).clamp(40.0, 500.0);
@@ -117,26 +119,47 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
 
   Widget _buildExploreShimmerGrid() {
     final (base, hi) = _shimmerColors();
-    return MasonryGridView.count(
+    return ListView.builder(
       key: const PageStorageKey<String>('explore_grid_shimmer'),
-      crossAxisCount: 3,
-      mainAxisSpacing: 2,
-      crossAxisSpacing: 2,
-      itemCount: 15,
       padding: EdgeInsets.only(bottom: widget.bottomPadding ?? 0),
+      itemCount: 8,
       itemBuilder: (context, index) {
-        return Shimmer.fromColors(
-          baseColor: base,
-          highlightColor: hi,
-          child: AspectRatio(
-            aspectRatio: 9 / 16,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(2),
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                children: List.generate(3, (_) {
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 2),
+                      child: Shimmer.fromColors(
+                        baseColor: base,
+                        highlightColor: hi,
+                        child: const AspectRatio(
+                          aspectRatio: 9 / 16,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
               ),
             ),
-          ),
+            Shimmer.fromColors(
+              baseColor: base,
+              highlightColor: hi,
+              child: const AspectRatio(
+                aspectRatio: 3.2,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: Colors.white),
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+          ],
         );
       },
     );
@@ -146,6 +169,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final reels = ref.watch(reelsListProvider);
+    final longVideos = ref.watch(longVideosListProvider);
     final loading = ref.watch(reelsLoadingProvider);
     final error = ref.watch(reelsErrorProvider);
     final offline = ref.watch(isOfflineProvider);
@@ -287,8 +311,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
                                   Icon(
                                     Icons.video_library_outlined,
                                     size: 48,
-                                    color:
-                                        ThemeHelper.getTextMuted(context),
+                                    color: ThemeHelper.getTextMuted(context),
                                   ),
                                   const SizedBox(height: 12),
                                   Text(
@@ -297,8 +320,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
                                         : error,
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
-                                      color:
-                                          ThemeHelper.getTextMuted(context),
+                                      color: ThemeHelper.getTextMuted(context),
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -314,8 +336,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
                                     'No reels to explore yet.',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
-                                      color:
-                                          ThemeHelper.getTextMuted(context),
+                                      color: ThemeHelper.getTextMuted(context),
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -325,7 +346,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
                                 color: ThemeHelper.getAccentColor(context),
                                 onRefresh: () =>
                                     ref.read(reelsProvider.notifier).refresh(),
-                                child: _buildExploreGrid(reels),
+                                child: _buildExploreGrid(reels, longVideos),
                               ),
               ),
             ],
@@ -335,31 +356,135 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
     );
   }
 
-  Widget _buildExploreGrid(List<PostModel> reels) {
+  Widget _buildExploreGrid(List<PostModel> reels, List<PostModel> longVideos) {
+    final rowCount = (reels.length / 3).ceil();
+    final hasLongRows = longVideos.isNotEmpty;
+    final itemCount = hasLongRows ? rowCount * 2 : rowCount;
+    final cellHeight = ((MediaQuery.sizeOf(context).width - 4) / 3) * (16 / 9);
+
     return Padding(
       padding: EdgeInsets.only(
         bottom: (widget.bottomPadding ?? 0),
       ),
-      child: MasonryGridView.count(
-        key: const PageStorageKey<String>('explore_reels_masonry'),
+      child: ListView.builder(
+        key: const PageStorageKey<String>('explore_reels_mixed_list'),
         physics: const AlwaysScrollableScrollPhysics(),
-        crossAxisCount: 3,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-        itemCount: reels.length,
+        itemCount: itemCount,
         itemBuilder: (context, index) {
-          final reel = reels[index];
-          return AnimationConfiguration.staggeredGrid(
-            position: index,
-            duration: const Duration(milliseconds: 375),
-            columnCount: 3,
-            child: ScaleAnimation(
-              child: FadeInAnimation(
-                child: _buildExploreItem(reel),
-              ),
+          if (hasLongRows && index.isOdd) {
+            final rowIndex = index ~/ 2;
+            final longVideo = longVideos[rowIndex % longVideos.length];
+            return _buildExploreLongVideoStrip(longVideo, cellHeight);
+          }
+          final rowIndex = hasLongRows ? index ~/ 2 : index;
+          final start = rowIndex * 3;
+          final rowReels = reels.skip(start).take(3).toList();
+          return _buildExploreReelRow(rowReels);
+        },
+      ),
+    );
+  }
+
+  Widget _buildExploreReelRow(List<PostModel> rowReels) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: List.generate(3, (index) {
+          if (index >= rowReels.length) {
+            return const Expanded(child: SizedBox.shrink());
+          }
+          return Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: index == 2 ? 0 : 2),
+              child: _buildExploreItem(rowReels[index]),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildExploreLongVideoStrip(PostModel video, double height) {
+    final thumb = _thumbUrlForExplore(video);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: GestureDetector(
+        onTap: () {
+          if (video.videoUrl == null || video.videoUrl!.isEmpty) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => video.postType == 'longVideo'
+                  ? LongVideoEmbeddedSessionHost(post: video)
+                  : VideoPlayerScreen(
+                      videoUrl: video.videoUrl!,
+                      title: video.caption,
+                      author: video.author,
+                      post: video,
+                    ),
             ),
           );
         },
+        child: SizedBox(
+          width: double.infinity,
+          height: height,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              thumb.isEmpty
+                  ? ColoredBox(
+                      color: ThemeHelper.getSurfaceColor(context),
+                      child: Icon(
+                        Icons.video_library,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
+                    )
+                  : FeedCachedPostImage(
+                      imageUrl: thumb,
+                      postId: video.id,
+                      blurHash: video.blurHash,
+                      fit: BoxFit.cover,
+                      useShimmerWhileLoading: true,
+                    ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        _alpha(Colors.black, 0.05),
+                        _alpha(Colors.black, 0.55),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 10,
+                right: 10,
+                bottom: 10,
+                child: Text(
+                  video.caption.isEmpty
+                      ? video.author.displayName
+                      : video.caption,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _alpha(Colors.white, 0.95),
+                    fontWeight: FontWeight.w700,
+                    shadows: [
+                      Shadow(
+                        color: _alpha(Colors.black, 0.7),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

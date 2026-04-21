@@ -56,6 +56,12 @@ class ApiPost {
   final String? blurHash;
   /// Explicit cover/thumbnail (reels/long video) when not in [images].
   final String? thumbnailUrl;
+  /// Track / song title for music attribution (feed).
+  final String? musicName;
+  /// Artist name for music attribution (feed).
+  final String? musicTitle;
+  /// Signed preview / stream URL for optional 30s playback in feed.
+  final String? musicPreviewUrl;
 
   ApiPost({
     required this.userId,
@@ -73,6 +79,9 @@ class ApiPost {
     int? commentsCount,
     this.blurHash,
     this.thumbnailUrl,
+    this.musicName,
+    this.musicTitle,
+    this.musicPreviewUrl,
   })  : likes = likes ?? const [],
         commentsCount = commentsCount ?? 0;
 
@@ -122,6 +131,9 @@ class ApiPost {
         json['cover'] ??
         json['thumb']);
     final thumb = thumbRaw.isEmpty ? null : thumbRaw;
+    final mName = _string(json['musicName'] ?? json['music_name'] ?? json['songName'] ?? json['trackTitle']);
+    final mTitle = _string(json['musicTitle'] ?? json['music_title'] ?? json['artistName'] ?? json['artist']);
+    final mUrl = _string(json['music'] ?? json['musicUrl'] ?? json['musicPreviewUrl'] ?? json['previewUrl']);
     return ApiPost(
       userId: _string(json['userId']),
       images: _stringList(json['images']),
@@ -138,6 +150,9 @@ class ApiPost {
       commentsCount: commentsCount,
       blurHash: bh.isEmpty ? null : bh,
       thumbnailUrl: thumb,
+      musicName: mName.isEmpty ? null : mName,
+      musicTitle: mTitle.isEmpty ? null : mTitle,
+      musicPreviewUrl: mUrl.isEmpty ? null : mUrl,
     );
   }
 
@@ -159,6 +174,10 @@ class ApiPost {
       if (blurHash != null) 'blurHash': blurHash,
       if (thumbnailUrl != null && thumbnailUrl!.isNotEmpty)
         'thumbnailUrl': thumbnailUrl,
+      if (musicName != null && musicName!.isNotEmpty) 'musicName': musicName,
+      if (musicTitle != null && musicTitle!.isNotEmpty) 'musicTitle': musicTitle,
+      if (musicPreviewUrl != null && musicPreviewUrl!.isNotEmpty)
+        'music': musicPreviewUrl,
     };
   }
 }

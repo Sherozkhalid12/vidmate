@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:better_player/better_player.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:blurhash_dart/blurhash_dart.dart' as bh;
 import 'package:image/image.dart' as img;
@@ -22,6 +24,7 @@ import '../../services/posts/posts_service.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/media/adaptive_track_selection.dart';
 import '../../core/api/dio_client.dart';
 import '../../core/utils/create_content_visibility.dart';
 import '../../core/utils/share_link_helper.dart';
@@ -34,11 +37,20 @@ import 'audio_detail_screen.dart';
 /// When [prependedReel] is set (from home feed), this reel is shown first, then the rest from API.
 /// When [initialPostId] is set, finds that reel in the list and opens at it. Shows back button when opened as a route.
 class ReelsScreen extends ConsumerStatefulWidget {
-  const ReelsScreen({super.key, this.initialPostId, this.prependedReel});
+  const ReelsScreen({
+    super.key,
+    this.initialPostId,
+    this.prependedReel,
+    this.bottomPadding = 0,
+  });
 
   final String? initialPostId;
+
   /// When set, this reel is shown first (tapped video from home), then reels from API. Takes precedence over initialPostId.
   final PostModel? prependedReel;
+
+  /// Tab bar + safe-area inset from [MainScreen] so overlays stay above the nav.
+  final double bottomPadding;
 
   @override
   ConsumerState<ReelsScreen> createState() => _ReelsScreenState();
@@ -52,6 +64,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   final Map<String, bool> _savedReels = {};
   bool _hasAppliedInitialPostId = false;
   bool _firstReelMetricLogged = false;
+
   /// Bumps on each page switch / init so stale async [setupDataSource] cannot attach a second player.
   int _playSession = 0;
 
@@ -60,7 +73,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   static const Duration _pageSettleDelay = Duration(milliseconds: 16);
 
   /// How many reels to keep on each side of the current page (±[_poolRadius]).
-  /// 2 → five controllers max; fewer dispose/recreate cycles when scrolling back through reels.
   static const int _poolRadius = 2;
 
   /// True while a post-frame bootstrap callback is queued (not necessarily finished).
@@ -85,8 +97,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     bufferForPlaybackAfterRebufferMs: 1000,
   );
 
-  /// HLS/DASH must **not** use ExoPlayer [SimpleCache] here: multiple loaders + one global
-  /// cache lock caused 700ms+ contention and AAC/Video codec failures on MediaTek (see logcat).
   static BetterPlayerCacheConfiguration? _reelNetworkCache(String url) {
     final u = url.toLowerCase();
     if (u.contains('.m3u8') || u.contains('.mpd') || u.contains('/master') || u.contains('playlist')) {
@@ -103,9 +113,10 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
 
   static BetterPlayerConfiguration _reelBetterConfig() {
     return BetterPlayerConfiguration(
-      // Placeholder until [BetterPlayerEventType.initialized]; then we set the real ratio from the video.
+      // Placeholder ratio until metadata arrives. [_ReelPlayerCover] + sync use
+      // [BoxFit.cover] so the surface fills the slot (no letterbox band).
       aspectRatio: 9 / 16,
-      fit: BoxFit.contain,
+      fit: BoxFit.cover,
       looping: true,
       autoPlay: false,
       handleLifecycle: false,
@@ -145,7 +156,10 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     if (createContentVisibleNotifier.value) {
       _cancelPendingPlayerAttach();
       unawaited(_releaseAllVideoResources());
-      if (mounted) setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {});
+      });
     }
   }
 
@@ -188,7 +202,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     } catch (_) {}
   }
 
-  /// Fast path: cut audio before heavy teardown (rapid swipes).
   Future<void> _muteAndPauseAllPlayers() async {
     final snapshot = _betterControllers.values.toList(growable: false);
     for (final c in snapshot) {
@@ -197,11 +210,15 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     }
   }
 
-  /// Dispose full pool (tab away, route leave, widget dispose).
   Future<void> _releaseAllVideoResources() async {
     final entries = _betterControllers.entries.toList();
     _betterControllers.clear();
-    final reels = _effectiveReelsList();
+    List<PostModel> reels = const [];
+    try {
+      if (mounted && context.mounted) reels = _effectiveReelsList();
+    } catch (_) {
+      // dispose / inactive element: ProviderScope lookup can throw.
+    }
     for (final e in entries) {
       final c = e.value;
       final idx = e.key;
@@ -237,7 +254,10 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   Future<void> _disposeBetterAt(int index) async {
     final c = _betterControllers.remove(index);
     if (c != null) {
-      final reels = _effectiveReelsList();
+      List<PostModel> reels = const [];
+      try {
+        if (mounted && context.mounted) reels = _effectiveReelsList();
+      } catch (_) {}
       String? url;
       if (index >= 0 && index < reels.length) {
         url = reels[index].videoUrl;
@@ -256,6 +276,32 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         c.dispose(forceDispose: true);
       } catch (_) {}
     }
+  }
+
+  bool _reelUrlLooksAdaptive(String url) {
+    final u = url.toLowerCase();
+    return u.contains('.m3u8') ||
+        u.contains('.mpd') ||
+        u.contains('/master') ||
+        u.contains('playlist');
+  }
+
+  Future<void> _applyReelAdaptiveResolution(
+    BetterPlayerController controller,
+    String url,
+  ) async {
+    if (!_reelUrlLooksAdaptive(url)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted || !context.mounted) return;
+    try {
+      if (controller.isVideoInitialized() != true) return;
+      final tracks = controller.betterPlayerAsmsTracks;
+      if (tracks.length < 2) return;
+      final cx = await Connectivity().checkConnectivity();
+      final pick = pickBetterPlayerTrackForConnectivity(tracks, cx);
+      if (pick == null || !mounted || !context.mounted) return;
+      controller.setTrack(pick);
+    } catch (_) {}
   }
 
   void _bindReelPlayerEvents(
@@ -277,8 +323,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
       }
       if (ev.betterPlayerEventType == BetterPlayerEventType.initialized) {
         _syncReelVideoAspectRatio(controller);
-        // Playback is driven by [_ensureBetterPlayer] / [_resumeController] to avoid double [play]
-        // racing [setupDataSource] completion (first-reel stutter).
+        unawaited(_applyReelAdaptiveResolution(controller, url));
         if (!_firstReelMetricLogged && index == _currentIndex && session == _playSession) {
           _firstReelMetricLogged = true;
           ReelsPerfMetrics.instance.onFirstReelVisible();
@@ -307,17 +352,18 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   }
 
   void _syncReelVideoAspectRatio(BetterPlayerController controller) {
+    // Reels: always [BoxFit.cover] in the slot [_ReelPlayerCover] gives us; no
+    // letterboxing band — many vertical clips are stored as landscape pixels.
     try {
       final vpc = controller.videoPlayerController;
       if (vpc == null || !vpc.value.initialized) return;
       final s = vpc.value.size;
       if (s == null || s.width <= 0 || s.height <= 0) return;
       controller.setOverriddenAspectRatio(s.width / s.height);
-      controller.setOverriddenFit(BoxFit.contain);
+      controller.setOverriddenFit(BoxFit.cover);
     } catch (_) {}
   }
 
-  /// Serialize bootstraps so two post-frame callbacks cannot overlap [setupDataSource] (stutter).
   Future<void> _bootstrapPlayerImmediate(String debugTag) async {
     final existing = _bootstrapInFlightFuture;
     if (existing != null) {
@@ -350,11 +396,11 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
       await _muteAndPauseAllPlayers();
       await _releaseAllVideoResources();
     }
-    if (!mounted || session != _playSession) return;
+    if (!mounted || !context.mounted || session != _playSession) return;
     final listNow = _effectiveReelsList();
     if (_currentIndex < 0 || _currentIndex >= listNow.length) return;
     await _activateIndex(_currentIndex, listNow, session);
-    if (!mounted || session != _playSession) return;
+    if (!mounted || !context.mounted || session != _playSession) return;
     _scheduleDeferredPrewarm(_currentIndex, listNow, session);
   }
 
@@ -363,7 +409,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     _bootstrapPostFrameScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
-        if (!mounted) return;
+        if (!mounted || !context.mounted) return;
         await _bootstrapPlayerImmediate('postFrame');
       } finally {
         _bootstrapPostFrameScheduled = false;
@@ -371,9 +417,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     });
   }
 
-  /// Long delay after cold bootstrap so the first [setupDataSource] + decode is not starved.
   static const Duration _deferredPrewarmDelayCold = Duration(milliseconds: 450);
-  /// Short delay after a swipe — user may scroll again; pool already keeps nearby indices.
   static const Duration _deferredPrewarmDelaySwipe = Duration(milliseconds: 140);
 
   void _scheduleDeferredPrewarm(
@@ -382,9 +426,12 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     int session, {
     Duration delay = _deferredPrewarmDelayCold,
   }) {
+    // Snapshot: do not call ref.read after an async gap — the element can be
+    // inactive (mounted still true) and ProviderScope lookup will assert.
+    final list = List<PostModel>.from(reels);
     Future<void>.delayed(delay, () {
-      if (!mounted || session != _playSession || _currentIndex != center) return;
-      final list = _effectiveReelsList();
+      if (!mounted || !context.mounted) return;
+      if (session != _playSession || _currentIndex != center) return;
       if (center < 0 || center >= list.length) return;
       unawaited(_prewarmNeighbors(center, list, session));
     });
@@ -403,14 +450,13 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     return {'Authorization': s};
   }
 
-  /// Parked controllers (muted + paused) need [seekTo] before [play] on Android so AAC restarts.
   Future<void> _resumeController(
     BetterPlayerController controller,
     int index,
     List<PostModel> reels,
     int session,
   ) async {
-    if (session != _playSession || !mounted) return;
+    if (session != _playSession || !mounted || !context.mounted) return;
     final vpc = controller.videoPlayerController;
     if (vpc == null) {
       await _ensureBetterPlayer(index, reels, session, activateIfCurrent: true, forceRecreate: true);
@@ -424,9 +470,9 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         target = pos;
       }
       await controller.seekTo(target);
-      if (session != _playSession || !mounted) return;
+      if (session != _playSession || !mounted || !context.mounted) return;
       await _safeSetVolume(controller, 1.0);
-      if (session != _playSession || !mounted) return;
+      if (session != _playSession || !mounted || !context.mounted) return;
       await _safePlay(controller);
       if (mounted && session == _playSession) setState(() {});
     } catch (e, st) {
@@ -434,9 +480,9 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         debugPrint('[Reels] resumeController failed $e');
         debugPrint('$st');
       }
-      if (session != _playSession || !mounted) return;
+      if (session != _playSession || !mounted || !context.mounted) return;
       await _disposeBetterAt(index);
-      if (session != _playSession || !mounted) return;
+      if (session != _playSession || !mounted || !context.mounted) return;
       await _ensureBetterPlayer(index, reels, session, activateIfCurrent: true, forceRecreate: true);
     }
   }
@@ -484,7 +530,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         bufferingConfiguration: activateIfCurrent && index == _currentIndex ? _bufferingActive : _bufferingPrewarm,
       );
       await controller.setupDataSource(ds);
-      if (!mounted || session != _playSession) {
+      if (!mounted || !context.mounted || session != _playSession) {
         final l = _reelEventListeners.remove(url);
         if (l != null) {
           try {
@@ -530,7 +576,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
       }());
     }
     await Future.wait(pauseFutures);
-    if (session != _playSession || !mounted) return;
+    if (session != _playSession || !mounted || !context.mounted) return;
 
     final existing = _betterControllers[index];
     if (existing != null) {
@@ -538,7 +584,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     } else {
       await _ensureBetterPlayer(index, reels, session, activateIfCurrent: true);
     }
-    if (session != _playSession || !mounted) return;
+    if (session != _playSession || !mounted || !context.mounted) return;
     _evictDistantControllers(index);
   }
 
@@ -551,7 +597,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     ].where((i) => i >= 0 && i < reels.length).toList();
 
     for (final i in neighbors) {
-      if (session != _playSession || !mounted) return;
+      if (session != _playSession || !mounted || !context.mounted) return;
       if (_betterControllers.containsKey(i)) continue;
       await _ensureBetterPlayer(i, reels, session);
       final c = _betterControllers[i];
@@ -559,13 +605,12 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         await _safeSeekZero(c);
       }
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      if (session != _playSession) return;
+      if (session != _playSession || !mounted || !context.mounted) return;
     }
   }
 
-  /// After a list refresh removes items, keep [PageController] and player in range.
   void _clampCurrentIndexIfNeeded() {
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     final reels = _effectiveReelsList();
     if (reels.isEmpty) return;
     if (_currentIndex < reels.length) return;
@@ -578,17 +623,11 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     unawaited(_bootstrapPlayerImmediate('clampOvershoot'));
   }
 
-  /// Fired when the vertical [PageView] settles on a new page.
-  ///
-  /// Bumps [_playSession] first (invalidates in-flight work), mutes the outgoing reel, updates
-  /// [_currentIndex], then after [_pageSettleDelay] runs [_activateIndex].
   void _onPageChanged(int index) {
     final reels = _effectiveReelsList();
     if (index < 0 || index >= reels.length) return;
 
-    if (index == _currentIndex) {
-      return;
-    }
+    if (index == _currentIndex) return;
 
     final session = ++_playSession;
 
@@ -603,17 +642,24 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
       _currentIndex = index;
     });
 
+    final settledList = List<PostModel>.from(_effectiveReelsList());
     _pageSettleTimer = Timer(_pageSettleDelay, () {
       _pageSettleTimer = null;
-      if (!mounted) return;
+      if (!mounted || !context.mounted) return;
       if (session != _playSession) return;
       if (_currentIndex != index) return;
-      final list = _effectiveReelsList();
+      final list = settledList;
       if (index < 0 || index >= list.length) return;
       unawaited(() async {
         await _activateIndex(index, list, session);
-        if (!mounted || session != _playSession || _currentIndex != index) return;
-        _scheduleDeferredPrewarm(index, list, session, delay: _deferredPrewarmDelaySwipe);
+        if (!mounted ||
+            !context.mounted ||
+            session != _playSession ||
+            _currentIndex != index) {
+          return;
+        }
+        _scheduleDeferredPrewarm(index, list, session,
+            delay: _deferredPrewarmDelaySwipe);
       }());
     });
   }
@@ -625,13 +671,11 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         _cancelPendingPlayerAttach();
         unawaited(_releaseAllVideoResources());
       } else if (prev != null && prev != 1) {
+        final reelsSnapshot = List<PostModel>.from(_effectiveReelsList());
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final reels = _effectiveReelsList();
-          if (reels.isNotEmpty) {
-            // Single path: [_initVideosForList] → [_bootstrapPlayerImmediate] bumps [_playSession]
-            // once and activates — do not increment session again or activation is discarded.
-            _initVideosForList(reels);
+          if (!mounted || !context.mounted) return;
+          if (reelsSnapshot.isNotEmpty) {
+            _initVideosForList(reelsSnapshot);
           }
         });
       }
@@ -643,21 +687,17 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     final prependedReel = widget.prependedReel;
     final initialPostId = widget.initialPostId;
 
-    // Combined list: prepended reel first (tapped from home), then reels from API
     final reels = prependedReel != null
         ? [prependedReel, ...reelsFromProvider.where((r) => r.id != prependedReel.id)]
         : reelsFromProvider;
 
     final isPushedRoute = prependedReel != null || initialPostId != null;
 
-    // When opened with prependedReel: start at 0 (tapped video) once. Else when initialPostId: jump to that index once.
     if (reels.isNotEmpty && !_hasAppliedInitialPostId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+        if (!mounted || !context.mounted) return;
         _hasAppliedInitialPostId = true;
-        if (prependedReel == null && initialPostId == null) {
-          return;
-        }
+        if (prependedReel == null && initialPostId == null) return;
         int targetIndex = 0;
         if (prependedReel != null) {
           targetIndex = 0;
@@ -671,7 +711,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
           });
           _pageController.jumpToPage(targetIndex);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
+            if (!mounted || !context.mounted) return;
             if (_betterControllers.isEmpty) {
               unawaited(_bootstrapPlayerImmediate('routeInitialJump'));
             }
@@ -681,12 +721,16 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     }
 
     if (reels.isNotEmpty && _currentIndex >= reels.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _clampCurrentIndexIfNeeded());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !context.mounted) return;
+        _clampCurrentIndexIfNeeded();
+      });
     }
 
     if (error != null && reels.isEmpty && !isLoading) {
       return Scaffold(
         backgroundColor: Colors.black,
+        extendBody: true,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -706,6 +750,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         ),
       );
     }
+
     final tabIndex = ref.watch(mainTabIndexProvider);
     final reelsTabVisible = tabIndex == 1 || isPushedRoute;
     final needsRouteJump = isPushedRoute && (prependedReel != null || initialPostId != null);
@@ -719,19 +764,30 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
         onRefresh: () => ref.read(reelsProvider.notifier).refresh(),
         color: Colors.white,
         backgroundColor: Colors.black54,
-        child: PageView.builder(
-          controller: _pageController,
-          scrollDirection: Axis.vertical,
-          onPageChanged: _onPageChanged,
-          itemCount: reels.length,
-          physics: const _ReelPageScrollPhysics(),
-          itemBuilder: (context, index) {
-            if (index < 0 || index >= reels.length) {
-              return Container(color: Colors.black);
-            }
-            return KeyedSubtree(
-              key: ValueKey<String>(reels[index].id),
-              child: _buildReelItem(reels[index], index),
+        // RefreshIndicator + PageView: give an explicit viewport size so each
+        // page fills the tab area (avoids a short viewport and a black band
+        // above the bottom nav even though MainScreen already reserved it).
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SizedBox(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              child: PageView.builder(
+                controller: _pageController,
+                scrollDirection: Axis.vertical,
+                onPageChanged: _onPageChanged,
+                itemCount: reels.length,
+                physics: const _ReelPageScrollPhysics(),
+                itemBuilder: (context, index) {
+                  if (index < 0 || index >= reels.length) {
+                    return Container(color: Colors.black);
+                  }
+                  return KeyedSubtree(
+                    key: ValueKey<String>(reels[index].id),
+                    child: _buildReelItem(reels[index], index),
+                  );
+                },
+              ),
             );
           },
         ),
@@ -751,19 +807,22 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
 
     final content = Scaffold(
       backgroundColor: Colors.black,
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 320),
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
-        child: KeyedSubtree(
-          key: ValueKey(
-            reels.isEmpty && isLoading
-                ? 'reel_skeleton'
-                : reels.isEmpty
-                    ? 'reel_empty'
-                    : 'reel_feed',
+      resizeToAvoidBottomInset: false,
+      body: SizedBox.expand(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 320),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          child: KeyedSubtree(
+            key: ValueKey(
+              reels.isEmpty && isLoading
+                  ? 'reel_skeleton'
+                  : reels.isEmpty
+                      ? 'reel_empty'
+                      : 'reel_feed',
+            ),
+            child: bodyChild,
           ),
-          child: bodyChild,
         ),
       ),
     );
@@ -843,7 +902,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     }
   }
 
-  /// API [thumbnailUrl] first (with auth headers), then network fallback, then first video frame.
   Widget _reelPosterStack(PostModel reel, Uint8List? localThumb, Map<String, String>? headers) {
     final apiThumb = reel.thumbnailUrl != null && reel.thumbnailUrl!.trim().isNotEmpty
         ? reel.thumbnailUrl!.trim()
@@ -908,37 +966,53 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   }
 
   Widget _buildReelItem(PostModel reel, int index) {
-    final controller = _betterControllers[index];
+    final BetterPlayerController? controller = _betterControllers[index];
     final isCurrent = index == _currentIndex;
     final ready = _betterReady(controller);
     final isPlaying = controller?.isPlaying() == true;
     final vUrl = reel.videoUrl;
     final localThumb = (vUrl != null && vUrl.isNotEmpty) ? _localVideoThumbs[vUrl] : null;
     final thumbHeaders = _reelThumbHeaders();
-    final showPlayer = isCurrent && controller != null && ready;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (showPlayer)
-          RepaintBoundary(
-            key: ValueKey<Object>('reel_bc_${reel.id}_${controller.hashCode}'),
-            child: ColoredBox(
-              color: Colors.black,
-              child: Center(
-                child: SafeBetterPlayerWrapper(
-                  key: ObjectKey(controller),
-                  controller: controller,
+        // ─── Video layer (or poster while video is loading) ───────────────────
+        // FIX: Both branches must be Positioned.fill so they each occupy the
+        // full screen. The RepaintBoundary was missing Positioned.fill, which
+        // caused BetterPlayer to size itself from its own intrinsic dimensions
+        // (i.e. the overridden aspect-ratio box) instead of filling the screen.
+        Positioned.fill(
+          child: (isCurrent && controller != null && ready)
+              ? RepaintBoundary(
+                  key: ValueKey<Object>('reel_bc_${reel.id}_${controller.hashCode}'),
+                  child: _ReelPlayerCover(controller: controller),
+                )
+              : ColoredBox(
+                  color: Colors.black,
+                  child: _reelPosterStack(reel, localThumb, thumbHeaders),
                 ),
-              ),
-            ),
-          )
-        else
-          ColoredBox(
-            color: Colors.black,
-            child: _reelPosterStack(reel, localThumb, thumbHeaders),
-          ),
-        // Overlay UI
+        ),
+
+        Positioned(
+          
+          top: 50,
+          right: 8,
+          child:   GestureDetector(
+                      onTap: () => _showReelMoreMenu(context, reel),
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                       
+                        child: const Icon(
+                          Icons.more_vert,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                      ),
+                    )
+        ),
+
+        // ─── Overlay UI ───────────────────────────────────────────────────────
         Positioned(
           bottom: 0,
           left: 0,
@@ -954,11 +1028,17 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                 ],
               ),
             ),
-            padding: const EdgeInsets.all(20),
+            padding: EdgeInsets.fromLTRB(
+              20,
+              0,
+              20,
+              0,
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Left side - Author info and caption
+                // Left side — author info and caption
+                
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1000,7 +1080,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                               ],
                             ),
                           ),
-                          // Follow button - hide when author is current user
+                          // Follow button — hidden when viewing own reel
                           Consumer(
                             builder: (context, ref, child) {
                               final currentUser = ref.watch(currentUserProvider);
@@ -1014,22 +1094,17 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                               try {
                                 post = posts.firstWhere((p) => p.author.id == reel.author.id);
                               } catch (_) {}
-                              final overrideStatus =
-                                  followOverrides[reel.author.id];
+                              final overrideStatus = followOverrides[reel.author.id];
                               final isFollowing =
-                                  overrideStatus ==
-                                          FollowRelationshipStatus.following ||
+                                  overrideStatus == FollowRelationshipStatus.following ||
                                       (overrideStatus == null &&
                                           (followState.followingIds.isNotEmpty
-                                              ? followState.followingIds
-                                                  .contains(reel.author.id)
-                                              : (post?.author.isFollowing ??
-                                                  reel.author.isFollowing)));
-                              final isPending = overrideStatus ==
-                                      FollowRelationshipStatus.pending ||
-                                  (overrideStatus == null &&
-                                      followState.outgoingPendingRequests
-                                          .containsKey(reel.author.id));
+                                              ? followState.followingIds.contains(reel.author.id)
+                                              : (post?.author.isFollowing ?? reel.author.isFollowing)));
+                              final isPending =
+                                  overrideStatus == FollowRelationshipStatus.pending ||
+                                      (overrideStatus == null &&
+                                          followState.outgoingPendingRequests.containsKey(reel.author.id));
                               return GestureDetector(
                                 onTap: () {
                                   ref.read(followProvider.notifier).toggleFollow(reel.author.id);
@@ -1045,9 +1120,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                                     ),
                                   ),
                                   child: Text(
-                                    isFollowing
-                                        ? 'Following'
-                                        : (isPending ? 'Requested' : 'Follow'),
+                                    isFollowing ? 'Following' : (isPending ? 'Requested' : 'Follow'),
                                     style: TextStyle(
                                       color: isFollowing ? Colors.white : Colors.black,
                                       fontSize: 13,
@@ -1061,17 +1134,19 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      // Audio row (Instagram-style) - tappable to see reels with same audio
+                      // Audio row — tappable to browse reels with same audio
                       if (reel.audioName != null || reel.isVideo)
                         GestureDetector(
-                            onTap: () {
+                          onTap: () {
                             _cancelPendingPlayerAttach();
                             unawaited(_releaseAllVideoResources());
                             if (mounted) setState(() {});
                             final audioId = reel.audioId ?? 'original_${reel.author.id}';
                             final audioName = reel.audioName ?? 'Original sound - ${reel.author.username}';
                             final reelsList = ref.read(reelsListProvider);
-                            final sameAudioReels = reelsList.where((r) => (r.audioId ?? 'original_${r.author.id}') == audioId).toList();
+                            final sameAudioReels = reelsList
+                                .where((r) => (r.audioId ?? 'original_${r.author.id}') == audioId)
+                                .toList();
                             if (sameAudioReels.isEmpty) return;
                             Navigator.push(
                               context,
@@ -1083,7 +1158,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                                 ),
                               ),
                             ).then((_) {
-                              // Re-initialize current video when returning from audio/create content screen
                               if (mounted) {
                                 final reelsList = ref.read(reelsListProvider);
                                 _initVideosForList(reelsList);
@@ -1093,12 +1167,16 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.music_note_rounded, color: Colors.white, size: 18),
+                              const Icon(Icons.music_note_rounded, color: Colors.white, size: 18),
                               const SizedBox(width: 6),
                               Flexible(
                                 child: Text(
                                   reel.audioName ?? 'Original sound - ${reel.author.username}',
-                                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -1113,7 +1191,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.left,
                         style: TextStyle(
-                          // Caption on dark overlay - use white for visibility in both modes
                           color: Colors.white,
                           fontSize: 14,
                           shadows: [
@@ -1129,19 +1206,20 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                // Right side - Action buttons
+                // Right side — action buttons
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    
                     if (reel.author.allowLikes) ...[
-                          _buildActionButton(
-                          icon: Icons.favorite,
-                          count: ref.watch(reelLikeCountProvider(reel.id)),
-                          isActive: ref.watch(reelLikedProvider(reel.id)),
-                          onTap: () {
-                            ref.read(reelsProvider.notifier).toggleLikeWithApi(reel.id);
-                          },
-                        ),
+                      _buildActionButton(
+                        icon: Icons.favorite,
+                        count: ref.watch(reelLikeCountProvider(reel.id)),
+                        isActive: ref.watch(reelLikedProvider(reel.id)),
+                        onTap: () {
+                          ref.read(reelsProvider.notifier).toggleLikeWithApi(reel.id);
+                        },
+                      ),
                       const SizedBox(height: 14),
                     ],
                     if (reel.author.allowComments) ...[
@@ -1177,7 +1255,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                           children: [
                             Transform.rotate(
                               angle: -0.785398,
-                              child: Icon(
+                              child: const Icon(
                                 Icons.send,
                                 color: Colors.white,
                                 size: 28,
@@ -1228,19 +1306,6 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
             ),
           ),
         ),
-        // Three-dot menu (vertical) top right
-        Positioned(
-          top: MediaQuery.of(context).padding.top + 8,
-          right: 12,
-          child: GestureDetector(
-            onTap: () => _showReelMoreMenu(context, reel),
-            child: Icon(
-              Icons.more_vert,
-              color: Colors.white,
-              size: 28,
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -1255,13 +1320,11 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
             onPressed: () async {
               final currentUserId = ref.read(authProvider).currentUser?.id ?? '';
               Navigator.pop(context);
-
               final result = await PostsService().reportPost(
                 postId: reel.id,
                 currentUserId: currentUserId,
                 postAuthorId: reel.author.id,
               );
-
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -1290,8 +1353,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                     'Link copied!',
                     style: TextStyle(color: ThemeHelper.getTextPrimary(context)),
                   ),
-                  backgroundColor:
-                      ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
+                  backgroundColor: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
                 ),
               );
             },
@@ -1337,14 +1399,107 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
   }
 
   String _formatCount(int count) {
-    if (count >= 1000000) {
-      return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
-      return '${(count / 1000).toStringAsFixed(1)}K';
-    }
+    if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
+    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
     return count.toString();
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ReelPlayerCover
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fills the reel **viewport** (height from [LayoutBuilder] = tab area above the
+/// bottom nav). Uses **cover** scaling only — `max(w, h)` — so there is no
+/// letterboxed band inside this layer (the black strip users saw was empty
+/// [ColoredBox] below a `contain`-sized frame, often triggered when the decoder
+/// reports landscape pixels for a vertical clip). Cropping prefers sides for
+/// wide clips; pixels are never stretched.
+///
+/// [SafeBetterPlayerWrapper] stays [AnimatedBuilder.child]; [_syncReelVideoAspectRatio]
+/// sets the real aspect ratio + [BoxFit.cover] on BetterPlayer to match.
+class _ReelPlayerCover extends StatelessWidget {
+  const _ReelPlayerCover({required this.controller});
+
+  final BetterPlayerController controller;
+
+  // Fallback portrait dimensions shown before metadata arrives.
+  static const double _kDefaultW = 9.0;
+  static const double _kDefaultH = 16.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final vpc = controller.videoPlayerController;
+
+    // Stable player widget — passed as AnimatedBuilder.child so it is never
+    // reconstructed when the SizedBox dimensions update.
+    final player = SafeBetterPlayerWrapper(
+      key: ObjectKey(controller),
+      controller: controller,
+    );
+
+    // No VPC yet: just fill black and show the player. The poster from
+    // _buildReelItem is still visible behind us at this point.
+    if (vpc == null) {
+      return ColoredBox(
+        color: Colors.black,
+        child: SizedBox.expand(child: player),
+      );
+    }
+
+    return ColoredBox(
+      color: Colors.black,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final screenW = constraints.maxWidth;
+          final screenH = constraints.maxHeight;
+
+          return AnimatedBuilder(
+            animation: vpc,
+            child: player, // stable — not rebuilt by AnimatedBuilder
+            builder: (context, child) {
+              final value = vpc.value;
+
+              // Real video pixel dimensions; fall back to portrait 9:16 until
+              // the decoder reports them (avoids a jump on first frame).
+              double videoW = _kDefaultW;
+              double videoH = _kDefaultH;
+              final sz = value.size;
+              if (value.initialized && sz != null && sz.width > 0 && sz.height > 0) {
+                videoW = sz.width;
+                videoH = sz.height;
+              }
+
+              // Always cover: fills viewport height and width; clips overflow.
+              // Avoid `contain` here — it leaves empty ColoredBox (black) bands.
+              final scale = math.max(screenW / videoW, screenH / videoH);
+              final dispW = videoW * scale;
+              final dispH = videoH * scale;
+
+              return ClipRect(
+                child: SizedBox(
+                  width: screenW,
+                  height: screenH,
+                  child: Center(
+                    child: SizedBox(
+                      width: dispW,
+                      height: dispH,
+                      child: child,
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ReelPageScrollPhysics
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Instagram-like snap paging without bounce, tuned to avoid accidental skips.
 class _ReelPageScrollPhysics extends PageScrollPhysics {

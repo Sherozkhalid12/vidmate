@@ -15,8 +15,8 @@ import 'features/calls/call_screen.dart';
 import 'services/notifications/push_notifications_service.dart';
 import 'services/background/content_prefetch_workmanager.dart';
 import 'package:permission_handler/permission_handler.dart';
-
 import 'services/storage/hive_content_store.dart';
+import 'features/long_videos/providers/long_video_playback_provider.dart';
 
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
@@ -34,10 +34,11 @@ void main() {
   runZonedGuarded(() {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // Prevent unbounded [ImageCache] growth while scrolling long feeds (OOM on 256MB heaps).
+    // Long-form feeds + long-video thumbnails: larger cache reduces tab-switch
+    // thumbnail reloads; cap bytes to limit pressure on low-RAM devices.
     PaintingBinding.instance.imageCache
-      ..maximumSize = 120
-      ..maximumSizeBytes = 48 << 20;
+      ..maximumSize = 200
+      ..maximumSizeBytes = 96 << 20;
 
     _configureLogging();
 
@@ -62,9 +63,13 @@ Future<void> _bootAndRun() async {
     _initWorkmanagerSafely(),
   ]);
 
+  final container = ProviderContainer();
+  container.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
+
   runApp(
-    const ProviderScope(
-      child: MyApp(),
+    UncontrolledProviderScope(
+      container: container,
+      child: const MyApp(),
     ),
   );
 
@@ -74,9 +79,9 @@ Future<void> _bootAndRun() async {
 Future<void> _initWorkmanagerSafely() async {
   try {
     await ContentPrefetchWorkmanager.initialize();
+    await ContentPrefetchWorkmanager.clearQueuedTasksOnStartup();
     await ContentPrefetchWorkmanager.schedule();
-    // Do not call triggerNow() on every cold start — it spawns duplicate one-off tasks
-    // and (with debug worker notifications) floods the notification shade.
+    // We intentionally avoid triggerNow() during startup.
   } catch (e, st) {
     _logStartupError('workmanager_init', e, st);
   }
@@ -123,9 +128,6 @@ void _logStartupError(String step, Object error, StackTrace stackTrace) {
   }
 }
 
-/// Request all permissions the app needs at startup.
-/// Doing this before runApp ensures no plugin or provider
-/// tries to access camera/mic before permission is granted.
 Future<void> _requestStartupPermissions() async {
   try {
     // Request in a single batch for faster resolution on Android.

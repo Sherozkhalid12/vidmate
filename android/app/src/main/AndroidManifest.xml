@@ -70,6 +70,11 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Prefer Skia path for video texture compositing; some GPUs show green YUV flashes with Impeller + video. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
     </application>
 
     <queries>

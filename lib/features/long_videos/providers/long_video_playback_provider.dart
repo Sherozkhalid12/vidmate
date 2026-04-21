@@ -107,8 +107,8 @@ class LongVideoPlaybackNotifier extends StateNotifier<LongVideoPlaybackState> {
 
 /// Provider for long video playback state
 final longVideoPlaybackProvider =
-    StateNotifierProvider<LongVideoPlaybackNotifier, LongVideoPlaybackState>(
-  (ref) => LongVideoPlaybackNotifier(),
+StateNotifierProvider<LongVideoPlaybackNotifier, LongVideoPlaybackState>(
+      (ref) => LongVideoPlaybackNotifier(),
 );
 
 /// Convenience provider to check if a video is playing

@@ -138,8 +138,8 @@ class LongVideoService {
       // Success code 201 per spec
       if (response.statusCode != 201 && response.statusCode != 200) {
         final err = (response.data is Map
-                ? (response.data['message'] ?? response.data['error'])
-                : null) ??
+            ? (response.data['message'] ?? response.data['error'])
+            : null) ??
             'Failed to create long video';
         return CreateLongVideoResult.failure(err.toString());
       }

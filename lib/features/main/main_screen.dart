@@ -117,7 +117,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           children: [
             // Main content layer - scrollable pages
             Padding(
-              padding: const EdgeInsets.only(bottom: 72.0),
+              // Reserve the glass bottom nav so tab content is not covered; pages also
+              // receive [totalBottomPadding] for list/overlay insets (nav + safe area).
+              padding: EdgeInsets.only(
+                bottom: bottomNavHeight,
+              ),
               child: IndexedStack(
                 index: _currentIndex,
                 sizing: StackFit.expand,

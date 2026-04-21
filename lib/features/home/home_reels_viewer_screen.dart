@@ -38,7 +38,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
     _pageController = PageController(initialPage: widget.initialIndex);
     // Seed provider with incoming reels so counts are synced everywhere.
     ref.read(reelsProvider.notifier).seedReels(widget.videos);
-    
+
     // Start playing initial video
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _playCurrentVideo();
@@ -67,7 +67,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
 
   void _playCurrentVideo() {
     if (_currentIndex < 0 || _currentIndex >= widget.videos.length) return;
-    
+
     final currentVideo = widget.videos[_currentIndex];
     if (currentVideo.videoUrl != null) {
       try {
@@ -77,7 +77,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
         // Ignore errors
       }
     }
-    
+
     // Pause other videos
     for (int i = 0; i < widget.videos.length; i++) {
       if (i != _currentIndex && widget.videos[i].videoUrl != null) {
@@ -93,11 +93,11 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
 
   void _onPageChanged(int index) {
     if (index < 0 || index >= widget.videos.length) return;
-    
+
     setState(() {
       _currentIndex = index;
     });
-    
+
     _playCurrentVideo();
   }
 
@@ -152,7 +152,7 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
 
   Widget _buildReelItem(PostModel video, int index) {
     final videoUrl = video.videoUrl;
-    final playerState = videoUrl != null 
+    final playerState = videoUrl != null
         ? ref.watch(videoPlayerProvider(videoUrl))
         : null;
     final isInitialized = playerState?.isInitialized ?? false;
@@ -259,14 +259,14 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                      _buildActionButton(
-                        icon: Icons.favorite,
-                        count: ref.watch(reelLikeCountProvider(video.id)),
-                        isActive: ref.watch(reelLikedProvider(video.id)),
-                        onTap: () {
-                          ref.read(reelsProvider.notifier).toggleLikeWithApi(video.id);
-                        },
-                      ),
+                    _buildActionButton(
+                      icon: Icons.favorite,
+                      count: ref.watch(reelLikeCountProvider(video.id)),
+                      isActive: ref.watch(reelLikedProvider(video.id)),
+                      onTap: () {
+                        ref.read(reelsProvider.notifier).toggleLikeWithApi(video.id);
+                      },
+                    ),
                     const SizedBox(height: 20),
                     _buildActionButton(
                       icon: Icons.comment_outlined,
@@ -322,13 +322,13 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
                               builder: (context, ref, _) {
                                 final followState = ref.watch(followProvider);
                                 final overrideStatus =
-                                    ref.watch(followStateProvider)[video.author.id];
+                                ref.watch(followStateProvider)[video.author.id];
                                 final isFollowing =
                                     overrideStatus == FollowRelationshipStatus.following ||
                                         (overrideStatus == null &&
                                             (followState.followingIds.isNotEmpty
                                                 ? followState.followingIds
-                                                    .contains(video.author.id)
+                                                .contains(video.author.id)
                                                 : video.author.isFollowing));
                                 return GestureDetector(
                                   onTap: () => ref.read(followProvider.notifier).toggleFollow(video.author.id),

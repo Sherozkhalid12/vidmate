@@ -69,7 +69,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     _precachedSearchThumbSig = sig;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !context.mounted) return;
       final dpr = MediaQuery.devicePixelRatioOf(context);
       final cell = (MediaQuery.sizeOf(context).width / 3 - 8).clamp(48.0, 400.0);
       final memW = (cell * dpr).round().clamp(48, 420);

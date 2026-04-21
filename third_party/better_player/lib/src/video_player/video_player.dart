@@ -654,11 +654,18 @@ class VideoPlayer extends StatefulWidget {
 class _VideoPlayerState extends State<VideoPlayer> {
   _VideoPlayerState() {
     _listener = () {
-      final int? newTextureId = widget.controller!.textureId;
-      if (newTextureId != _textureId) {
-        setState(() {
-          _textureId = newTextureId;
-        });
+      if (!mounted) return;
+      try {
+        final c = widget.controller;
+        if (c == null) return;
+        final int? newTextureId = c.textureId;
+        if (newTextureId != _textureId) {
+          setState(() {
+            _textureId = newTextureId;
+          });
+        }
+      } catch (_) {
+        // Controller can be disposed mid-handoff (inline ↔ embedded ExoPlayer).
       }
     };
   }
@@ -666,27 +673,60 @@ class _VideoPlayerState extends State<VideoPlayer> {
   late VoidCallback _listener;
   int? _textureId;
 
+  void _detachListener(VideoPlayerController? c) {
+    if (c == null) return;
+    try {
+      c.removeListener(_listener);
+    } catch (_) {}
+  }
+
+  void _attachListener(VideoPlayerController? c) {
+    if (c == null) return;
+    try {
+      c.addListener(_listener);
+    } catch (_) {
+      _textureId = null;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _textureId = widget.controller!.textureId;
-    // Need to listen for initialization events since the actual texture ID
-    // becomes available after asynchronous initialization finishes.
-    widget.controller!.addListener(_listener);
+    final c = widget.controller;
+    if (c == null) {
+      _textureId = null;
+      return;
+    }
+    try {
+      _textureId = c.textureId;
+      _attachListener(c);
+    } catch (_) {
+      _textureId = null;
+    }
   }
 
   @override
   void didUpdateWidget(VideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    oldWidget.controller!.removeListener(_listener);
-    _textureId = widget.controller!.textureId;
-    widget.controller!.addListener(_listener);
+    _detachListener(oldWidget.controller);
+    final c = widget.controller;
+    if (c == null) {
+      _textureId = null;
+      return;
+    }
+    try {
+      _textureId = c.textureId;
+      _attachListener(c);
+    } catch (_) {
+      _textureId = null;
+      if (mounted) setState(() {});
+    }
   }
 
   @override
   void deactivate() {
+    _detachListener(widget.controller);
     super.deactivate();
-    widget.controller!.removeListener(_listener);
   }
 
   @override

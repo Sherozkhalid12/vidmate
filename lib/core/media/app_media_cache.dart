@@ -13,6 +13,13 @@ class AppMediaCache {
       ..connectionTimeout = const Duration(seconds: 10),
   );
 
+  /// Isolated pool so long-video row JPEGs are not queued behind feed images.
+  static final IOClient _longVideoThumbClient = IOClient(
+    HttpClient()
+      ..maxConnectionsPerHost = 8
+      ..connectionTimeout = const Duration(seconds: 12),
+  );
+
   static final CacheManager reelsThumbnails = CacheManager(
     Config(
       'vidconnect_reels_thumbs',
@@ -28,6 +35,16 @@ class AppMediaCache {
       stalePeriod: const Duration(days: 7),
       maxNrOfCacheObjects: 800,
       fileService: HttpFileService(httpClient: _feedImageClient),
+    ),
+  );
+
+  /// Long Videos tab row thumbnails (isolated from feed eviction pressure).
+  static final CacheManager longVideoThumbnails = CacheManager(
+    Config(
+      'vidconnect_longvideo_thumbs',
+      stalePeriod: const Duration(days: 14),
+      maxNrOfCacheObjects: 500,
+      fileService: HttpFileService(httpClient: _longVideoThumbClient),
     ),
   );
 }

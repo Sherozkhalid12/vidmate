@@ -4,6 +4,7 @@ import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_button.dart';
+import '../../core/widgets/music_sticker_row.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
@@ -192,6 +193,12 @@ class PostDetailScreen extends ConsumerWidget {
                       color: context.textPrimary,
                       fontSize: 14,
                     ),
+                  ),
+                  MusicStickerRow(
+                    previewUrl: post.musicPreviewUrl,
+                    musicName: post.musicName,
+                    musicTitle: post.musicTitle,
+                    padding: const EdgeInsets.only(top: 8),
                   ),
                   const SizedBox(height: 16),
                   // Actions

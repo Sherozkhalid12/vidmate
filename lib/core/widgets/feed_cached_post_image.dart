@@ -5,6 +5,7 @@ import 'package:blurhash_dart/blurhash_dart.dart' as bh;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:image/image.dart' as img;
 import 'package:shimmer/shimmer.dart';
 
@@ -20,6 +21,11 @@ class FeedCachedPostImage extends StatefulWidget {
   final BoxFit fit;
   /// While the network image loads, show shimmer instead of blur/gradient preview.
   final bool useShimmerWhileLoading;
+  /// When set, disk cache is isolated from the default feed cache (e.g. long videos).
+  final CacheManager? diskCacheManager;
+  /// Override decoded memory cache dimensions (e.g. fixed tile size).
+  final int? memCacheWidthOverride;
+  final int? memCacheHeightOverride;
 
   const FeedCachedPostImage({
     super.key,
@@ -28,6 +34,9 @@ class FeedCachedPostImage extends StatefulWidget {
     this.blurHash,
     this.fit = BoxFit.cover,
     this.useShimmerWhileLoading = false,
+    this.diskCacheManager,
+    this.memCacheWidthOverride,
+    this.memCacheHeightOverride,
   });
 
   @override
@@ -67,6 +76,8 @@ class _FeedCachedPostImageState extends State<FeedCachedPostImage> {
     );
   }
 
+  CacheManager get _cache => widget.diskCacheManager ?? AppMediaCache.feedMedia;
+
   Widget _blurredTransparentFromImage(Size size, double dpr) {
     if (_isProtectedCdnThumb(widget.imageUrl)) {
       return const SizedBox.shrink();
@@ -82,7 +93,7 @@ class _FeedCachedPostImageState extends State<FeedCachedPostImage> {
           image: ResizeImage(
             CachedNetworkImageProvider(
               widget.imageUrl,
-              cacheManager: AppMediaCache.feedMedia,
+              cacheManager: _cache,
             ),
             width: previewW,
             height: previewH,
@@ -175,15 +186,17 @@ class _FeedCachedPostImageState extends State<FeedCachedPostImage> {
     final mq = MediaQuery.sizeOf(context);
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final dims = feedMemCacheDimensions(mq, dpr);
+    final mw = widget.memCacheWidthOverride ?? dims.w;
+    final mh = widget.memCacheHeightOverride ?? dims.h;
     return CachedNetworkImage(
       imageUrl: widget.imageUrl,
-      cacheManager: AppMediaCache.feedMedia,
+      cacheManager: _cache,
       cacheKey: widget.imageUrl,
       fit: widget.fit,
       width: double.infinity,
       height: double.infinity,
-      memCacheWidth: dims.w,
-      memCacheHeight: dims.h,
+      memCacheWidth: mw,
+      memCacheHeight: mh,
       // Avoid placeholder flash when parent rebuilds after SWR — image stays in memory cache.
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,

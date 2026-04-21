@@ -16,17 +16,25 @@ import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 import '../../core/providers/main_tab_index_provider.dart';
-import '../video/video_player_screen.dart';
 import '../profile/profile_screen.dart';
+import 'long_video_embedded_session_host.dart';
+import '../../core/providers/long_video_embedded_handoff_provider.dart';
+import 'long_videos_search_screen.dart';
 import 'providers/long_videos_provider.dart';
 import 'providers/long_video_playback_provider.dart';
+import 'providers/long_video_autoplay_manager.dart';
+import 'providers/long_video_feed_search_query_provider.dart';
 import 'providers/long_video_widget_provider.dart';
+import 'widgets/long_video_tile_visibility.dart';
 import 'dart:async';
 import 'dart:ui';
 
 /// Long Videos Page - YouTube-style video feed with Riverpod state management
 class LongVideosScreen extends ConsumerStatefulWidget {
-  const LongVideosScreen({super.key});
+  /// Clears the bottom nav / safe area overlap (same idea as [HomeFeedPage.bottomPadding]).
+  final double bottomPadding;
+
+  const LongVideosScreen({super.key, this.bottomPadding = 0});
 
   @override
   ConsumerState<LongVideosScreen> createState() => _LongVideosScreenState();
@@ -38,14 +46,86 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
   bool get wantKeepAlive => true;
 
   final ScrollController _scrollController = ScrollController();
-  final Map<String, Timer> _controlsTimers = {};
-  final Map<String, GlobalKey> _videoKeys = {}; // Track widget keys for position detection
-  DateTime? _lastPlayActionTime; // Prevent rapid play/pause toggles
   Timer? _scrollThrottleTimer; // Throttle scroll events
+  Timer? _warmPoolDebounceTimer; // Section 5.1 — debounced warm / eviction
+  final Set<String> _warmPoolVideoIds = {};
+  final Map<String, Timer> _pendingReleaseTimers = {};
+  static const double _approxLongVideoTileHeight = 440;
+  static const Duration _autoplayDwellDelay = Duration(milliseconds: 900);
+  bool _isRoutePushInProgress = false;
+  int _autoplayRequestId = 0;
+  bool _autoplayArmedByUserScroll = false;
+  ProviderSubscription<int>? _mainTabSub;
+  ProviderSubscription<String?>? _dominantSub;
+  ProviderSubscription<LongVideoPlaybackState>? _playbackSub;
+  ProviderSubscription<LongVideosState>? _videosSub;
   bool _ensuredInitialLoad = false;
   @override
   void initState() {
     super.initState();
+    _mainTabSub = ref.listenManual<int>(mainTabIndexProvider, (prev, next) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (prev == 3 && next != 3) {
+          _autoplayArmedByUserScroll = false;
+          _warmPoolDebounceTimer?.cancel();
+          _pauseAllInlinePlayers();
+          ref.read(longVideosProvider.notifier).cancelPendingNetworkLoad();
+          ref.read(longVideoAutoplayManagerProvider.notifier).disable();
+        } else if (prev != null && prev != 3 && next == 3) {
+          _autoplayArmedByUserScroll = false;
+          ref.read(longVideoAutoplayManagerProvider.notifier).enable();
+          _scheduleWarmPoolAfterTabReturn();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            Future<void>.delayed(const Duration(milliseconds: 120), () {
+              if (!mounted) return;
+              _armAutoplayIfLongVideosTabVisible();
+            });
+          });
+        }
+      });
+    });
+    _dominantSub = ref.listenManual<String?>(
+      longVideoAutoplayManagerProvider.select((s) => s.dominantVideoId),
+      (prev, next) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_onAutoplayDominantChanged(prev, next));
+        });
+      },
+    );
+    _playbackSub = ref.listenManual<LongVideoPlaybackState>(
+      longVideoPlaybackProvider,
+      (previous, next) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (previous?.currentlyPlayingVideoId != next.currentlyPlayingVideoId) {
+            if (next.currentlyPlayingVideoId != null) {
+              _pauseAllVideosExcept(next.currentlyPlayingVideoId!);
+            }
+          }
+        });
+      },
+    );
+    _videosSub = ref.listenManual<LongVideosState>(
+      longVideosProvider,
+      (prev, next) {
+        if (next.videos.isEmpty) return;
+        final hadVideos = prev?.videos.isNotEmpty == true;
+        final firstBatch = !hadVideos && next.videos.isNotEmpty;
+        final refreshDone =
+            (prev?.isRefreshing == true) && !next.isRefreshing && next.videos.isNotEmpty;
+        if (!firstBatch && !refreshDone) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Future<void>.delayed(const Duration(milliseconds: 120), () {
+            if (!mounted) return;
+            _armAutoplayIfLongVideosTabVisible();
+          });
+        });
+      },
+    );
     // Setup scroll listener for pagination
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -53,6 +133,10 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
       final s = ref.read(longVideosProvider);
       if (s.videos.isNotEmpty) {
         _ensuredInitialLoad = true;
+        Future<void>.delayed(const Duration(milliseconds: 120), () {
+          if (!mounted) return;
+          _armAutoplayIfLongVideosTabVisible();
+        });
         return;
       }
       if (_ensuredInitialLoad) return;
@@ -63,36 +147,17 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
     });
   }
 
-  void _pauseVideoById(String videoId) {
-    final videos = ref.read(longVideosListProvider);
-    try {
-      final video = videos.firstWhere((v) => v.id == videoId);
-      if (video.videoUrl != null) {
-        try {
-          final key = VideoWidgetKey(video.id, video.videoUrl!);
-          if (ref.read(longVideoWidgetProvider(key)).isPlaying) {
-            ref.read(longVideoWidgetProvider(key).notifier).pause();
-          }
-        } catch (e) {
-          // Ignore errors
-        }
-      }
-    } catch (e) {
-      // Video not found, ignore
-    }
-  }
-
   /// Pause all videos except the one with the given ID
   void _pauseAllVideosExcept(String exceptVideoId) {
     final videos = ref.read(longVideosListProvider);
-    
+
     for (var video in videos) {
       // Skip the video that should be playing
       if (video.id == exceptVideoId) continue;
-      
+
       // Skip if no video URL
       if (video.videoUrl == null) continue;
-      
+
       try {
         final key = VideoWidgetKey(video.id, video.videoUrl!);
         if (ref.read(longVideoWidgetProvider(key)).isPlaying) {
@@ -106,41 +171,57 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
 
   @override
   void dispose() {
+    _autoplayRequestId++;
+    _isRoutePushInProgress = true;
+    _mainTabSub?.close();
+    _dominantSub?.close();
+    _playbackSub?.close();
+    _videosSub?.close();
     _scrollController.dispose();
     _scrollThrottleTimer?.cancel();
-    for (var timer in _controlsTimers.values) {
-      timer.cancel();
+    _warmPoolDebounceTimer?.cancel();
+    for (final t in _pendingReleaseTimers.values) {
+      t.cancel();
     }
-    _controlsTimers.clear();
-    _videoKeys.clear();
+    _pendingReleaseTimers.clear();
     // Do not use ref in dispose() — Riverpod invalidates ref when the widget is torn down.
     // Playback state is cleared when providers are no longer watched (e.g. autoDispose).
     super.dispose();
   }
 
-  void _startControlsTimer(String videoId) {
-    _controlsTimers[videoId]?.cancel();
-    _controlsTimers[videoId] = Timer(const Duration(seconds: 3), () {
-      // Only update if widget is still mounted and video is still playing
-      if (mounted) {
-        try {
-          final playbackState = ref.read(longVideoPlaybackProvider);
-          // Only hide controls if this video is still the currently playing one
-          if (playbackState.currentlyPlayingVideoId == videoId) {
-            ref.read(longVideoPlaybackProvider.notifier).setControlsVisibility(videoId, false);
+  /// Arms feed autoplay without requiring a scroll gesture (first paint / tab / refresh).
+  void _armAutoplayIfLongVideosTabVisible() {
+    if (!mounted) return;
+    if (ref.read(mainTabIndexProvider) != 3) return;
+    _autoplayArmedByUserScroll = true;
+
+    void seedHeadAndKick() {
+      if (!mounted) return;
+      if (ref.read(mainTabIndexProvider) != 3) return;
+      var dom = ref.read(longVideoAutoplayManagerProvider).dominantVideoId;
+      if (dom == null) {
+        final videos = ref.read(longVideosListProvider);
+        if (videos.isNotEmpty) {
+          final u = videos.first.videoUrl;
+          if (u != null && u.isNotEmpty) {
+            ref.read(longVideoAutoplayManagerProvider.notifier).adoptHeadIfUnset(videos.first.id);
+            dom = ref.read(longVideoAutoplayManagerProvider).dominantVideoId;
           }
-        } catch (e) {
-          // Provider might be disposed, ignore
         }
       }
-    });
-  }
-
-  void _showControlsTemporarily(String videoId) {
-    if (mounted) {
-      ref.read(longVideoPlaybackProvider.notifier).setControlsVisibility(videoId, true);
-      _startControlsTimer(videoId);
+      if (dom != null) {
+        unawaited(_onAutoplayDominantChanged(null, dom));
+      }
     }
+
+    seedHeadAndKick();
+    // Visibility can report after first frame; seed + autoplay only if still no dominant.
+    Future<void>.delayed(const Duration(milliseconds: 360), () {
+      if (!mounted) return;
+      if (ref.read(mainTabIndexProvider) != 3) return;
+      if (ref.read(longVideoAutoplayManagerProvider).dominantVideoId != null) return;
+      seedHeadAndKick();
+    });
   }
 
   void _pauseAllInlinePlayers() {
@@ -149,42 +230,203 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
       final u = video.videoUrl;
       if (u == null || u.isEmpty) continue;
       try {
-        ref.read(longVideoWidgetProvider(VideoWidgetKey(video.id, u)).notifier).pause();
+        ref
+            .read(longVideoWidgetProvider(VideoWidgetKey(video.id, u)).notifier)
+            .pause();
       } catch (_) {}
     }
     ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
   }
 
-  void _pauseAllOtherVideos(String currentVideoId, String? currentVideoUrl) {
-    if (currentVideoUrl == null) return;
-    
-    final videos = ref.read(longVideosListProvider);
-    
-    // CRITICAL: Pause ALL videos except the current one
-    // Each widget has its own provider instance, so this is safe
-    for (var video in videos) {
-      // Skip the current video
-      if (video.id == currentVideoId) continue;
-      
-      // Skip if no video URL
-      if (video.videoUrl == null) continue;
-      
-      try {
-        final key = VideoWidgetKey(video.id, video.videoUrl!);
-        if (ref.read(longVideoWidgetProvider(key)).isPlaying) {
-          ref.read(longVideoWidgetProvider(key).notifier).pause();
-        }
-      } catch (e) {
-        // Provider might not exist, ignore
-      }
+  PostModel? _longVideoPostById(String id) {
+    try {
+      return ref.read(longVideosListProvider).firstWhere((p) => p.id == id);
+    } catch (_) {
+      return null;
     }
   }
 
+  Future<void> _autoPauseLongVideoTile(String videoId) async {
+    final post = _longVideoPostById(videoId);
+    final u = post?.videoUrl;
+    if (u == null || u.isEmpty) return;
+    await ref
+        .read(longVideoWidgetProvider(VideoWidgetKey(videoId, u)).notifier)
+        .autoPause();
+  }
+
+  Future<void> _onAutoplayDominantChanged(String? prev, String? next) async {
+    final requestId = ++_autoplayRequestId;
+    if (!mounted) return;
+    if (_isRoutePushInProgress) return;
+    if (!_autoplayArmedByUserScroll) return;
+    final mgr = ref.read(longVideoAutoplayManagerProvider);
+    if (!mgr.isEnabled) return;
+    final pb = ref.read(longVideoPlaybackProvider);
+    if (!pb.isAutoplayEnabled) return;
+
+    if (prev != null && prev != next) {
+      await _autoPauseLongVideoTile(prev);
+      if (!mounted) return;
+      if (ref.read(longVideoPlaybackProvider).currentlyPlayingVideoId == prev) {
+        ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
+      }
+    }
+
+    if (next == null) return;
+    final post = _longVideoPostById(next);
+    final u = post?.videoUrl;
+    if (u == null || u.isEmpty) return;
+
+    await Future<void>.delayed(_autoplayDwellDelay);
+    if (!mounted) return;
+    if (requestId != _autoplayRequestId) return;
+    if (_isRoutePushInProgress) return;
+    if (ref.read(longVideoAutoplayManagerProvider).dominantVideoId != next) {
+      return;
+    }
+
+    await ref
+        .read(longVideoWidgetProvider(VideoWidgetKey(next, u)).notifier)
+        .autoplay();
+    if (!mounted) return;
+    ref.read(longVideosProvider.notifier).prefetchNextAfter(next);
+    ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(next);
+    ref
+        .read(longVideoPlaybackProvider.notifier)
+        .setControlsVisibility(next, false);
+  }
+
   void _onScroll() {
+    if (!_autoplayArmedByUserScroll &&
+        _scrollController.hasClients &&
+        _scrollController.offset.abs() > 10) {
+      _autoplayArmedByUserScroll = true;
+      final dom = ref.read(longVideoAutoplayManagerProvider).dominantVideoId;
+      if (dom != null) {
+        unawaited(_onAutoplayDominantChanged(null, dom));
+      }
+    }
     // Throttle scroll events to improve performance
     _scrollThrottleTimer?.cancel();
     _scrollThrottleTimer = Timer(const Duration(milliseconds: 150), () {
       _handleScroll();
+    });
+    _warmPoolDebounceTimer?.cancel();
+    _warmPoolDebounceTimer = Timer(const Duration(milliseconds: 280), () {
+      if (mounted) {
+        unawaited(_applyScrollWarmPool());
+      }
+    });
+  }
+
+  int _estimateCenterVideoIndex(int listLength) {
+    if (listLength <= 0) return 0;
+    if (!_scrollController.hasClients) return 0;
+    final offset = _scrollController.offset;
+    final extent = _scrollController.position.viewportDimension;
+    final centerPixel = offset + extent * 0.5;
+    final idx =
+        (centerPixel / _approxLongVideoTileHeight).floor().clamp(0, listLength - 1);
+    return idx;
+  }
+
+  /// Warm ±2 around viewport center; release tiles that left the pool (Section 5).
+  Future<void> _applyScrollWarmPool() async {
+    if (!mounted) return;
+    final videos = ref.read(longVideosListProvider);
+    if (videos.isEmpty) return;
+
+    final center = _estimateCenterVideoIndex(videos.length);
+    final dominant = ref.read(longVideoAutoplayManagerProvider).dominantVideoId;
+    final nextPool = <String>{};
+    for (var i = center - 2; i <= center + 2; i++) {
+      if (i < 0 || i >= videos.length) continue;
+      final u = videos[i].videoUrl;
+      if (u == null || u.isEmpty) continue;
+      nextPool.add(videos[i].id);
+    }
+    for (final id in nextPool) {
+      _pendingReleaseTimers.remove(id)?.cancel();
+    }
+
+    for (final id in _warmPoolVideoIds.difference(nextPool)) {
+      if (id == dominant) continue;
+      PostModel? post;
+      try {
+        post = videos.firstWhere((v) => v.id == id);
+      } catch (_) {
+        continue;
+      }
+      final u = post.videoUrl;
+      if (u == null || u.isEmpty) continue;
+      try {
+        await ref
+            .read(longVideoWidgetProvider(VideoWidgetKey(id, u)).notifier)
+            .autoPause();
+      } catch (_) {}
+      _pendingReleaseTimers.remove(id)?.cancel();
+      _pendingReleaseTimers[id] = Timer(const Duration(milliseconds: 900), () async {
+        if (!mounted) return;
+        if (_warmPoolVideoIds.contains(id)) {
+          _pendingReleaseTimers.remove(id);
+          return;
+        }
+        final currentDominant =
+            ref.read(longVideoAutoplayManagerProvider).dominantVideoId;
+        if (currentDominant == id) {
+          _pendingReleaseTimers.remove(id);
+          return;
+        }
+        final currentVideos = ref.read(longVideosListProvider);
+        PostModel? currentPost;
+        try {
+          currentPost = currentVideos.firstWhere((v) => v.id == id);
+        } catch (_) {
+          _pendingReleaseTimers.remove(id);
+          return;
+        }
+        final currentUrl = currentPost.videoUrl;
+        if (currentUrl == null || currentUrl.isEmpty) {
+          _pendingReleaseTimers.remove(id);
+          return;
+        }
+        try {
+          await ref
+              .read(longVideoWidgetProvider(VideoWidgetKey(id, currentUrl)).notifier)
+              .release();
+        } catch (_) {}
+        _pendingReleaseTimers.remove(id);
+      });
+    }
+    _warmPoolVideoIds
+      ..clear()
+      ..addAll(nextPool);
+
+    var staggerMs = 0;
+    for (var i = center - 2; i <= center + 2; i++) {
+      if (i < 0 || i >= videos.length) continue;
+      final post = videos[i];
+      final u = post.videoUrl;
+      if (u == null || u.isEmpty) continue;
+      final vk = VideoWidgetKey(post.id, u);
+      final delay = Duration(milliseconds: staggerMs);
+      staggerMs += 48;
+      Future<void>.delayed(delay, () {
+        if (!mounted) return;
+        try {
+          unawaited(
+            ref.read(longVideoWidgetProvider(vk).notifier).warmUp(),
+          );
+        } catch (_) {}
+      });
+    }
+  }
+
+  void _scheduleWarmPoolAfterTabReturn() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_applyScrollWarmPool());
     });
   }
 
@@ -198,64 +440,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
       final notifier = ref.read(longVideosProvider.notifier);
       notifier.loadMoreVideos();
     }
-    
-    // Check if manually played video is still visible
-    _checkManualPlayVideoVisibility();
+
   }
-
-  /// Check if manually played video is still visible, if not, stop it
-  /// If a video was manually played and user scrolls away, STOP it immediately
-  void _checkManualPlayVideoVisibility() {
-    if (!mounted) return;
-
-    final playbackState = ref.read(longVideoPlaybackProvider);
-    if (!playbackState.isManualPlay || playbackState.currentlyPlayingVideoId == null) {
-      return;
-    }
-
-    final videoId = playbackState.currentlyPlayingVideoId!;
-    final key = _videoKeys[videoId];
-    if (key?.currentContext == null) {
-      // Video widget is not in tree, stop it
-      _pauseVideoById(videoId);
-      ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
-      return;
-    }
-
-    try {
-      final renderBox = key!.currentContext!.findRenderObject() as RenderBox?;
-      if (renderBox == null || !renderBox.attached) {
-        // Video is not visible, stop it
-        _pauseVideoById(videoId);
-        ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
-        return;
-      }
-
-      final screenHeight = MediaQuery.of(context).size.height;
-      final position = renderBox.localToGlobal(Offset.zero);
-      final size = renderBox.size;
-
-      // Check if video is still sufficiently visible (at least 40% on screen)
-      // Use 40% threshold to stop video before it completely scrolls away
-      final visibleTop = position.dy.clamp(0.0, screenHeight);
-      final visibleBottom = (position.dy + size.height).clamp(0.0, screenHeight);
-      final visibleHeight = visibleBottom - visibleTop;
-      final visibleRatio = visibleHeight / size.height;
-
-      if (visibleRatio < 0.4) {
-        // Video scrolled out of view, STOP it immediately
-        _pauseVideoById(videoId);
-        ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
-        // Show controls so play icon appears when video is paused
-        ref.read(longVideoPlaybackProvider.notifier).setControlsVisibility(videoId, true);
-      }
-    } catch (e) {
-      // On error, assume video is not visible, stop it
-      _pauseVideoById(videoId);
-      ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
-    }
-  }
-
 
   String _formatViews(int views) {
     if (views >= 1000000) {
@@ -280,6 +466,27 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
     return 'Just now';
   }
 
+  bool _isValidRemoteUrl(String? value) {
+    if (value == null || value.trim().isEmpty) return false;
+    final uri = Uri.tryParse(value.trim());
+    if (uri == null) return false;
+    if (!(uri.scheme == 'http' || uri.scheme == 'https')) return false;
+    return uri.host.isNotEmpty;
+  }
+
+  /// Inline feed tile: when to paint the [BetterPlayer] layer (thumbnail always underneath).
+  /// Hides surface while buffering near 0:00 to avoid black/green flash. Player stays mounted.
+  bool _longVideoTileVideoPaintVisible(LongVideoWidgetState s) {
+    if (!s.isInitialized || s.controller == null) return false;
+    final nearStart = s.position.inMilliseconds < 300;
+    if (s.isBuffering && nearStart) return false;
+    if (s.isSeeking) return true;
+    if (s.isPlaying && !s.isBuffering) return true;
+    if (s.isPlaying && s.isBuffering && !nearStart) return true;
+    if (!s.isPlaying && s.position > Duration.zero) return true;
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -289,31 +496,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
     final error = ref.watch(longVideosErrorProvider);
     final offlineBanner = ref.watch(longVideosOfflineBannerProvider);
 
-    ref.listen<int>(mainTabIndexProvider, (prev, next) {
-      if (prev == 3 && next != 3) {
-        _pauseAllInlinePlayers();
-        ref.read(longVideosProvider.notifier).cancelPendingNetworkLoad();
-      }
-    });
-
-    // Listen to playback state changes to pause other videos
-    // This is called in build, which is safe for ref.listen
-    // Only listen once per build cycle to prevent multiple subscriptions
-    ref.listen<LongVideoPlaybackState>(
-      longVideoPlaybackProvider,
-      (previous, next) {
-        if (previous?.currentlyPlayingVideoId != next.currentlyPlayingVideoId && mounted) {
-          // A new video started playing, pause ALL other videos immediately
-          if (next.currentlyPlayingVideoId != null) {
-            // Pause all videos except the new one
-            _pauseAllVideosExcept(next.currentlyPlayingVideoId!);
-          }
-        }
-      },
-    );
-
     final showSkeleton = videos.isEmpty && isLoading;
-
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
@@ -323,7 +506,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
             _buildHeader(),
             if (offlineBanner && videos.isNotEmpty)
               Material(
-                color: ThemeHelper.getSurfaceColor(context).withValues(alpha: 0.95),
+                color: ThemeHelper.getSurfaceColor(context)
+                    .withValues(alpha: 0.95),
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -390,7 +574,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                           color: ThemeHelper.getAccentColor(context),
                           child: ListView.builder(
                             controller: _scrollController,
-                            padding: EdgeInsets.zero,
+                            padding:
+                                EdgeInsets.only(bottom: widget.bottomPadding),
                             itemCount: videos.length +
                                 ((isLoading || isRefreshing) &&
                                         videos.isNotEmpty
@@ -401,11 +586,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                                 return _buildLoadMoreSkeleton();
                               }
                               final video = videos[index];
-                              if (!_videoKeys.containsKey(video.id)) {
-                                _videoKeys[video.id] = GlobalKey();
-                              }
                               return _buildVideoCard(video,
-                                  key: _videoKeys[video.id]);
+                                  itemKey: ValueKey('lv_card_${video.id}_$index'));
                             },
                           ),
                         ),
@@ -465,7 +647,7 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
         ? Colors.white10
         : Colors.black12;
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + widget.bottomPadding),
       itemCount: 6,
       itemBuilder: (context, index) {
         return Padding(
@@ -542,7 +724,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: borderDecoration.copyWith(
                   color: Colors.white.withOpacity(0.08),
                 ),
@@ -554,9 +737,9 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
 
   Widget _buildHeaderContent() {
     return Row(
-        children: [
-          // App Logo/Name
-          Text(
+      children: [
+        Expanded(
+          child: Text(
             'VidConnect',
             style: TextStyle(
               color: ThemeHelper.getTextPrimary(context),
@@ -565,18 +748,43 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
               letterSpacing: -0.5,
             ),
           ),
-        ],
-      );
+        ),
+        IconButton(
+          tooltip: 'Search long videos',
+          icon: Icon(
+            Icons.search,
+            color: ThemeHelper.getTextPrimary(context),
+            size: 26,
+          ),
+          onPressed: () {
+            Navigator.push<void>(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => LongVideosSearchScreen(
+                  bottomPadding: widget.bottomPadding,
+                ),
+              ),
+            ).then((_) {
+              if (!context.mounted) return;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!context.mounted) return;
+                ref.read(longVideoFeedSearchQueryProvider.notifier).state = '';
+              });
+            });
+          },
+        ),
+      ],
+    );
   }
 
-  Widget _buildVideoCard(PostModel video, {GlobalKey? key}) {
+  Widget _buildVideoCard(PostModel video, {Key? itemKey}) {
     final views = video.likes * 10; // Convert likes to views for display
     final formattedViews = _formatViews(views);
     final timeAgo = _formatTimeAgo(video.createdAt);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(
-      key: key ?? ValueKey(video.id),
+      key: itemKey ?? ValueKey(video.id),
       children: [
         isDark
             ? Container(
@@ -591,7 +799,8 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.08),
                     ),
-                    child: _buildVideoCardContent(video, formattedViews, timeAgo),
+                    child:
+                        _buildVideoCardContent(video, formattedViews, timeAgo),
                   ),
                 ),
               ),
@@ -600,58 +809,48 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
     );
   }
 
-  Widget _buildVideoCardContent(PostModel video, String formattedViews, String timeAgo) {
+  Widget _buildVideoCardContent(
+      PostModel video, String formattedViews, String timeAgo) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-          // User Info Section
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                // Profile Picture - Clickable
-                GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProfileScreen(user: video.author),
-                      ),
-                    );
-                  },
-                  child: ClipOval(
-                    child: video.author.avatarUrl.isNotEmpty
-                        ? CachedNetworkImage(
-                            imageUrl: video.author.avatarUrl,
+        // User Info Section
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              // Profile Picture - Clickable
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfileScreen(user: video.author),
+                    ),
+                  );
+                },
+                child: ClipOval(
+                  child: _isValidRemoteUrl(video.author.avatarUrl)
+                      ? CachedNetworkImage(
+                          imageUrl: video.author.avatarUrl,
+                          width: 40,
+                          height: 40,
+                          fit: BoxFit.cover,
+                          cacheManager: AppMediaCache.feedMedia,
+                          memCacheWidth:
+                              (40 * MediaQuery.devicePixelRatioOf(context))
+                                  .round()
+                                  .clamp(1, 256),
+                          memCacheHeight:
+                              (40 * MediaQuery.devicePixelRatioOf(context))
+                                  .round()
+                                  .clamp(1, 256),
+                          placeholder: (context, url) => Container(
                             width: 40,
                             height: 40,
-                            fit: BoxFit.cover,
-                            cacheManager: AppMediaCache.feedMedia,
-                            memCacheWidth: (40 *
-                                    MediaQuery.devicePixelRatioOf(context))
-                                .round()
-                                .clamp(1, 256),
-                            memCacheHeight: (40 *
-                                    MediaQuery.devicePixelRatioOf(context))
-                                .round()
-                                .clamp(1, 256),
-                            placeholder: (context, url) => Container(
-                              width: 40,
-                              height: 40,
-                              color: ThemeHelper.getSurfaceColor(context),
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              width: 40,
-                              height: 40,
-                              color: ThemeHelper.getSurfaceColor(context),
-                              child: Icon(
-                                Icons.person,
-                                color: ThemeHelper.getTextSecondary(context),
-                                size: 20,
-                              ),
-                            ),
-                          )
-                        : Container(
+                            color: ThemeHelper.getSurfaceColor(context),
+                          ),
+                          errorWidget: (context, url, error) => Container(
                             width: 40,
                             height: 40,
                             color: ThemeHelper.getSurfaceColor(context),
@@ -661,110 +860,127 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                               size: 20,
                             ),
                           ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // User Name and Views - Clickable
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ProfileScreen(user: video.author),
-                        ),
-                      );
-                    },
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          video.author.displayName,
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '$formattedViews • $timeAgo',
-                          style: TextStyle(
+                        )
+                      : Container(
+                          width: 40,
+                          height: 40,
+                          color: ThemeHelper.getSurfaceColor(context),
+                          child: Icon(
+                            Icons.person,
                             color: ThemeHelper.getTextSecondary(context),
-                            fontSize: 13,
+                            size: 20,
                           ),
                         ),
-                      ],
-                    ),
-                  ),
                 ),
-                // Follow Button - hide when author is current user; state via Riverpod
-                Consumer(
-                  builder: (context, ref, child) {
-                    final currentUser = ref.watch(currentUserProvider);
-                    if (currentUser?.id == video.author.id) {
-                      return const SizedBox.shrink();
-                    }
-                    final followOverrides = ref.watch(followStateProvider);
-                    final followState = ref.watch(followProvider);
-                    final posts = ref.watch(postsListProvider);
-                    PostModel? post;
-                    try {
-                      post = posts.firstWhere((p) => p.author.id == video.author.id);
-                    } catch (_) {
-                      post = null;
-                    }
-                    final overrideStatus = followOverrides[video.author.id];
-                    final isFollowing =
-                        overrideStatus == FollowRelationshipStatus.following ||
-                            (overrideStatus == null &&
-                                (followState.followingIds.isNotEmpty
-                                    ? followState.followingIds
-                                        .contains(video.author.id)
-                                    : (post?.author.isFollowing ??
-                                        video.author.isFollowing)));
-                    return GestureDetector(
-                      onTap: () {
-                        ref.read(followProvider.notifier).toggleFollow(video.author.id);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: isFollowing ? Colors.transparent : ThemeHelper.getAccentColor(context),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: isFollowing
-                                ? ThemeHelper.getTextPrimary(context)
-                                : ThemeHelper.getAccentColor(context),
-                            width: isFollowing ? 1.5 : 1,
-                          ),
-                        ),
-                        child: Text(
-                          isFollowing ? 'Following' : 'Follow',
-                          style: TextStyle(
-                            color: isFollowing
-                                ? ThemeHelper.getTextPrimary(context)
-                                : ThemeHelper.getOnAccentColor(context),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+              ),
+              const SizedBox(width: 12),
+              // User Name and Views - Clickable
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProfileScreen(user: video.author),
                       ),
                     );
                   },
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => _showLongVideoMoreMenu(context, video),
-                  child: Icon(
-                    CupertinoIcons.ellipsis,
-                    color: ThemeHelper.getTextPrimary(context),
-                    size: 20,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        video.author.displayName,
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$formattedViews • $timeAgo',
+                        style: TextStyle(
+                          color: ThemeHelper.getTextSecondary(context),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+              // Follow Button - hide when author is current user; state via Riverpod
+              Consumer(
+                builder: (context, ref, child) {
+                  final currentUser = ref.watch(currentUserProvider);
+                  if (currentUser?.id == video.author.id) {
+                    return const SizedBox.shrink();
+                  }
+                  final followOverrides = ref.watch(followStateProvider);
+                  final followState = ref.watch(followProvider);
+                  final posts = ref.watch(postsListProvider);
+                  PostModel? post;
+                  try {
+                    post =
+                        posts.firstWhere((p) => p.author.id == video.author.id);
+                  } catch (_) {
+                    post = null;
+                  }
+                  final overrideStatus = followOverrides[video.author.id];
+                  final isFollowing =
+                      overrideStatus == FollowRelationshipStatus.following ||
+                          (overrideStatus == null &&
+                              (followState.followingIds.isNotEmpty
+                                  ? followState.followingIds
+                                      .contains(video.author.id)
+                                  : (post?.author.isFollowing ??
+                                      video.author.isFollowing)));
+                  return GestureDetector(
+                    onTap: () {
+                      ref
+                          .read(followProvider.notifier)
+                          .toggleFollow(video.author.id);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isFollowing
+                            ? Colors.transparent
+                            : ThemeHelper.getAccentColor(context),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: isFollowing
+                              ? ThemeHelper.getTextPrimary(context)
+                              : ThemeHelper.getAccentColor(context),
+                          width: isFollowing ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Text(
+                        isFollowing ? 'Following' : 'Follow',
+                        style: TextStyle(
+                          color: isFollowing
+                              ? ThemeHelper.getTextPrimary(context)
+                              : ThemeHelper.getOnAccentColor(context),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _showLongVideoMoreMenu(context, video),
+                child: Icon(
+                  CupertinoIcons.ellipsis,
+                  color: ThemeHelper.getTextPrimary(context),
+                  size: 20,
+                ),
+              ),
+            ],
           ),
+        ),
         // Caption - below the icon/author row, above video
         if (video.caption.isNotEmpty)
           Padding(
@@ -822,7 +1038,9 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                 );
 
                 if (result.success) {
-                  ref.read(longVideosProvider.notifier).removeVideoById(video.id);
+                  ref
+                      .read(longVideosProvider.notifier)
+                      .removeVideoById(video.id);
                   await ref.read(postsProvider.notifier).loadPosts();
                 }
               },
@@ -870,11 +1088,11 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                 SnackBar(
                   content: Text(
                     'Link copied!',
-                    style:
-                        TextStyle(color: ThemeHelper.getTextPrimary(parentContext)),
+                    style: TextStyle(
+                        color: ThemeHelper.getTextPrimary(parentContext)),
                   ),
-                  backgroundColor:
-                      ThemeHelper.getSurfaceColor(parentContext).withOpacity(0.95),
+                  backgroundColor: ThemeHelper.getSurfaceColor(parentContext)
+                      .withOpacity(0.95),
                 ),
               );
             },
@@ -955,9 +1173,9 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
   }
 
   Widget _buildVideoPlayer(PostModel video) {
-    final videoUrl = video.videoUrl;
-    
-    if (videoUrl == null) {
+    final videoUrl = video.videoUrl?.trim();
+
+    if (videoUrl == null || videoUrl.isEmpty) {
       return Container(
         width: double.infinity,
         height: 220,
@@ -974,301 +1192,169 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
     // This ensures each widget has its own independent video player instance
     final key = VideoWidgetKey(video.id, videoUrl);
     final widgetState = ref.watch(longVideoWidgetProvider(key));
-    final playbackState = ref.watch(longVideoPlaybackProvider);
-    
-    final isVideoInitialized = widgetState.isInitialized;
-    final isPlaying = widgetState.isPlaying;
-    final isThisVideoPlaying = playbackState.currentlyPlayingVideoId == video.id && isPlaying;
-    final showControls = playbackState.showControls[video.id] ?? true;
+    final isDominant = ref.watch(
+      longVideoAutoplayManagerProvider
+          .select((s) => s.dominantVideoId == video.id),
+    );
 
-    return Stack(
-      children: [
-          // Video player or thumbnail with tap handler
+    final isVideoInitialized = widgetState.isInitialized;
+
+    final rawThumb = video.effectiveThumbnailUrl ??
+        video.thumbnailUrl ??
+        video.imageUrl ??
+        '';
+    final networkThumb = _isValidRemoteUrl(rawThumb) &&
+            !isProtectedVideoCdnThumbnailUrl(rawThumb)
+        ? rawThumb
+        : '';
+    final videoPaintVisible = _longVideoTileVideoPaintVisible(widgetState);
+
+    return LongVideoTileVisibility(
+      videoId: video.id,
+      child: Stack(
+        children: [
+          // Thumbnail always under a single BetterPlayer layer (opacity per §2).
           GestureDetector(
-            onTap: () {
-              // Only navigate if video is not initialized or if tapping outside play button
-              // Play button will handle its own tap and stop propagation
-              if (!isVideoInitialized || !isThisVideoPlaying) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => VideoPlayerScreen(
+            onTap: () async {
+              debugPrint('[LongVideos] tap videoId=${video.id} url=$videoUrl');
+              _isRoutePushInProgress = true;
+              _autoplayRequestId++;
+              ref.read(longVideoAutoplayManagerProvider.notifier).disable();
+              try {
+                final vk = VideoWidgetKey(video.id, videoUrl);
+                ref.read(longVideoWidgetProvider(vk).notifier).setEmbeddedOpen(true);
+                final inline = ref.read(longVideoWidgetProvider(vk));
+                debugPrint(
+                  '[LongVideos] inline initialized=${inline.isInitialized} hasController=${inline.controller != null} pos=${inline.position.inMilliseconds}',
+                );
+                if (inline.isInitialized && inline.controller != null) {
+                  final pos = inline.position;
+                  await ref.read(longVideoWidgetProvider(vk).notifier).pause();
+                  if (!mounted) return;
+                  ref.read(longVideoEmbedResumeHintProvider.notifier).state =
+                      LongVideoEmbedResumeHint(
+                    videoUrl: videoUrl,
+                    position: pos,
+                  );
+                  final detached = ref
+                      .read(longVideoWidgetProvider(vk).notifier)
+                      .detachControllerForRouteHandoff();
+                  debugPrint('[LongVideos] detachedController=${detached != null}');
+                  if (detached != null) {
+                    ref.read(longVideoFeedReturnTargetProvider.notifier).state =
+                        LongVideoFeedReturnTarget(
+                      videoId: video.id,
                       videoUrl: videoUrl,
-                      title: video.caption,
-                      author: video.author,
-                      post: video,
-                    ),
+                    );
+                    ref.read(longVideoEmbeddedHandoffProvider.notifier).state =
+                        LongVideoInlineHandoff(
+                      videoUrl: videoUrl,
+                      controller: detached,
+                      position: pos,
+                      resumePlayback: true,
+                    );
+                  }
+                } else {
+                  ref.read(longVideoEmbedResumeHintProvider.notifier).state =
+                      null;
+                  ref.read(longVideoEmbeddedHandoffProvider.notifier).state =
+                      null;
+                  ref.read(longVideoFeedReturnTargetProvider.notifier).state =
+                      null;
+                }
+                if (!mounted) return;
+                debugPrint('[LongVideos] push embedded start');
+                await Navigator.push<void>(
+                  context,
+                  PageRouteBuilder<void>(
+                    transitionDuration: const Duration(milliseconds: 320),
+                    reverseTransitionDuration: const Duration(milliseconds: 280),
+                    pageBuilder: (context, animation, secondaryAnimation) =>
+                        LongVideoEmbeddedSessionHost(post: video),
+                    transitionsBuilder:
+                        (context, animation, secondaryAnimation, child) {
+                      final curved = CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      );
+                      final offset = Tween<Offset>(
+                        begin: const Offset(0, 1),
+                        end: Offset.zero,
+                      ).animate(curved);
+                      return SlideTransition(position: offset, child: child);
+                    },
                   ),
                 );
+                debugPrint('[LongVideos] push embedded returned');
+              } finally {
+                await Future<void>.delayed(const Duration(milliseconds: 350));
+                _isRoutePushInProgress = false;
+                if (mounted) {
+                  final vk = VideoWidgetKey(video.id, videoUrl);
+                  ref.read(longVideoWidgetProvider(vk).notifier).setEmbeddedOpen(false);
+                  unawaited(ref.read(longVideoWidgetProvider(vk).notifier).warmUp());
+                  ref.read(longVideoAutoplayManagerProvider.notifier).enable();
+                  _autoplayArmedByUserScroll = true;
+                  final dom =
+                      ref.read(longVideoAutoplayManagerProvider).dominantVideoId;
+                  if (dom != null) {
+                    unawaited(_onAutoplayDominantChanged(null, dom));
+                  }
+                }
               }
             },
             behavior: HitTestBehavior.opaque,
-            child: Container(
-              width: double.infinity,
-              height: 220,
-              color: Colors.black,
-              child: (isVideoInitialized &&
-                      widgetState.controller != null &&
-                      (isThisVideoPlaying || widgetState.isSeeking))
-                  ? RepaintBoundary(
-                      child: ClipRect(
-                        child: SizedBox(
-                          width: double.infinity,
-                          height: 220,
-                          child: SafeBetterPlayerWrapper(
-                            controller: widgetState.controller!,
-                          ),
-                        ),
-                      ),
-                    )
-                  : (() {
-                      final rawThumb =
-                          video.effectiveThumbnailUrl ??
-                              video.thumbnailUrl ??
-                              video.imageUrl ??
-                              '';
-                      final networkThumb = rawThumb.isNotEmpty &&
-                              !isProtectedVideoCdnThumbnailUrl(rawThumb)
-                          ? rawThumb
-                          : '';
-                      return FeedCachedPostImage(
-                        imageUrl: networkThumb,
-                        postId: video.id,
-                        blurHash: video.blurHash,
-                        fit: BoxFit.cover,
-                        useShimmerWhileLoading: true,
-                      );
-                    })(),
-            ),
-          ),
-          
-          // Play/Pause button - same as video_tile.dart
-          if (isVideoInitialized && widgetState.controller != null)
-            Positioned.fill(
-              child: Center(
-                child: GestureDetector(
-                  onTap: () {
-                    // Prevent rapid toggles (debounce)
-                    final now = DateTime.now();
-                    if (_lastPlayActionTime != null &&
-                        now.difference(_lastPlayActionTime!) < const Duration(milliseconds: 300)) {
-                      return; // Ignore rapid taps
-                    }
-                    _lastPlayActionTime = now;
-                    
-                    // CRITICAL: Pause ALL other videos FIRST, before toggling this one
-                    // This prevents multiple videos from playing simultaneously
-                    _pauseAllOtherVideos(video.id, videoUrl);
-                    
-                    // DISABLE AUTOPLAY when user manually plays a video
-                    ref.read(longVideoPlaybackProvider.notifier).disableAutoplay();
-                    
-                    // Then toggle play/pause for this video (with lazy initialization)
-                    final widgetKey = VideoWidgetKey(video.id, videoUrl);
-                    final notifier = ref.read(longVideoWidgetProvider(widgetKey).notifier);
-                    
-                    notifier.togglePlayPause().then((_) {
-                      // Update currently playing video after async operation
-                      if (mounted) {
-                        final playing =
-                            ref.read(longVideoWidgetProvider(widgetKey)).isPlaying;
-                        if (playing) {
-                          ref
-                              .read(longVideosProvider.notifier)
-                              .prefetchNextAfter(video.id);
-                          // Set this video as currently playing
-                          ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(video.id);
-                          _showControlsTemporarily(video.id);
-                        } else {
-                          // If paused, clear currently playing
-                          ref.read(longVideoPlaybackProvider.notifier).clearCurrentlyPlaying();
-                          ref.read(longVideoPlaybackProvider.notifier).setControlsVisibility(video.id, false);
-                        }
-                      }
-                    });
-                  },
-                  behavior: HitTestBehavior.opaque, // Stops event propagation to parent
-                  child: AnimatedOpacity(
-                    // Show play/pause button when:
-                    // 1. Video is playing AND controls are visible (show pause icon)
-                    // 2. Video is initialized but NOT playing (always show play icon when paused)
-                    // 3. Video is not initialized (show play icon)
-                    opacity: (isThisVideoPlaying && showControls) || 
-                             (isVideoInitialized && !isThisVideoPlaying) || 
-                             (!isVideoInitialized)
-                        ? 1.0 
-                        : 0.0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Container(
-                      width: 70,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.7),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.6),
-                            blurRadius: 12,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        isPlaying && isThisVideoPlaying
-                            ? CupertinoIcons.pause_circle_fill
-                            : CupertinoIcons.play_circle_fill,
-                        size: 70,
-                        color: Colors.white,
-                      ),
-                    ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: double.infinity,
+                height: 220,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(
+                    color: ThemeHelper.getBorderColor(context)
+                        .withValues(alpha: 0.35),
                   ),
                 ),
-              ),
-            )
-          else
-            // Play button overlay when video not initialized (same as video_tile.dart)
-            Positioned.fill(
-              child: Stack(
+                child: Stack(
+                fit: StackFit.expand,
+                clipBehavior: Clip.hardEdge,
                 children: [
-                  // Background tap area - navigates to fullscreen
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => VideoPlayerScreen(
-                            videoUrl: videoUrl,
-                            title: video.caption,
-                            author: video.author,
-                            post: video,
+                  RepaintBoundary(
+                    child: FeedCachedPostImage(
+                      imageUrl: networkThumb,
+                      postId: video.id,
+                      blurHash: video.blurHash,
+                      fit: BoxFit.cover,
+                      useShimmerWhileLoading: true,
+                    ),
+                  ),
+                  if (isVideoInitialized && widgetState.controller != null)
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: ClipRect(
+                          child: AnimatedOpacity(
+                            opacity: videoPaintVisible ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 150),
+                            child: IgnorePointer(
+                              ignoring: !videoPaintVisible,
+                              child: SafeBetterPlayerWrapper(
+                                controller: widgetState.controller!,
+                              ),
+                            ),
                           ),
                         ),
-                      );
-                    },
-                    behavior: HitTestBehavior.opaque,
-                    child: Container(
-                      color: Colors.transparent,
-                    ),
-                  ),
-                  // Play button - plays video inline, stops propagation
-                  Center(
-                    child: GestureDetector(
-                      onTap: () {
-                        // Prevent rapid toggles (debounce)
-                        final now = DateTime.now();
-                        if (_lastPlayActionTime != null &&
-                            now.difference(_lastPlayActionTime!) < const Duration(milliseconds: 300)) {
-                          return; // Ignore rapid taps
-                        }
-                        _lastPlayActionTime = now;
-                        
-                        // CRITICAL: Pause ALL other videos FIRST, before playing this one
-                        // This prevents multiple videos from playing simultaneously
-                        _pauseAllOtherVideos(video.id, videoUrl);
-                        
-                        // DISABLE AUTOPLAY when user manually plays a video
-                        ref.read(longVideoPlaybackProvider.notifier).disableAutoplay();
-                        
-                        // Then initialize and play this video (lazy initialization)
-                        final widgetKey = VideoWidgetKey(video.id, videoUrl);
-                        final notifier = ref.read(longVideoWidgetProvider(widgetKey).notifier);
-                        
-                        // Play will trigger lazy initialization if needed
-                        notifier.play().then((_) {
-                          // Set this video as currently playing after initialization
-                          if (mounted) {
-                            ref
-                                .read(longVideosProvider.notifier)
-                                .prefetchNextAfter(video.id);
-                            ref.read(longVideoPlaybackProvider.notifier).setCurrentlyPlaying(video.id);
-                            _showControlsTemporarily(video.id);
-                          }
-                        });
-                      },
-                      behavior: HitTestBehavior.opaque, // Stops event propagation
-                      child: Container(
-                        width: 70,
-                        height: 70,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          CupertinoIcons.play_fill,
-                          color: Colors.white,
-                          size: 48,
-                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
-            ),
-          
-          // Forward/Backward buttons - appear outside thumbnail on bottom left when playing
-          if (isThisVideoPlaying && isVideoInitialized)
-            Positioned(
-              left: 12,
-              bottom: 12,
-              child: Row(
-                children: [
-                  // Backward 10s button
-                  GestureDetector(
-                    onTap: () async {
-                      // Stop propagation to prevent navigation
-                      final key = VideoWidgetKey(video.id, videoUrl);
-                      final notifier = ref.read(longVideoWidgetProvider(key).notifier);
-                      await notifier.seekBackward();
-                      if (mounted) {
-                        _showControlsTemporarily(video.id);
-                      }
-                    },
-                    behavior: HitTestBehavior.opaque,
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.7),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.replay_10,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Forward 10s button
-                  GestureDetector(
-                    onTap: () async {
-                      // Stop propagation to prevent navigation
-                      final key = VideoWidgetKey(video.id, videoUrl);
-                      final notifier = ref.read(longVideoWidgetProvider(key).notifier);
-                      await notifier.seekForward();
-                      if (mounted) {
-                        _showControlsTemporarily(video.id);
-                      }
-                    },
-                    behavior: HitTestBehavior.opaque,
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.7),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.forward_10,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ),
-          
-          // Duration badge
-          if (video.videoDuration != null)
+          ),
+
+          // Duration badge (hidden while playing — same idea as YouTube inline)
+          if (video.videoDuration != null &&
+              !(isVideoInitialized && widgetState.isPlaying))
             Positioned(
               bottom: 8,
               right: 8,
@@ -1288,8 +1374,71 @@ class _LongVideosScreenState extends ConsumerState<LongVideosScreen>
                 ),
               ),
             ),
-      ],
+
+          if (isDominant &&
+              isVideoInitialized &&
+              widgetState.isPlaying &&
+              widgetState.isMuted)
+            Positioned(
+              left: 10,
+              bottom: 14,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(20),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () {
+                    ref
+                        .read(longVideoWidgetProvider(key).notifier)
+                        .toggleMute();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.volume_off_rounded,
+                          color: Colors.white.withValues(alpha: 0.95),
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Tap to unmute',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.95),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          if (isDominant && isVideoInitialized)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SizedBox(
+                height: 2,
+                child: LinearProgressIndicator(
+                  value: widgetState.duration.inMilliseconds > 0
+                      ? (widgetState.position.inMilliseconds /
+                              widgetState.duration.inMilliseconds)
+                          .clamp(0.0, 1.0)
+                      : 0.0,
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
-
 }

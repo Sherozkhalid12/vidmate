@@ -24,6 +24,12 @@ class PostModel {
   final String? audioId;
   /// Display name for audio (e.g. "Original sound - username")
   final String? audioName;
+  /// Music track title for attribution (image posts / API).
+  final String? musicName;
+  /// Music artist for attribution (image posts / API).
+  final String? musicTitle;
+  /// Preview / CDN URL for short licensed playback (e.g. Deezer 30s).
+  final String? musicPreviewUrl;
   /// Content type from API: 'post' | 'reel' | 'longVideo' | 'story'
   final String postType;
   /// Optional BlurHash string for reels/posts (instant placeholder).
@@ -34,6 +40,20 @@ class PostModel {
 
   /// Thumbnail for display; uses thumbnailUrl or derived from video URL when missing.
   String? get effectiveThumbnailUrl {
+    // Long-form feed: API provides [thumbnailUrl]; do not substitute heuristic URLs
+    // derived from the manifest (they look like "video frames" and often differ from art).
+    if (postType == 'longVideo') {
+      final api = thumbnailUrl?.trim();
+      if (api != null && api.isNotEmpty) return api;
+      final img = imageUrl?.trim();
+      if (img != null && img.isNotEmpty) return img;
+      if (videoUrl != null && videoUrl!.isNotEmpty) {
+        final g = VideoThumbnailHelper.thumbnailFromVideoUrl(videoUrl!);
+        if (g != null && g.isNotEmpty) return g;
+      }
+      return null;
+    }
+
     // Some reel thumbnails come from a protected CDN path (e.g. /posts/videos/.../thumbnail.jpg)
     // that can return 403. Prefer a generated thumbnail from the video URL when available.
     final generated = (videoUrl != null && videoUrl!.isNotEmpty)
@@ -69,6 +89,9 @@ class PostModel {
     this.isVideo = false,
     this.audioId,
     this.audioName,
+    this.musicName,
+    this.musicTitle,
+    this.musicPreviewUrl,
     this.postType = 'post',
     this.blurHash,
   }) : _imageUrls = imageUrls != null && imageUrls.isNotEmpty
@@ -120,6 +143,9 @@ class PostModel {
       isVideo: hasVideo,
       postType: type,
       blurHash: api.blurHash,
+      musicName: api.musicName,
+      musicTitle: api.musicTitle,
+      musicPreviewUrl: api.musicPreviewUrl,
     );
   }
 
@@ -200,6 +226,9 @@ class PostModel {
       isVideo: map['isVideo'] == true,
       audioId: map['audioId']?.toString(),
       audioName: map['audioName']?.toString(),
+      musicName: map['musicName']?.toString(),
+      musicTitle: map['musicTitle']?.toString(),
+      musicPreviewUrl: (map['musicPreviewUrl'] ?? map['music'])?.toString(),
       postType: map['postType']?.toString() ?? 'post',
       blurHash: (blur != null && blur.isNotEmpty) ? blur : null,
     );

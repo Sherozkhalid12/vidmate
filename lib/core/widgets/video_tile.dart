@@ -69,7 +69,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
   bool _showControls = true;
   Timer? _controlsTimer;
   Timer? _visibilityCheckTimer;
-  
+
   @override
   bool get wantKeepAlive => false; // Don't keep alive - dispose when not visible
 
@@ -88,7 +88,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     // Video will be initialized by Riverpod provider when needed
     _startControlsTimer();
   }
-  
+
   void _startControlsTimer() {
     _controlsTimer?.cancel();
     // YouTube style: Hide controls after 3 seconds of no interaction
@@ -107,7 +107,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       }
     });
   }
-  
+
   void _showControlsTemporarily() {
     if (mounted) {
       setState(() {
@@ -138,11 +138,11 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
 
   void _playVideo() {
     if (widget.videoUrl == null || !mounted) return;
-    
+
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
-      
+
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.play();
       // YouTube style: Show controls briefly, then hide when playing
@@ -166,20 +166,20 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
-      
+
       // Animate button press for smooth feedback
       _playPauseAnimationController.forward(from: 0.0).then((_) {
         if (mounted) {
           _playPauseAnimationController.reverse();
         }
       });
-      
+
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.togglePlayPause();
-      
+
       // Show controls and reset timer
       _showControlsTemporarily();
-      
+
       // Force immediate UI update for smooth response
       if (mounted) {
         setState(() {});
@@ -200,7 +200,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
-      
+
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       notifier.seekForward();
       _showControlsTemporarily();
@@ -214,7 +214,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     try {
       final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
-      
+
       final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
       // Seek backward without pausing
       final wasPlaying = playerState.isPlaying;
@@ -234,7 +234,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
     final seconds = duration.inSeconds.remainder(60);
-    
+
     if (hours > 0) {
       return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
     }
@@ -249,7 +249,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
 
   void _checkVisibility() {
     if (!mounted) return;
-    
+
     try {
       final renderObject = context.findRenderObject();
       if (renderObject == null || !renderObject.attached || renderObject is! RenderBox) {
@@ -290,21 +290,21 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       final position = box.localToGlobal(Offset.zero);
       final size = box.size;
       final screenSize = MediaQuery.of(context).size;
-      
+
       // Check if widget is within screen bounds (with margin for better detection)
       // Only consider visible if at least 50% is on screen (like YouTube/Instagram)
-      final visibleHeight = (position.dy + size.height).clamp(0.0, screenSize.height) - 
-                           position.dy.clamp(0.0, screenSize.height);
+      final visibleHeight = (position.dy + size.height).clamp(0.0, screenSize.height) -
+          position.dy.clamp(0.0, screenSize.height);
       final visibleRatio = visibleHeight / size.height;
-      final isVisible = visibleRatio > 0.5 && 
-                       position.dy < screenSize.height &&
-                       position.dy + size.height > 0 &&
-                       position.dx < screenSize.width &&
-                       position.dx + size.width > 0;
+      final isVisible = visibleRatio > 0.5 &&
+          position.dy < screenSize.height &&
+          position.dy + size.height > 0 &&
+          position.dx < screenSize.width &&
+          position.dx + size.width > 0;
 
       if (_isVideoVisible != isVisible) {
         _isVideoVisible = isVisible;
-        
+
         if (!isVisible) {
           // Pause immediately when video goes out of view
           if (widget.videoUrl != null) {
@@ -352,14 +352,14 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     super.build(context); // Required for AutomaticKeepAliveClientMixin
-    
+
     // Auto-pause when not visible - check on every build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkVisibility();
     });
 
     // Get video player state if video URL is available
-    final playerState = widget.videoUrl != null 
+    final playerState = widget.videoUrl != null
         ? ref.watch(videoPlayerProvider(widget.videoUrl!))
         : null;
     final isVideoInitialized = (playerState?.isInitialized ?? false) &&
@@ -371,216 +371,216 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       margin: const EdgeInsets.only(bottom: 16),
       child: isDark
           ? Container(
-              color: ThemeHelper.getBackgroundColor(context),
-              child: _buildTileContent(isVideoInitialized, isPlaying, playerState),
-            )
+        color: ThemeHelper.getBackgroundColor(context),
+        child: _buildTileContent(isVideoInitialized, isPlaying, playerState),
+      )
           : ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
-                  ),
-                  child: _buildTileContent(isVideoInitialized, isPlaying, playerState),
-                ),
-              ),
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.08),
             ),
+            child: _buildTileContent(isVideoInitialized, isPlaying, playerState),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildTileContent(bool isVideoInitialized, bool isPlaying, VideoPlayerState? playerState) {
     return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Header - Instagram style
-          if (widget.channelName != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: widget.onAuthorTap ?? widget.onTap,
-                    child: ClipOval(
-                      child: (widget.channelAvatar != null && widget.channelAvatar!.isNotEmpty)
-                          ? CachedNetworkImage(
-                              imageUrl: widget.channelAvatar!,
-                              width: 32,
-                              height: 32,
-                              fit: BoxFit.cover,
-                              memCacheWidth: (32 * MediaQuery.devicePixelRatioOf(context)).round().clamp(1, 512),
-                              memCacheHeight: (32 * MediaQuery.devicePixelRatioOf(context)).round().clamp(1, 512),
-                              cacheManager: AppMediaCache.feedMedia,
-                              placeholder: (context, url) => Container(
-                                width: 32,
-                                height: 32,
-                                color: ThemeHelper.getSurfaceColor(context),
-                                child: Icon(CupertinoIcons.person_crop_circle, size: 20, color: ThemeHelper.getTextSecondary(context)),
-                              ),
-                              errorWidget: (context, url, error) => Container(
-                                width: 32,
-                                height: 32,
-                                color: ThemeHelper.getSurfaceColor(context),
-                                child: Icon(
-                                  CupertinoIcons.person_crop_circle,
-                                  size: 20,
-                                  color: ThemeHelper.getTextSecondary(context),
-                                ),
-                              ),
-                            )
-                          : Container(
-                              width: 32,
-                              height: 32,
-                              color: ThemeHelper.getSurfaceColor(context),
-                              child: Icon(
-                                CupertinoIcons.person_crop_circle,
-                                size: 20,
-                                color: ThemeHelper.getTextSecondary(context),
-                              ),
-                            ),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Header - Instagram style
+        if (widget.channelName != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: widget.onAuthorTap ?? widget.onTap,
+                  child: ClipOval(
+                    child: (widget.channelAvatar != null && widget.channelAvatar!.isNotEmpty)
+                        ? CachedNetworkImage(
+                      imageUrl: widget.channelAvatar!,
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.cover,
+                      memCacheWidth: (32 * MediaQuery.devicePixelRatioOf(context)).round().clamp(1, 512),
+                      memCacheHeight: (32 * MediaQuery.devicePixelRatioOf(context)).round().clamp(1, 512),
+                      cacheManager: AppMediaCache.feedMedia,
+                      placeholder: (context, url) => Container(
+                        width: 32,
+                        height: 32,
+                        color: ThemeHelper.getSurfaceColor(context),
+                        child: Icon(CupertinoIcons.person_crop_circle, size: 20, color: ThemeHelper.getTextSecondary(context)),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        width: 32,
+                        height: 32,
+                        color: ThemeHelper.getSurfaceColor(context),
+                        child: Icon(
+                          CupertinoIcons.person_crop_circle,
+                          size: 20,
+                          color: ThemeHelper.getTextSecondary(context),
+                        ),
+                      ),
+                    )
+                        : Container(
+                      width: 32,
+                      height: 32,
+                      color: ThemeHelper.getSurfaceColor(context),
+                      child: Icon(
+                        CupertinoIcons.person_crop_circle,
+                        size: 20,
+                        color: ThemeHelper.getTextSecondary(context),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  if (widget.channelName != null)
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: widget.onAuthorTap ?? widget.onTap,
-                        child: Text(
-                          widget.channelName!,
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
+                ),
+                const SizedBox(width: 12),
+                if (widget.channelName != null)
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: widget.onAuthorTap ?? widget.onTap,
+                      child: Text(
+                        widget.channelName!,
+                        style: TextStyle(
+                          color: ThemeHelper.getTextPrimary(context),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                  // Follow button - hide when author is current user
-                  if (widget.channelName != null)
-                    Consumer(
-                      builder: (context, ref, child) {
-                        final currentUser = ref.watch(currentUserProvider);
-                        if (widget.authorId != null && currentUser?.id == widget.authorId) {
-                          return const SizedBox.shrink();
-                        }
-                        final posts = ref.watch(postsListProvider);
-                        PostModel? post;
-                        if (widget.postId != null) {
-                          try {
-                            post = posts.firstWhere((p) => p.id == widget.postId);
-                          } catch (e) {
-                            post = posts.isNotEmpty ? posts.first : null;
-                          }
-                        } else {
+                  ),
+                // Follow button - hide when author is current user
+                if (widget.channelName != null)
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final currentUser = ref.watch(currentUserProvider);
+                      if (widget.authorId != null && currentUser?.id == widget.authorId) {
+                        return const SizedBox.shrink();
+                      }
+                      final posts = ref.watch(postsListProvider);
+                      PostModel? post;
+                      if (widget.postId != null) {
+                        try {
+                          post = posts.firstWhere((p) => p.id == widget.postId);
+                        } catch (e) {
                           post = posts.isNotEmpty ? posts.first : null;
                         }
-                        if (post == null) {
-                          return const SizedBox.shrink();
-                        }
-                        final nonNullPost = post!;
-                        final followState = ref.watch(followProvider);
-                        final overrideStatus =
-                            ref.watch(followStateProvider)[nonNullPost.author.id];
-                        final isFollowing =
-                            overrideStatus == FollowRelationshipStatus.following ||
-                                (overrideStatus == null &&
-                                    (followState.followingIds.isNotEmpty
-                                        ? followState.followingIds
-                                            .contains(nonNullPost.author.id)
-                                        : nonNullPost.author.isFollowing));
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: GestureDetector(
-                            onTap: () {
-                              ref.read(followProvider.notifier).toggleFollow(nonNullPost.author.id);
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: isFollowing ? Colors.transparent : ThemeHelper.getAccentColor(context),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: isFollowing 
-                                      ? ThemeHelper.getTextPrimary(context)
-                                      : ThemeHelper.getAccentColor(context),
-                                  width: isFollowing ? 1.5 : 1,
-                                ),
+                      } else {
+                        post = posts.isNotEmpty ? posts.first : null;
+                      }
+                      if (post == null) {
+                        return const SizedBox.shrink();
+                      }
+                      final nonNullPost = post!;
+                      final followState = ref.watch(followProvider);
+                      final overrideStatus =
+                      ref.watch(followStateProvider)[nonNullPost.author.id];
+                      final isFollowing =
+                          overrideStatus == FollowRelationshipStatus.following ||
+                              (overrideStatus == null &&
+                                  (followState.followingIds.isNotEmpty
+                                      ? followState.followingIds
+                                      .contains(nonNullPost.author.id)
+                                      : nonNullPost.author.isFollowing));
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: GestureDetector(
+                          onTap: () {
+                            ref.read(followProvider.notifier).toggleFollow(nonNullPost.author.id);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isFollowing ? Colors.transparent : ThemeHelper.getAccentColor(context),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: isFollowing
+                                    ? ThemeHelper.getTextPrimary(context)
+                                    : ThemeHelper.getAccentColor(context),
+                                width: isFollowing ? 1.5 : 1,
                               ),
-                              child: Text(
-                                isFollowing ? 'Following' : 'Follow',
-                                style: TextStyle(
-                                  color: isFollowing 
-                                      ? ThemeHelper.getTextPrimary(context)
-                                      : ThemeHelper.getOnAccentColor(context),
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            ),
+                            child: Text(
+                              isFollowing ? 'Following' : 'Follow',
+                              style: TextStyle(
+                                color: isFollowing
+                                    ? ThemeHelper.getTextPrimary(context)
+                                    : ThemeHelper.getOnAccentColor(context),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
-                        );
-                      },
-                    ),
-                  Icon(
-                    CupertinoIcons.ellipsis,
-                    color: ThemeHelper.getTextPrimary(context),
-                    size: 20,
+                        ),
+                      );
+                    },
                   ),
-                ],
-              ),
+                Icon(
+                  CupertinoIcons.ellipsis,
+                  color: ThemeHelper.getTextPrimary(context),
+                  size: 20,
+                ),
+              ],
             ),
+          ),
 
-          // Video/Thumbnail - Tap anywhere to play/pause (or open) and show controls
-          GestureDetector(
-            onTap: () {
-              if (widget.videoUrl != null) {
-                // Toggle playback inline; if not initialized yet, play will initialize via provider.
-                _togglePlayPause();
-              } else {
-                _onVideoTap();
-              }
-            },
-            onDoubleTapDown: (details) {
-              if (widget.videoUrl == null || !isVideoInitialized) return;
-              // Double tap for seek
-              _showControlsTemporarily();
-              final screenWidth = MediaQuery.of(context).size.width;
-              if (details.localPosition.dx < screenWidth / 2) {
-                _seekBackward();
-              } else {
-                _seekForward();
-              }
-            },
-            behavior: HitTestBehavior.opaque,
-            child: RepaintBoundary(
-              child: Stack(
-                children: [
-                  // Video player (HLS) or thumbnail — only build BetterPlayer when we have a valid controller
-                  AspectRatio(
-                    aspectRatio: 1.0,
-                    child: isVideoInitialized && playerState?.hasValidController == true && playerState?.controller != null
-                        ? KeyedSubtree(
-                            key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
-                            child: SafeBetterPlayerWrapper(controller: playerState!.controller!),
-                          )
-                        : (widget.thumbnailUrl.isNotEmpty
-                            ? FeedCachedPostImage(
-                                imageUrl: widget.thumbnailUrl,
-                                postId: widget.postId ?? widget.videoUrl ?? 'video_tile',
-                                blurHash: widget.blurHash,
-                              )
-                            : Container(
-                                color: ThemeHelper.getSurfaceColor(context),
-                                child: Center(
-                                  child: Icon(
-                                    CupertinoIcons.exclamationmark_triangle_fill,
-                                    color: ThemeHelper.getTextSecondary(context),
-                                    size: 48,
-                                  ),
-                                ),
-                              )),
-                  ),
+        // Video/Thumbnail - Tap anywhere to play/pause (or open) and show controls
+        GestureDetector(
+          onTap: () {
+            if (widget.videoUrl != null) {
+              // Toggle playback inline; if not initialized yet, play will initialize via provider.
+              _togglePlayPause();
+            } else {
+              _onVideoTap();
+            }
+          },
+          onDoubleTapDown: (details) {
+            if (widget.videoUrl == null || !isVideoInitialized) return;
+            // Double tap for seek
+            _showControlsTemporarily();
+            final screenWidth = MediaQuery.of(context).size.width;
+            if (details.localPosition.dx < screenWidth / 2) {
+              _seekBackward();
+            } else {
+              _seekForward();
+            }
+          },
+          behavior: HitTestBehavior.opaque,
+          child: RepaintBoundary(
+            child: Stack(
+              children: [
+                // Video player (HLS) or thumbnail — only build BetterPlayer when we have a valid controller
+                AspectRatio(
+                  aspectRatio: 1.0,
+                  child: isVideoInitialized && playerState?.hasValidController == true && playerState?.controller != null
+                      ? KeyedSubtree(
+                    key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
+                    child: SafeBetterPlayerWrapper(controller: playerState!.controller!),
+                  )
+                      : (widget.thumbnailUrl.isNotEmpty
+                      ? FeedCachedPostImage(
+                    imageUrl: widget.thumbnailUrl,
+                    postId: widget.postId ?? widget.videoUrl ?? 'video_tile',
+                    blurHash: widget.blurHash,
+                  )
+                      : Container(
+                    color: ThemeHelper.getSurfaceColor(context),
+                    child: Center(
+                      child: Icon(
+                        CupertinoIcons.exclamationmark_triangle_fill,
+                        color: ThemeHelper.getTextSecondary(context),
+                        size: 48,
+                      ),
+                    ),
+                  )),
+                ),
 
                 // Play/Pause button - centered, only handles taps on the button itself
                 if (isVideoInitialized && playerState != null && playerState.hasValidController)
@@ -643,7 +643,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                     ),
                   )
                 else
-                  // Not initialized yet: show a simple play control to start inline playback.
+                // Not initialized yet: show a simple play control to start inline playback.
                   Positioned.fill(
                     child: Stack(
                       children: [
@@ -688,252 +688,252 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                       ],
                     ),
                   ),
-              
-              // Duration badge
-              if (widget.duration != null)
-                Positioned(
-                  bottom: 12,
-                  right: 12,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.75),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      _formatDuration(widget.duration!),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                ],
-              ),
-            ),
-          ),
 
-          // Actions row - Bookmark/Backward/Forward on LEFT, Share/Comment/Like on RIGHT
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                // Left side - Bookmark, Backward, Forward (only when playing)
-                GestureDetector(
-                  onTap: () => setState(() => _isSaved = !_isSaved),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _isSaved ? Icons.star : Icons.star_border,
-                        size: 28,
-                        color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
+                // Duration badge
+                if (widget.duration != null)
+                  Positioned(
+                    bottom: 12,
+                    right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.75),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                    ],
-                  ),
-                ),
-                // Backward 10s (only visible when playing - no empty space when hidden)
-                if (isPlaying && isVideoInitialized) ...[
-                  const SizedBox(width: 16),
-                  GestureDetector(
-                    onTap: _seekBackward,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.replay_10,
-                          size: 28,
-                          color: ThemeHelper.getTextPrimary(context),
+                      child: Text(
+                        _formatDuration(widget.duration!),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ],
-                // Forward 10s (only visible when playing - no empty space when hidden)
-                if (isPlaying && isVideoInitialized) ...[
-                  const SizedBox(width: 16),
-                  GestureDetector(
-                    onTap: _seekForward,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.forward_10,
-                          size: 28,
-                          color: ThemeHelper.getTextPrimary(context),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                // Right side actions - Share, Comment, Like (matching InstagramPostCard)
-                GestureDetector(
-                  onTap: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (context) => ShareBottomSheet(
-                        postId: widget.postId,
-                        videoUrl: widget.videoUrl,
-                        imageUrl: widget.thumbnailUrl,
-                      ),
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Transform.rotate(
-                        angle: -0.785398,
-                        child: Icon(
-                          Icons.send,
-                          size: 28,
-                          color: ThemeHelper.getTextPrimary(context),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _formatCount(widget.shares),
-                        style: TextStyle(
-                          color: ThemeHelper.getTextSecondary(context),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (context) => CommentsBottomSheet(postId: widget.postId ?? ''),
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.mode_comment_outlined,
-                        size: 28,
-                        color: ThemeHelper.getTextPrimary(context),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _formatCount(widget.comments),
-                        style: TextStyle(
-                          color: ThemeHelper.getTextSecondary(context),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Consumer(
-                  builder: (context, ref, child) {
-                    if (widget.postId != null) {
-                      final isLiked = ref.watch(postLikedProvider(widget.postId!));
-                      final likeCount = ref.watch(postLikeCountProvider(widget.postId!));
-                      return GestureDetector(
-                        onTap: () {
-                          ref.read(postsProvider.notifier).toggleLike(widget.postId!);
-                        },
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isLiked ? Icons.favorite : Icons.favorite_border,
-                              size: 28,
-                              color: isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatCount(likeCount),
-                              style: TextStyle(
-                                color: ThemeHelper.getTextSecondary(context),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    } else {
-                      // Fallback for when postId is not provided
-                      return GestureDetector(
-                        onTap: () {},
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.favorite_border,
-                              size: 28,
-                              color: ThemeHelper.getTextPrimary(context),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatCount(widget.likes),
-                              style: TextStyle(
-                                color: ThemeHelper.getTextSecondary(context),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                  },
-                ),
               ],
             ),
           ),
+        ),
 
-          const SizedBox(height: 4),
+        // Actions row - Bookmark/Backward/Forward on LEFT, Share/Comment/Like on RIGHT
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              // Left side - Bookmark, Backward, Forward (only when playing)
+              GestureDetector(
+                onTap: () => setState(() => _isSaved = !_isSaved),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _isSaved ? Icons.star : Icons.star_border,
+                      size: 28,
+                      color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
+                    ),
+                  ],
+                ),
+              ),
+              // Backward 10s (only visible when playing - no empty space when hidden)
+              if (isPlaying && isVideoInitialized) ...[
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: _seekBackward,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.replay_10,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              // Forward 10s (only visible when playing - no empty space when hidden)
+              if (isPlaying && isVideoInitialized) ...[
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: _seekForward,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.forward_10,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const Spacer(),
+              // Right side actions - Share, Comment, Like (matching InstagramPostCard)
+              GestureDetector(
+                onTap: () {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (context) => ShareBottomSheet(
+                      postId: widget.postId,
+                      videoUrl: widget.videoUrl,
+                      imageUrl: widget.thumbnailUrl,
+                    ),
+                  );
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Transform.rotate(
+                      angle: -0.785398,
+                      child: Icon(
+                        Icons.send,
+                        size: 28,
+                        color: ThemeHelper.getTextPrimary(context),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatCount(widget.shares),
+                      style: TextStyle(
+                        color: ThemeHelper.getTextSecondary(context),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              GestureDetector(
+                onTap: () {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (context) => CommentsBottomSheet(postId: widget.postId ?? ''),
+                  );
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.mode_comment_outlined,
+                      size: 28,
+                      color: ThemeHelper.getTextPrimary(context),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatCount(widget.comments),
+                      style: TextStyle(
+                        color: ThemeHelper.getTextSecondary(context),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Consumer(
+                builder: (context, ref, child) {
+                  if (widget.postId != null) {
+                    final isLiked = ref.watch(postLikedProvider(widget.postId!));
+                    final likeCount = ref.watch(postLikeCountProvider(widget.postId!));
+                    return GestureDetector(
+                      onTap: () {
+                        ref.read(postsProvider.notifier).toggleLike(widget.postId!);
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isLiked ? Icons.favorite : Icons.favorite_border,
+                            size: 28,
+                            color: isLiked ? Colors.red : ThemeHelper.getTextPrimary(context),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatCount(likeCount),
+                            style: TextStyle(
+                              color: ThemeHelper.getTextSecondary(context),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  } else {
+                    // Fallback for when postId is not provided
+                    return GestureDetector(
+                      onTap: () {},
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.favorite_border,
+                            size: 28,
+                            color: ThemeHelper.getTextPrimary(context),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatCount(widget.likes),
+                            style: TextStyle(
+                              color: ThemeHelper.getTextSecondary(context),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
 
-          // Caption
+        const SizedBox(height: 4),
+
+        // Caption
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: RichText(
+            text: TextSpan(
+              style: TextStyle(
+                color: ThemeHelper.getTextPrimary(context),
+                fontSize: 14,
+              ),
+              children: [
+                if (widget.channelName != null)
+                  TextSpan(
+                    text: '${widget.channelName} ',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                TextSpan(text: widget.title),
+              ],
+            ),
+          ),
+        ),
+
+        // View all comments
+        if (widget.comments > 0)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: RichText(
-              text: TextSpan(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: GestureDetector(
+              onTap: widget.onTap,
+              child: Text(
+                'View all ${_formatCount(widget.comments)} comments',
                 style: TextStyle(
-                  color: ThemeHelper.getTextPrimary(context),
+                  color: ThemeHelper.getTextSecondary(context),
                   fontSize: 14,
                 ),
-                children: [
-                  if (widget.channelName != null)
-                    TextSpan(
-                      text: '${widget.channelName} ',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  TextSpan(text: widget.title),
-                ],
               ),
             ),
           ),
 
-          // View all comments
-          if (widget.comments > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: GestureDetector(
-                onTap: widget.onTap,
-                child: Text(
-                  'View all ${_formatCount(widget.comments)} comments',
-                  style: TextStyle(
-                    color: ThemeHelper.getTextSecondary(context),
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            ),
-
-          const SizedBox(height: 8),
-        ],
-      );
+        const SizedBox(height: 8),
+      ],
+    );
   }
 }
