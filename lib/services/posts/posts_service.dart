@@ -188,8 +188,10 @@ class CreatePostParams {
   final List<String> locations;
   final List<String> taggedUsers;
   final List<String> feelings;
-  /// Optional music preview URL (`music` field in multipart body).
-  final String? music;
+  /// Playable preview URL — only sent for image-only posts (no video).
+  final String? musicUrl;
+  final String? musicName;
+  final String? musicTitle;
 
   CreatePostParams({
     this.images = const [],
@@ -200,8 +202,14 @@ class CreatePostParams {
     this.locations = const [],
     this.taggedUsers = const [],
     this.feelings = const [],
-    this.music,
+    this.musicUrl,
+    this.musicName,
+    this.musicTitle,
   });
+
+  /// Image carousel without video — backend stores music only in this case.
+  bool get isImagePost =>
+      images.isNotEmpty && (video == null || video!.path.isEmpty);
 
   /// Validates payload: max 10 images, max 1 video.
   String? validate() {
@@ -260,8 +268,26 @@ class PostsService {
       if (params.feelings.isNotEmpty) {
         formData.fields.add(MapEntry('feelings', jsonEncode(params.feelings)));
       }
-      if (params.music != null && params.music!.trim().isNotEmpty) {
-        formData.fields.add(MapEntry('music', params.music!.trim()));
+
+      // Music fields — backend only persists when images-only (no video).
+      if (params.isImagePost) {
+        final url = params.musicUrl?.trim() ?? '';
+        final name = params.musicName?.trim() ?? '';
+        final title = params.musicTitle?.trim() ?? '';
+        if (url.isNotEmpty) {
+          formData.fields.add(MapEntry('musicUrl', url));
+        }
+        if (name.isNotEmpty) {
+          formData.fields.add(MapEntry('musicName', name));
+        }
+        if (title.isNotEmpty) {
+          formData.fields.add(MapEntry('musicTitle', title));
+        }
+        if (url.isNotEmpty || name.isNotEmpty || title.isNotEmpty) {
+          debugPrint(
+            '[PostsService] music: url=${url.isNotEmpty} name=${name.isNotEmpty} title=${title.isNotEmpty}',
+          );
+        }
       }
 
       // Thumbnail: either file (preferred) OR URL string

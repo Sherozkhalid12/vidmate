@@ -7,7 +7,6 @@ import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 import '../../core/providers/user_preferences_provider_riverpod.dart';
 import '../profile/edit/edit_profile_screen.dart';
-import '../../core/services/mock_data_service.dart';
 import 'privacy_security_screen.dart';
 // import 'language_screen.dart';
 import 'help_center_screen.dart';
@@ -39,6 +38,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final preferencesState = ref.watch(userPreferencesProvider);
     final preferences = preferencesState.preferences;
+    final currentUser = ref.watch(currentUserProvider);
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -78,11 +78,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     icon: Icons.person_outline,
                     title: 'Edit Profile',
                     onTap: () {
+                      if (currentUser == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Please login again to edit profile'),
+                          ),
+                        );
+                        return;
+                      }
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => EditProfileScreen(
-                            user: MockDataService.mockUsers[0],
+                            user: currentUser,
                           ),
                         ),
                       );
@@ -328,7 +336,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             GlassCard(
               padding: const EdgeInsets.all(16),
               borderRadius: BorderRadius.circular(16),
-              backgroundColor: Theme.of(context).colorScheme.error.withOpacity(0.1),
+              backgroundColor:
+                  Theme.of(context).colorScheme.error.withValues(alpha: 0.1),
               child: _buildSettingTile(
                 icon: Icons.logout,
                 title: 'Log Out',
@@ -358,23 +367,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         TextButton(
                           onPressed: () async {
-                            Navigator.pop(context);
+                            final parentContext = this.context;
+                            final messenger =
+                                ScaffoldMessenger.maybeOf(parentContext);
+                            final navigator = Navigator.of(
+                              parentContext,
+                              rootNavigator: true,
+                            );
+
+                            Navigator.of(context, rootNavigator: true).pop();
                             await ref.read(authProvider.notifier).logout();
                             ref.invalidate(postsProvider);
                             ref.invalidate(userPostsProvider);
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            if (!mounted) return;
+                            messenger?.showSnackBar(
                               SnackBar(
                                 content: Text(
                                   'Logged out successfully',
                                   style: TextStyle(
-                                    color: ThemeHelper.getOnAccentColor(context),
+                                    color: ThemeHelper.getOnAccentColor(parentContext),
                                   ),
                                 ),
-                                backgroundColor: ThemeHelper.getAccentColor(context),
+                                backgroundColor:
+                                    ThemeHelper.getAccentColor(parentContext),
                               ),
                             );
-                            Navigator.of(context).pushAndRemoveUntil(
+                            navigator.pushAndRemoveUntil(
                               MaterialPageRoute(
                                 builder: (context) => const LoginScreen(),
                               ),

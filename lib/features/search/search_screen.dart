@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -11,6 +13,7 @@ import '../../core/models/post_model.dart';
 import '../../core/models/user_model.dart';
 import '../../core/providers/explore_search_provider_riverpod.dart';
 import '../../core/providers/network_status_provider.dart';
+import '../../core/utils/media_viewer_navigation.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/utils/video_thumbnail_helper.dart';
 import '../../core/widgets/feed_cached_post_image.dart';
@@ -64,7 +67,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
 
   void _precacheSearchResultThumbs(ExploreSearchState state) {
     final sig =
-        '${state.query}|${state.users.length}|${state.posts.length}|${state.reels.length}|${state.longVideos.length}';
+        '${state.query}|${state.users.length}|${state.reels.length}|${state.longVideos.length}';
     if (sig == _precachedSearchThumbSig) return;
     _precachedSearchThumbSig = sig;
 
@@ -83,10 +86,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
       }
 
       final urls = <String>[];
-      for (final u in urlsFromPosts(state.posts)) {
-        if (urls.length >= 12) break;
-        if (!urls.contains(u)) urls.add(u);
-      }
       for (final u in urlsFromPosts(state.reels)) {
         if (urls.length >= 12) break;
         if (!urls.contains(u)) urls.add(u);
@@ -121,7 +120,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         !searchState.loading &&
         searchState.error == null &&
         (searchState.users.isNotEmpty ||
-            searchState.posts.isNotEmpty ||
             searchState.reels.isNotEmpty ||
             searchState.longVideos.isNotEmpty)) {
       _precacheSearchResultThumbs(searchState);
@@ -538,7 +536,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
       );
     }
     final hasAny = state.users.isNotEmpty ||
-        state.posts.isNotEmpty ||
         state.reels.isNotEmpty ||
         state.longVideos.isNotEmpty;
     if (!hasAny) {
@@ -614,10 +611,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         if (state.users.isNotEmpty) ...[
           _buildSectionHeader('Users'),
           _buildUserGrid(state.users),
-        ],
-        if (state.posts.isNotEmpty) ...[
-          _buildSectionHeader('Posts'),
-          _buildPostGrid(state.posts),
         ],
         if (state.reels.isNotEmpty) ...[
           _buildSectionHeader('Reels'),
@@ -808,6 +801,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     return RepaintBoundary(
       child: GestureDetector(
       onTap: () {
+        if (post.postType == 'reel') {
+          unawaited(openReelViewer(context, ref, prependedReel: post));
+          return;
+        }
+        if (post.postType == 'longVideo') {
+          unawaited(openLongVideoViewer(context, ref, post));
+          return;
+        }
         Navigator.push(
           context,
           MaterialPageRoute(

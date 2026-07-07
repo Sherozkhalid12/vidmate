@@ -20,6 +20,9 @@ class ApiConstants {
   static const String authUpdatePreferences = '/auth/updatePreferences';
   static String authGetUserById(String id) => '/auth/getUserByID/$id';
   static String authUserById(String id) => '/auth/user/$id';
+  static const String authBlocked = '/auth/blocked';
+  static String authBlockUser(String userId) => '/auth/block/$userId';
+  static String authUnblockUser(String userId) => '/auth/unblock/$userId';
 
   // Forget password
   static const String forgetPasswordSendOtp =
@@ -43,6 +46,10 @@ class ApiConstants {
   static const String storyCreate = '/post/story/create';
   static const String storyList = '/post/stories';
   static String storyByUser(String userId) => '/post/stories/user/$userId';
+  /// Mark story viewed (auth required). `:id` is the story `_id`.
+  static String storyMarkView(String storyId) => '/post/story/$storyId/view';
+  /// Story viewers list (owner only). `:id` is the story `_id`.
+  static String storyViewers(String storyId) => '/post/story/$storyId/viewers';
 
   // Reels
   /// Create reel. Backend endpoint: POST /post/reel/create
@@ -68,6 +75,8 @@ class ApiConstants {
   static String postDelete(String postId) => '/post/$postId';
   static String postReport(String postId) => '/post/report/$postId';
   static String postShare(String postId) => '/post/share/$postId';
+  /// Mark post/reel/long-video viewed (auth required). `:id` is the post `_id`.
+  static String postMarkView(String postId) => '/post/$postId/view';
 
   // FCM Device tokens
   static const String authSetDeviceToken = '/auth/setDeviceToken';
@@ -96,6 +105,12 @@ class ApiConstants {
   /// Deezer playlist by id (optional query: limit).
   static String musicDeezerPlaylist(String playlistId) =>
       '/music/deezer/playlists/$playlistId';
+
+  // Jamendo (story/reel/post music picker + cache)
+  static const String musicJamendoTrending = '/music/jamendo/trending';
+  static const String musicJamendoSearch = '/music/jamendo/search';
+  static String musicJamendoTrack(String trackId) =>
+      '/music/jamendo/track/$trackId';
 
   // Notifications
   /// GET – current user's notifications list.

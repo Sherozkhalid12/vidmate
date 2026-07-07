@@ -1,4 +1,5 @@
 import 'user_model.dart';
+import 'post_model.dart';
 
 /// API response model for create post. Matches server response structure.
 class CreatePostResponse {
@@ -52,6 +53,8 @@ class ApiPost {
   final List<String> likes;
   /// Comment count from backend (API may send 'Comments' or 'comments').
   final int commentsCount;
+  /// View count when provided by API.
+  final int views;
   /// Optional BlurHash for instant thumbnail placeholder.
   final String? blurHash;
   /// Explicit cover/thumbnail (reels/long video) when not in [images].
@@ -82,6 +85,7 @@ class ApiPost {
     this.musicName,
     this.musicTitle,
     this.musicPreviewUrl,
+    this.views = 0,
   })  : likes = likes ?? const [],
         commentsCount = commentsCount ?? 0;
 
@@ -133,7 +137,11 @@ class ApiPost {
     final thumb = thumbRaw.isEmpty ? null : thumbRaw;
     final mName = _string(json['musicName'] ?? json['music_name'] ?? json['songName'] ?? json['trackTitle']);
     final mTitle = _string(json['musicTitle'] ?? json['music_title'] ?? json['artistName'] ?? json['artist']);
-    final mUrl = _string(json['music'] ?? json['musicUrl'] ?? json['musicPreviewUrl'] ?? json['previewUrl']);
+    final mUrlPrimary = _string(
+      json['musicUrl'] ?? json['musicPreviewUrl'] ?? json['previewUrl'],
+    );
+    final mUrlLegacy = _string(json['music']);
+    final mUrl = mUrlPrimary.isNotEmpty ? mUrlPrimary : mUrlLegacy;
     return ApiPost(
       userId: _string(json['userId']),
       images: _stringList(json['images']),
@@ -149,6 +157,7 @@ class ApiPost {
       likes: likesList,
       commentsCount: commentsCount,
       blurHash: bh.isEmpty ? null : bh,
+      views: PostModel.parseViewsField(json),
       thumbnailUrl: thumb,
       musicName: mName.isEmpty ? null : mName,
       musicTitle: mTitle.isEmpty ? null : mTitle,
@@ -177,7 +186,7 @@ class ApiPost {
       if (musicName != null && musicName!.isNotEmpty) 'musicName': musicName,
       if (musicTitle != null && musicTitle!.isNotEmpty) 'musicTitle': musicTitle,
       if (musicPreviewUrl != null && musicPreviewUrl!.isNotEmpty)
-        'music': musicPreviewUrl,
+        'musicUrl': musicPreviewUrl,
     };
   }
 }

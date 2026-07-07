@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
@@ -5,8 +7,13 @@ import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/widgets/glass_button.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/providers/stories_provider_riverpod.dart';
+import '../../core/providers/notifications_provider_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../main/main_screen.dart';
+import '../long_videos/providers/long_videos_provider.dart';
 import 'signup_screen.dart';
 import 'forget_password_screen.dart';
 
@@ -55,6 +62,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         );
     if (!mounted) return;
     if (success) {
+      // Warm core home data while user is still on login transition.
+      unawaited(Future.wait([
+        ref.read(postsProvider.notifier).loadPosts(forceRefresh: false),
+        ref.read(reelsProvider.notifier).loadReels(),
+        ref.read(storiesProvider.notifier).loadStories(),
+        ref.read(notificationsProvider.notifier).loadNotifications(),
+        ref.read(longVideosProvider.notifier).loadVideos(),
+      ]));
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (context, animation, secondaryAnimation) =>

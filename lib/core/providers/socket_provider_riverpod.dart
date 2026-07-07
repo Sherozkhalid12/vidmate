@@ -17,6 +17,8 @@ import 'reels_provider_riverpod.dart';
 import '../../features/long_videos/providers/long_videos_provider.dart';
 import '../utils/share_link_helper.dart';
 import 'socket_instance_provider_riverpod.dart';
+import 'blocked_users_provider.dart';
+import 'post_views_provider.dart';
 
 /// Ensures socket connects when user is logged in and disconnects on logout.
 /// Single connection only; guards against concurrent ensureConnection.
@@ -67,6 +69,7 @@ class SocketConnectionNotifier extends StateNotifier<bool> {
       _service.connect(user.id, token: token);
       _wireCallbacks();
       state = true;
+      unawaited(_ref.read(blockedUserIdsProvider.notifier).syncFromServer());
       if (kDebugMode) debugPrint('[SocketProvider] ensureConnection done userId=${user.id}');
     } finally {
       _isEnsuringConnection = false;
@@ -83,6 +86,38 @@ class SocketConnectionNotifier extends StateNotifier<bool> {
       _ref.read(postsProvider.notifier).applyLikesUpdate(postId: postId, likesCount: count, action: action);
       _ref.read(reelsProvider.notifier).applyLikesUpdate(postId: postId, likesCount: count, action: action);
       _ref.read(longVideosProvider.notifier).applyLikesUpdate(postId: postId, likesCount: count, action: action);
+    };
+    _service.onViewUpdated = (data) {
+      final postId = data['postId']?.toString();
+      final viewCount = data['viewCount'];
+      if (postId == null || postId.isEmpty) return;
+      final count = viewCount is int
+          ? viewCount
+          : int.tryParse(viewCount?.toString() ?? '');
+      if (count == null || count <= 0) return;
+      _ref.read(postViewCountOverridesProvider.notifier).applySocketUpdate(
+            postId: postId,
+            viewCount: count,
+          );
+    };
+    _service.onUserBlocked = (data) {
+      final blockedUserId =
+          data['blockedUserId']?.toString() ?? data['userId']?.toString();
+      if (blockedUserId == null || blockedUserId.isEmpty) return;
+      _ref
+          .read(blockedUserIdsProvider.notifier)
+          .applySocketBlocked(blockedUserId);
+      _ref.read(postsProvider.notifier).removePostsByAuthor(blockedUserId);
+      _ref.read(reelsProvider.notifier).removeReelsByAuthor(blockedUserId);
+      _ref.read(longVideosProvider.notifier).removeVideosByAuthor(blockedUserId);
+    };
+    _service.onUserUnblocked = (data) {
+      final unblockedUserId = data['unblockedUserId']?.toString() ??
+          data['userId']?.toString();
+      if (unblockedUserId == null || unblockedUserId.isEmpty) return;
+      _ref
+          .read(blockedUserIdsProvider.notifier)
+          .applySocketUnblocked(unblockedUserId);
     };
     _service.commentsSocket.setOnNewComment((PostComment comment) {
       _ref.read(commentsProvider(comment.postId).notifier).appendComment(comment);
@@ -176,8 +211,25 @@ class SocketConnectionNotifier extends StateNotifier<bool> {
       if (kDebugMode) {
         debugPrint('[SocketProvider][Chat] onGroupCreated: ${data['groupId'] ?? data['id'] ?? ''}');
       }
-      // Groups are surfaced in conversations list; easiest safe behavior is reload.
-      _ref.read(conversationsProvider.notifier).load();
+      final group = data['group'] is Map
+          ? Map<String, dynamic>.from(data['group'] as Map)
+          : null;
+      final groupId = (data['groupId'] ?? group?['_id'] ?? group?['id'] ?? data['id'] ?? '')
+          .toString()
+          .trim();
+      if (groupId.isEmpty) return;
+      final groupName = (group?['name'] ?? data['name'] ?? 'Group').toString();
+      final avatar = (group?['avatar'] ??
+              group?['avatarUrl'] ??
+              group?['image'] ??
+              data['avatar'] ??
+              '')
+          .toString();
+      _ref.read(conversationsProvider.notifier).upsertGroupConversation(
+            groupId: groupId,
+            groupName: groupName,
+            avatarUrl: avatar.isNotEmpty ? avatar : null,
+          );
     });
 
     _notificationSub?.cancel();
@@ -274,7 +326,12 @@ String _previewTextFromChatPayload(Map<String, dynamic> data) {
 }
 
 String _normalizeConvId(String id) {
-  if (id.isEmpty || !id.contains('_')) return id;
+  if (id.isEmpty) return id;
+  if (id.startsWith('group:')) {
+    final gid = id.split(':').last.trim();
+    return gid.isNotEmpty ? 'group:$gid' : id;
+  }
+  if (!id.contains('_')) return id;
   final parts = id.split('_');
   if (parts.length != 2) return id;
   parts.sort();

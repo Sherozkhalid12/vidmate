@@ -11,7 +11,10 @@ import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 import '../long_videos/providers/long_videos_provider.dart';
+import 'video_player_embedded_ui_providers.dart';
 import '../../core/providers/video_player_provider.dart';
+import '../../core/providers/post_views_provider.dart';
+import '../../core/video_engine/video_engine_provider.dart';
 import '../../core/models/user_model.dart';
 import '../../core/models/post_model.dart';
 import '../../core/widgets/glass_card.dart';
@@ -20,6 +23,12 @@ import '../../core/widgets/share_bottom_sheet.dart';
 import '../../core/widgets/safe_better_player.dart';
 import '../../core/utils/share_link_helper.dart';
 import '../profile/profile_screen.dart';
+
+String _lvPlayableUrl(PostModel p) {
+  final u = p.videoUrl?.trim();
+  if (u != null && u.isNotEmpty) return u;
+  return (p.videoResolutions['360p'] ?? p.videoMasterUrl ?? '').trim();
+}
 
 int _asmsTrackSortHeight(BetterPlayerAsmsTrack t) {
   final h = t.height;
@@ -57,6 +66,14 @@ String _resolutionLabelYoutubeStyle(BetterPlayerAsmsTrack t) {
     return '${h}p';
   }
   return _asmsTrackLabelFallback(t);
+}
+
+String _resolutionLabelYoutubeStyleFromKey(String key) {
+  final parsed = int.tryParse(key.replaceAll(RegExp(r'[^0-9]'), ''));
+  if (parsed == null || parsed <= 0) return key;
+  if (parsed >= 1080) return '${parsed}p HD';
+  if (parsed >= 720) return '${parsed}p HD';
+  return '${parsed}p';
 }
 
 List<BetterPlayerAsmsTrack> _asmsTracksDescendingByResolution(
@@ -99,18 +116,35 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
 class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     with WidgetsBindingObserver {
   String? _betterPlayerLayoutSig;
+  String? _activeVideoUrl;
 
-  bool _isLiked = false;
-  int _likeCount = 0;
-  int _commentCount = 0;
   Timer? _controlsTimer;
   VideoPlayerNotifier? _cachedNotifier;
 
-  /// Embedded long-video scroll: hide details until player is ready; suggested list loads async.
-  bool _embeddedDetailsReady = false;
-  bool _embeddedSuggestedReady = false;
   bool _embeddedDetailsRevealScheduled = false;
   bool _embeddedDetailsFallbackScheduled = false;
+
+  /// Avoid scheduling duplicate [GlobalVideoEngine.schedulePrefetch] per URL.
+  String? _suggestedEnginePrefetchScheduledForVideoUrl;
+
+  bool _suggestedRouteTransitionInFlight = false;
+
+  Future<void> _ensureStandardSystemUi() async {
+    try {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: SystemUiOverlay.values,
+      );
+    } catch (_) {}
+  }
+
+  VideoPlayerFamilyKey _longFormKey(String url, PostModel? post) {
+    return videoPlayerKeyLongForm(url, postId: post?.id);
+  }
 
   bool _deferEmbeddedShimmers() {
     final p = widget.post;
@@ -122,11 +156,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    if (widget.post != null) {
-      _isLiked = widget.post!.isLiked;
-      _likeCount = widget.post!.likes;
-      _commentCount = widget.post!.comments;
-    }
+    _activeVideoUrl = widget.videoUrl;
 
     // Never call ref.read / _startControlsTimer in initState — the element is
     // not yet safe for ProviderScope (crashes opening from long-video search).
@@ -134,14 +164,33 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
       if (!mounted) return;
       _startControlsTimer();
       try {
-        _cachedNotifier =
-            ref.read(videoPlayerProvider(widget.videoUrl).notifier);
+        _cachedNotifier = ref.read(
+            videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post))
+                .notifier);
         _startVideoPlayback();
       } catch (_) {}
       if (_deferEmbeddedShimmers()) {
         unawaited(_loadEmbeddedSuggestedSectionReady());
       }
+      final postId = widget.post?.id;
+      if (postId != null && postId.isNotEmpty) {
+        unawaited(
+          ref.read(postViewCountOverridesProvider.notifier).recordAndUpdate(
+                postId,
+                fallback: widget.post?.displayViews ?? 0,
+              ),
+        );
+      }
     });
+  }
+
+  int _resolvedViewCount(int likeCount) {
+    final postId = widget.post?.id ?? '';
+    final fallback = widget.post?.displayViews ??
+        ((likeCount > 0 ? likeCount : (widget.post?.likes ?? 0)) * 10);
+    if (postId.isEmpty) return fallback;
+    final overrides = ref.watch(postViewCountOverridesProvider);
+    return overrides[postId] ?? fallback;
   }
 
   Future<void> _loadEmbeddedSuggestedSectionReady() async {
@@ -149,7 +198,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     final lv0 = ref.read(longVideosProvider);
     final waitingForFeed = lv0.isLoading && !lv0.initialFetchCompleted;
     if (waitingForFeed) {
-      setState(() => _embeddedSuggestedReady = false);
+      ref
+          .read(videoPlayerEmbeddedSuggestedReadyProvider(widget.videoUrl)
+              .notifier)
+          .state = false;
     }
 
     var waited = 0;
@@ -161,47 +213,64 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     }
     await Future<void>.delayed(const Duration(milliseconds: 80));
     if (!mounted || !context.mounted) return;
-    if (_embeddedSuggestedReady != true) {
-      setState(() => _embeddedSuggestedReady = true);
-    }
+    ref
+        .read(
+            videoPlayerEmbeddedSuggestedReadyProvider(widget.videoUrl).notifier)
+        .state = true;
   }
 
   @override
   void didUpdateWidget(VideoPlayerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.videoUrl != widget.videoUrl) {
+    if (oldWidget.videoUrl != widget.videoUrl ||
+        oldWidget.post?.id != widget.post?.id) {
+      _suggestedEnginePrefetchScheduledForVideoUrl = null;
+
       _betterPlayerLayoutSig = null;
-      _embeddedDetailsReady = false;
       _embeddedDetailsRevealScheduled = false;
       _embeddedDetailsFallbackScheduled = false;
-      if (_deferEmbeddedShimmers()) {
-        final lv = ref.read(longVideosProvider);
-        if (lv.isLoading && !lv.initialFetchCompleted) {
-          _embeddedSuggestedReady = false;
-        }
-        unawaited(_loadEmbeddedSuggestedSectionReady());
-      }
-      final newUrl = widget.videoUrl;
+      _activeVideoUrl = widget.videoUrl;
+
+      try {
+        _cachedNotifier?.pause();
+      } catch (_) {}
+      _cachedNotifier = null;
+
+      final deferShimmers = _deferEmbeddedShimmers();
+      final feedReady = deferShimmers &&
+          ref.read(longVideosProvider).initialFetchCompleted;
+      final targetVideoUrl = widget.videoUrl;
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || widget.videoUrl != newUrl) return;
-        try {
-          _cachedNotifier =
-              ref.read(videoPlayerProvider(widget.videoUrl).notifier);
-          if (widget.post != null) {
-            setState(() {
-              _isLiked = widget.post!.isLiked;
-              _likeCount = widget.post!.likes;
-              _commentCount = widget.post!.comments;
-            });
+        if (!mounted || widget.videoUrl != _activeVideoUrl) return;
+
+        if (deferShimmers) {
+          if (feedReady) {
+            ref
+                .read(videoPlayerEmbeddedDetailsReadyProvider(targetVideoUrl)
+                    .notifier)
+                .state = true;
+            ref
+                .read(videoPlayerEmbeddedSuggestedReadyProvider(targetVideoUrl)
+                    .notifier)
+                .state = true;
+          } else {
+            ref
+                .read(videoPlayerEmbeddedSuggestedReadyProvider(targetVideoUrl)
+                    .notifier)
+                .state = false;
+            unawaited(_loadEmbeddedSuggestedSectionReady());
           }
-          _startVideoPlayback();
+        }
+
+        final key = _longFormKey(widget.videoUrl, widget.post);
+        try {
+          final notifier = ref.read(videoPlayerProvider(key).notifier);
+          _cachedNotifier = notifier;
+          notifier.ensureControlsVisible();
         } catch (_) {}
-      });
-    } else if (oldWidget.post?.id != widget.post?.id && widget.post != null) {
-      setState(() {
-        _isLiked = widget.post!.isLiked;
-        _likeCount = widget.post!.likes;
-        _commentCount = widget.post!.comments;
+        _startControlsTimer();
+        _startVideoPlayback();
       });
     }
   }
@@ -209,29 +278,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
   Future<void> _toggleLikeApi() async {
     final post = widget.post;
     if (post == null) return;
-    setState(() {
-      _isLiked = !_isLiked;
-      _likeCount += _isLiked ? 1 : -1;
-    });
     if (post.postType == 'longVideo') {
       await ref.read(longVideosProvider.notifier).toggleLikeWithApi(post.id);
-      if (!mounted) return;
-      final liked = ref.read(longVideoLikedProvider(post.id));
-      final count = ref.read(longVideoLikeCountProvider(post.id));
-      setState(() {
-        _isLiked = liked;
-        _likeCount = count;
-      });
       return;
     }
     await ref.read(postsProvider.notifier).toggleLikeWithApi(post.id);
-    if (!mounted) return;
-    final liked = ref.read(postLikedProvider(post.id));
-    final count = ref.read(postLikeCountProvider(post.id));
-    setState(() {
-      _isLiked = liked;
-      _likeCount = count;
-    });
   }
 
   @override
@@ -257,11 +308,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     }
     // Do not use ref or ref.invalidate in dispose() — ref is invalid once the widget is torn down.
 
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    unawaited(_ensureStandardSystemUi());
     super.dispose();
   }
 
@@ -270,18 +317,21 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
 
     // Only start timer if controls are currently visible
     // This prevents auto-showing controls after user explicitly hides them
-    final currentState = ref.read(videoPlayerProvider(widget.videoUrl));
+    final currentState = ref.read(
+        videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
     if (!currentState.showControls) {
       return; // Don't start timer if controls are hidden
     }
 
     _controlsTimer = Timer(const Duration(seconds: 3), () {
       if (mounted) {
-        final state = ref.read(videoPlayerProvider(widget.videoUrl));
+        final state = ref.read(
+            videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
         // Only auto-hide if controls are still visible (user didn't show them again)
         if (state.showControls) {
           ref
-              .read(videoPlayerProvider(widget.videoUrl).notifier)
+              .read(videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post))
+                  .notifier)
               .toggleControls();
         }
       }
@@ -290,33 +340,68 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
 
   void _startVideoPlayback() {
     if (!mounted) return;
-
     try {
-      final notifier = _cachedNotifier ??
-          ref.read(videoPlayerProvider(widget.videoUrl).notifier);
-      if (notifier == null) return;
-
-      final state = ref.read(videoPlayerProvider(widget.videoUrl));
-
-      // Only play if initialized and not already playing
-      if (state.isInitialized && !state.isPlaying && state.controller != null) {
-        notifier.play();
-      } else if (!state.isInitialized) {
-        // If not initialized yet, wait a bit and try again
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) {
-            _startVideoPlayback();
-          }
-        });
+      final state = ref.read(
+          videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
+      if (state.isInitialized && !state.isPlaying && state.hasValidController) {
+        (_cachedNotifier ??
+                ref.read(videoPlayerProvider(
+                        _longFormKey(widget.videoUrl, widget.post))
+                    .notifier))
+            ?.play();
       }
-    } catch (e) {
-      // Provider might be disposed, ignore
+    } catch (_) {}
+  }
+
+  VideoPlayerNotifier? _readLiveNotifier() {
+    final key = _longFormKey(widget.videoUrl, widget.post);
+    if (_cachedNotifier != null) {
+      try {
+        _cachedNotifier!.state;
+        return _cachedNotifier;
+      } catch (_) {
+        _cachedNotifier = null;
+      }
+    }
+    try {
+      final n = ref.read(videoPlayerProvider(key).notifier);
+      _cachedNotifier = n;
+      return n;
+    } catch (_) {
+      return null;
     }
   }
 
+  void _safeToggleControls() {
+    final n = _readLiveNotifier();
+    if (n == null) return;
+    try {
+      n.toggleControls();
+    } catch (_) {}
+  }
+
+  void _safeSeekBackward() {
+    final n = _readLiveNotifier();
+    if (n == null) return;
+    try {
+      n.seekBackward();
+    } catch (_) {}
+  }
+
+  void _safeSeekForward() {
+    final n = _readLiveNotifier();
+    if (n == null) return;
+    try {
+      n.seekForward();
+    } catch (_) {}
+  }
+
   void _toggleFullscreen() {
-    final notifier = ref.read(videoPlayerProvider(widget.videoUrl).notifier);
-    final currentState = ref.read(videoPlayerProvider(widget.videoUrl));
+    final notifier = ref.read(
+        videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post))
+            .notifier);
+    final currentState = ref.read(
+        videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
 
     // Close playback speed menu if open
     if (currentState.showPlaybackSpeedMenu) {
@@ -327,7 +412,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
 
     // Use a small delay for smoother transition
     Future.delayed(const Duration(milliseconds: 100), () {
-      final state = ref.read(videoPlayerProvider(widget.videoUrl));
+      final state = ref.read(
+          videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
       if (state.isFullscreen) {
         SystemChrome.setPreferredOrientations([
           DeviceOrientation.landscapeLeft,
@@ -696,32 +782,85 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    final playerState = ref.watch(videoPlayerProvider(widget.videoUrl));
+    final watchKey = _longFormKey(widget.videoUrl, widget.post);
+    final playerState = ref.watch(videoPlayerProvider(watchKey));
 
-    // Ensure cached notifier is available
-    if (_cachedNotifier == null) {
-      _cachedNotifier = ref.read(videoPlayerProvider(widget.videoUrl).notifier);
+    final VideoPlayerNotifier notifier;
+    if (_cachedNotifier != null) {
+      notifier = _cachedNotifier!;
+    } else {
+      notifier = ref.read(videoPlayerProvider(watchKey).notifier);
     }
 
-    final notifier = _cachedNotifier!;
+    final post = widget.post;
+    final postId = post?.id;
+    final isLongVideo = post?.postType == 'longVideo';
+    var isLiked = false;
+    var likeCount = 0;
+    var commentCount = post?.comments ?? 0;
+    if (postId != null && postId.isNotEmpty) {
+      if (isLongVideo == true) {
+        isLiked = ref.watch(longVideoLikedProvider(postId));
+        likeCount = ref.watch(longVideoLikeCountProvider(postId));
+        final longById = ref.watch(longVideoByIdProvider(postId));
+        commentCount = longById?.comments ?? post?.comments ?? 0;
+      } else {
+        isLiked = ref.watch(postLikedProvider(postId));
+        likeCount = ref.watch(postLikeCountProvider(postId));
+        commentCount = ref.watch(postCommentCountProvider(postId));
+      }
+    }
 
-    _syncBetterPlayerLayout(playerState);
+    final bindId = (postId != null && postId.isNotEmpty)
+        ? postId
+        : widget.videoUrl.trim();
+    // Do not gate on [VideoPlayerState.hasValidController]: the engine may
+    // already be playing audio while [isInitialized] is still false if the
+    // BetterPlayer initialized event was missed or reordered vs. listener attach.
+    final BetterPlayerController? engineViewController = ref.watch(
+      globalVideoEngineProvider.select((s) {
+        final slot = s.activeSlot;
+        if (slot == null || slot.id != bindId) return null;
+        return slot.controller;
+      }),
+    );
 
-    if (_deferEmbeddedShimmers() && !_embeddedDetailsReady) {
-      final ready = playerState.isInitialized &&
-          playerState.hasValidController &&
-          playerState.controller != null;
+    _syncBetterPlayerLayout(playerState, engineViewController);
+
+    final defer = _deferEmbeddedShimmers();
+    final embeddedDetailsReady = defer
+        ? ref.watch(videoPlayerEmbeddedDetailsReadyProvider(widget.videoUrl))
+        : true;
+    final embeddedSuggestedReady = defer
+        ? ref.watch(videoPlayerEmbeddedSuggestedReadyProvider(widget.videoUrl))
+        : true;
+    final showDetailsShimmer = defer && !embeddedDetailsReady;
+    final showSuggestedShimmer = defer && !embeddedSuggestedReady;
+
+    if (defer && !embeddedDetailsReady) {
+      final ready = engineViewController != null ||
+          (playerState.isInitialized && playerState.hasValidController);
       if (ready && !_embeddedDetailsRevealScheduled) {
         _embeddedDetailsRevealScheduled = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _embeddedDetailsReady = true);
+          if (!mounted) return;
+          ref
+              .read(videoPlayerEmbeddedDetailsReadyProvider(widget.videoUrl)
+                  .notifier)
+              .state = true;
         });
       }
       if (!ready && !_embeddedDetailsFallbackScheduled) {
         _embeddedDetailsFallbackScheduled = true;
         Future<void>.delayed(const Duration(seconds: 12), () {
-          if (mounted && !_embeddedDetailsReady) {
-            setState(() => _embeddedDetailsReady = true);
+          if (!mounted) return;
+          final still = ref.read(
+              videoPlayerEmbeddedDetailsReadyProvider(widget.videoUrl));
+          if (!still) {
+            ref
+                .read(videoPlayerEmbeddedDetailsReadyProvider(widget.videoUrl)
+                    .notifier)
+                .state = true;
           }
         });
       }
@@ -734,9 +873,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
           _toggleFullscreen();
           return;
         }
+        unawaited(_ensureStandardSystemUi());
         try {
           ref
-              .read(videoPlayerProvider(widget.videoUrl).notifier)
+              .read(videoPlayerProvider(
+                      _longFormKey(widget.videoUrl, widget.post))
+                  .notifier)
               .transferToLongVideoFeedIfPossibleSync();
         } catch (_) {}
         if (_cachedNotifier != null) {
@@ -745,17 +887,38 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
           } catch (_) {}
         }
         try {
-          final s = ref.read(videoPlayerProvider(widget.videoUrl));
-          if (s.controller != null && s.isInitialized && s.isPlaying) {
-            s.controller!.pause();
+          final s = ref.read(
+              videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
+          if (s.isInitialized && s.isPlaying) {
+            ref
+                .read(videoPlayerProvider(
+                        _longFormKey(widget.videoUrl, widget.post))
+                    .notifier)
+                .pause();
           }
         } catch (_) {}
       },
       child: Scaffold(
         backgroundColor: Colors.black,
         body: playerState.isFullscreen
-            ? _buildFullscreenView(playerState, notifier)
-            : _buildEmbeddedView(playerState, notifier),
+            ? _buildFullscreenView(
+                playerState,
+                notifier,
+                engineViewController,
+                isLiked: isLiked,
+                likeCount: likeCount,
+                commentCount: commentCount,
+              )
+            : _buildEmbeddedView(
+                playerState,
+                notifier,
+                engineViewController,
+                isLiked: isLiked,
+                likeCount: likeCount,
+                commentCount: commentCount,
+                showDetailsShimmer: showDetailsShimmer,
+                showSuggestedShimmer: showSuggestedShimmer,
+              ),
       ),
     );
   }
@@ -776,9 +939,14 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     );
   }
 
-  void _syncBetterPlayerLayout(VideoPlayerState ps) {
-    final c = ps.controller;
-    if (!ps.hasValidController || c == null) return;
+  void _syncBetterPlayerLayout(
+    VideoPlayerState ps,
+    BetterPlayerController? engineController,
+  ) {
+    final c = engineController ?? ps.controller;
+    // Allow layout sync whenever we have a controller (engine may render before
+    // [VideoPlayerState.isInitialized] catches up).
+    if (ps.isDisposed || c == null) return;
     final vpc = c.videoPlayerController;
     var ar = 16 / 9;
     final av = vpc?.value.aspectRatio;
@@ -828,11 +996,24 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
           videoUrl: widget.videoUrl,
           notifier: notifier,
           onFinished: _startControlsTimer,
+          post: widget.post,
         ),
       );
       return;
     }
-    final tracks = playerState.controller?.betterPlayerAsmsTracks ?? [];
+    final resolutions = widget.post?.availableResolutions ?? const <String>[];
+    final resolutionUrls =
+        widget.post?.videoResolutions ?? const <String, String>{};
+    final masterUrl = widget.post?.videoMasterUrl ?? widget.videoUrl;
+    final activeKey = playerState.activeResolutionKey;
+    const resolutionOrder = ['1080p', '720p', '480p', '360p', '240p', '144p'];
+    final sortedResolutions = [...resolutions]..sort((a, b) {
+        final ai = resolutionOrder.indexOf(a);
+        final bi = resolutionOrder.indexOf(b);
+        final aIdx = ai == -1 ? 999 : ai;
+        final bIdx = bi == -1 ? 999 : bi;
+        return aIdx.compareTo(bIdx);
+      });
     const speeds = <double>[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
     await showModalBottomSheet<void>(
@@ -935,51 +1116,84 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    subtitle: Text(
-                      'Uses connection type to pick a rung.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: ThemeHelper.getTextMuted(context),
-                      ),
-                    ),
+                    trailing: activeKey == null
+                        ? Icon(Icons.check,
+                            color: ThemeHelper.getAccentColor(context))
+                        : null,
                     onTap: () {
                       Navigator.pop(ctx);
-                      unawaited(notifier.applyAutoQualityIfAdaptive(
-                        settleDelay: Duration.zero,
-                      ));
+                      unawaited(
+                        notifier.switchToResolution(
+                          resolutionKey: null,
+                          videoResolutions: resolutionUrls,
+                          masterUrl: masterUrl,
+                        ),
+                      );
                       _startControlsTimer();
                     },
                   ),
-                  if (tracks.isEmpty)
+                  if (resolutions.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Text(
-                        'No separate quality rungs for this stream (e.g. progressive MP4).',
+                        'Only auto quality available for this stream.',
                         style: TextStyle(
                           fontSize: 12,
                           color: ThemeHelper.getTextMuted(context),
                         ),
                       ),
                     )
-                  else
-                    for (final t in _asmsTracksDescendingByResolution(tracks))
-                      ListTile(
-                        leading: Icon(
-                          Icons.high_quality_outlined,
+                  else ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                      child: Text(
+                        'Resolution',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                           color: ThemeHelper.getTextSecondary(context),
                         ),
-                        title: Text(
-                          _resolutionLabelYoutubeStyle(t),
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          unawaited(notifier.setVideoQualityTrack(t));
-                          _startControlsTimer();
-                        },
                       ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final resolution in sortedResolutions)
+                            OutlinedButton(
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                unawaited(
+                                  notifier.switchToResolution(
+                                    resolutionKey: resolution,
+                                    videoResolutions: resolutionUrls,
+                                    masterUrl: masterUrl,
+                                  ),
+                                );
+                                _startControlsTimer();
+                              },
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(_resolutionLabelYoutubeStyleFromKey(
+                                      resolution)),
+                                  if (activeKey == resolution) ...[
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      Icons.check,
+                                      size: 16,
+                                      color: ThemeHelper.getAccentColor(context),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );
@@ -1034,7 +1248,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
   }
 
   Widget _buildFullscreenView(
-      VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    VideoPlayerState playerState,
+    VideoPlayerNotifier notifier,
+    BetterPlayerController? engineController, {
+    required bool isLiked,
+    required int likeCount,
+    required int commentCount,
+  }) {
     return SafeArea(
       child: GestureDetector(
         onTap: () {
@@ -1045,10 +1265,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
           }
 
           // Toggle controls
-          notifier.toggleControls();
+          _safeToggleControls();
 
           // Get the new state after toggle
-          final newState = ref.read(videoPlayerProvider(widget.videoUrl));
+          final newState = ref.read(
+              videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
 
           // Only start timer if controls are now visible (to auto-hide them)
           // If controls are hidden, cancel timer and don't restart it
@@ -1064,9 +1285,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
           // Double tap: Skip forward/backward
           final screenWidth = MediaQuery.of(context).size.width;
           if (details.localPosition.dx < screenWidth / 2) {
-            notifier.seekBackward();
+            _safeSeekBackward();
           } else {
-            notifier.seekForward();
+            _safeSeekForward();
           }
           _startControlsTimer();
         },
@@ -1074,16 +1295,14 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
           children: [
             // Video player
             Center(
-              child: playerState.isInitialized &&
-                      playerState.hasValidController &&
-                      playerState.controller != null
+              child: engineController != null
                   ? Stack(
                       children: [
                         AspectRatio(
                           aspectRatio:
-                              playerState.controller!.getAspectRatio() ?? 1.0,
+                              engineController.getAspectRatio() ?? 1.0,
                           child: SafeBetterPlayerWrapper(
-                              controller: playerState.controller!),
+                              controller: engineController),
                         ),
                         // Buffering indicator
                         if (playerState.isBuffering)
@@ -1231,7 +1450,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                           onHorizontalDragStart: (details) {
                             // Keep controls visible while scrubbing
                             if (!playerState.showControls) {
-                              notifier.toggleControls();
+                              _safeToggleControls();
                             }
                             _startControlsTimer();
                           },
@@ -1336,7 +1555,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                                 onPressed: () {
                                   // Seek backward without pausing
                                   final wasPlaying = playerState.isPlaying;
-                                  notifier.seekBackward();
+                                  _safeSeekBackward();
                                   // Ensure video continues playing
                                   if (wasPlaying && !playerState.isPlaying) {
                                     notifier.play();
@@ -1402,7 +1621,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                                   size: 26,
                                 ),
                                 onPressed: () {
-                                  notifier.seekForward();
+                                  _safeSeekForward();
                                   _startControlsTimer();
                                 },
                               ),
@@ -1487,12 +1706,43 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                             ),
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            widget.author.displayName,
-                            style: TextStyle(
-                              color: context.textSecondary,
-                              fontSize: 14,
+                          GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      ProfileScreen(user: widget.author),
+                                ),
+                              );
+                            },
+                            child: Text(
+                              widget.author.displayName,
+                              style: TextStyle(
+                                color: context.textSecondary,
+                                fontSize: 14,
+                              ),
                             ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.visibility_outlined,
+                                size: 14,
+                                color: context.textSecondary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                widget.post != null
+                                    ? '${_formatCount(_resolvedViewCount(likeCount))} views • ${_formatTimeAgo(widget.post!.createdAt)}'
+                                    : '${_formatCount(_resolvedViewCount(likeCount))} views',
+                                style: TextStyle(
+                                  color: context.textSecondary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 16),
                           // Action buttons row (Like, Comment, Share, Profile)
@@ -1502,11 +1752,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                               // Like button
                               if (widget.author.allowLikes)
                                 _buildPortraitActionButton(
-                                  icon: _isLiked
+                                  icon: isLiked
                                       ? Icons.favorite
                                       : Icons.favorite_border,
-                                  label: _formatCount(_likeCount),
-                                  color: _isLiked ? Colors.red : Colors.white,
+                                  label: _formatCount(likeCount),
+                                  color: isLiked ? Colors.red : Colors.white,
                                   onTap: () {
                                     _toggleLikeApi();
                                     _startControlsTimer();
@@ -1516,7 +1766,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                               if (widget.author.allowComments)
                                 _buildPortraitActionButton(
                                   icon: Icons.comment_outlined,
-                                  label: _formatCount(_commentCount),
+                                  label: _formatCount(commentCount),
                                   color: Colors.white,
                                   onTap: () {
                                     _startControlsTimer();
@@ -1621,15 +1871,32 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
   }
 
   Widget _buildEmbeddedView(
-      VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    VideoPlayerState playerState,
+    VideoPlayerNotifier notifier,
+    BetterPlayerController? engineController, {
+    required bool isLiked,
+    required int likeCount,
+    required int commentCount,
+    required bool showDetailsShimmer,
+    required bool showSuggestedShimmer,
+  }) {
     return SafeArea(
       child: Column(
         children: [
           // Embedded video player with constrained overlay
-          _buildEmbeddedVideoPlayer(playerState, notifier),
+          _buildEmbeddedVideoPlayer(
+              playerState, notifier, engineController),
           // Scrollable content below video player
           Expanded(
-            child: _buildVideoDescriptionContent(playerState, notifier),
+            child: _buildVideoDescriptionContent(
+              playerState,
+              notifier,
+              isLiked: isLiked,
+              likeCount: likeCount,
+              commentCount: commentCount,
+              showDetailsShimmer: showDetailsShimmer,
+              showSuggestedShimmer: showSuggestedShimmer,
+            ),
           ),
         ],
       ),
@@ -1637,7 +1904,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
   }
 
   Widget _buildEmbeddedVideoPlayer(
-      VideoPlayerState playerState, VideoPlayerNotifier notifier) {
+    VideoPlayerState playerState,
+    VideoPlayerNotifier notifier,
+    BetterPlayerController? engineController,
+  ) {
     const double embeddedHeight = 240.0;
 
     return GestureDetector(
@@ -1648,10 +1918,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
         }
 
         // Toggle controls
-        notifier.toggleControls();
+        _safeToggleControls();
 
         // Get the new state after toggle
-        final newState = ref.read(videoPlayerProvider(widget.videoUrl));
+        final newState = ref.read(
+            videoPlayerProvider(_longFormKey(widget.videoUrl, widget.post)));
 
         // Only start timer if controls are now visible (to auto-hide them)
         if (newState.showControls) {
@@ -1665,9 +1936,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
       onDoubleTapDown: (details) {
         final playerWidth = MediaQuery.of(context).size.width;
         if (details.localPosition.dx < playerWidth / 2) {
-          notifier.seekBackward();
+          _safeSeekBackward();
         } else {
-          notifier.seekForward();
+          _safeSeekForward();
         }
         _startControlsTimer();
       },
@@ -1697,12 +1968,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
             children: [
               // Video player — letterboxed in fixed height (YouTube-style; fit synced in build).
               Center(
-                child: playerState.isInitialized &&
-                        playerState.hasValidController &&
-                        playerState.controller != null
+                child: engineController != null
                     ? LayoutBuilder(
                         builder: (context, constraints) {
-                          final c = playerState.controller!;
+                          final c = engineController;
                           final vpc = c.videoPlayerController;
                           var ar = 16 / 9;
                           final av = vpc?.value.aspectRatio;
@@ -1818,7 +2087,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                           GestureDetector(
                             onHorizontalDragStart: (details) {
                               if (!playerState.showControls) {
-                                notifier.toggleControls();
+                                _safeToggleControls();
                               }
                               _startControlsTimer();
                             },
@@ -1914,7 +2183,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                                   onPressed: () {
                                     // Seek backward without pausing
                                     final wasPlaying = playerState.isPlaying;
-                                    notifier.seekBackward();
+                                    _safeSeekBackward();
                                     // Ensure video continues playing
                                     if (wasPlaying && !playerState.isPlaying) {
                                       notifier.play();
@@ -1973,7 +2242,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                                   icon: const Icon(Icons.forward_10,
                                       color: Colors.white, size: 22),
                                   onPressed: () {
-                                    notifier.seekForward();
+                                    _safeSeekForward();
                                     _startControlsTimer();
                                   },
                                 ),
@@ -2262,7 +2531,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
     );
   }
 
-  Widget _buildEmbeddedVideoDetailsColumn() {
+  Widget _buildEmbeddedVideoDetailsColumn({
+    required bool isLiked,
+    required int likeCount,
+    required int commentCount,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2270,35 +2543,54 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
         Row(
           children: [
             // Author image
-            Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.primary,
-                  width: 2,
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfileScreen(user: widget.author),
+                  ),
+                );
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
                 ),
-              ),
-              child: CircleAvatar(
-                radius: 20,
-                backgroundImage: _isValidRemoteUrl(widget.author.avatarUrl)
-                    ? NetworkImage(widget.author.avatarUrl)
-                    : null,
-                child: !_isValidRemoteUrl(widget.author.avatarUrl)
-                    ? Icon(
-                        Icons.person,
-                        color: ThemeHelper.getTextSecondary(context),
-                      )
-                    : null,
+                child: CircleAvatar(
+                  radius: 20,
+                  backgroundImage: _isValidRemoteUrl(widget.author.avatarUrl)
+                      ? NetworkImage(widget.author.avatarUrl)
+                      : null,
+                  child: !_isValidRemoteUrl(widget.author.avatarUrl)
+                      ? Icon(
+                          Icons.person,
+                          color: ThemeHelper.getTextSecondary(context),
+                        )
+                      : null,
+                ),
               ),
             ),
             const SizedBox(width: 10),
             // Author name and followers in column
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.author.displayName,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfileScreen(user: widget.author),
+                    ),
+                  );
+                },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.author.displayName,
                     style: TextStyle(
                       color: ThemeHelper.getTextPrimary(context),
                       fontSize: 14,
@@ -2320,6 +2612,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                 ],
               ),
             ),
+          ),
 
             ref.watch(currentUserProvider)?.id == widget.author.id
                 ? const SizedBox.shrink()
@@ -2442,7 +2735,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _formatCount(_commentCount),
+                      _formatCount(commentCount),
                       style: TextStyle(
                         color: ThemeHelper.getTextSecondary(context),
                         fontSize: 11,
@@ -2462,15 +2755,15 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      _isLiked ? Icons.favorite : Icons.favorite_border,
+                      isLiked ? Icons.favorite : Icons.favorite_border,
                       size: 24,
-                      color: _isLiked
+                      color: isLiked
                           ? Colors.red
                           : ThemeHelper.getTextPrimary(context),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _formatCount(_likeCount),
+                      _formatCount(likeCount),
                       style: TextStyle(
                         color: ThemeHelper.getTextSecondary(context),
                         fontSize: 11,
@@ -2493,8 +2786,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
             const SizedBox(width: 6),
             Text(
               widget.post != null
-                  ? ' ${_formatCount((widget.post!.likes) * 10)} views • ${_formatTimeAgo(widget.post!.createdAt)}'
-                  : '${_formatCount((_likeCount) * 10)} views',
+                  ? '${_formatCount(_resolvedViewCount(likeCount))} views • ${_formatTimeAgo(widget.post!.createdAt)}'
+                  : '${_formatCount(_resolvedViewCount(likeCount))} views',
               style: TextStyle(
                 color: ThemeHelper.getTextSecondary(context),
                 fontSize: 13,
@@ -2518,13 +2811,30 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
   }
 
   Widget _buildVideoDescriptionContent(
-      VideoPlayerState playerState, VideoPlayerNotifier notifier) {
-    final defer = _deferEmbeddedShimmers();
-    final showDetailsShimmer = defer && !_embeddedDetailsReady;
-    final showSuggestedShimmer = defer && !_embeddedSuggestedReady;
+    VideoPlayerState playerState,
+    VideoPlayerNotifier notifier, {
+    required bool isLiked,
+    required int likeCount,
+    required int commentCount,
+    required bool showDetailsShimmer,
+    required bool showSuggestedShimmer,
+  }) {
     final longVideosState = ref.watch(longVideosProvider);
     final suggestedLongVideos =
         _suggestedLongVideosFromList(longVideosState.videos);
+
+    if (playerState.isInitialized &&
+        !showSuggestedShimmer &&
+        suggestedLongVideos.isNotEmpty &&
+        widget.onSuggestedLongVideoSelected != null) {
+      if (_suggestedEnginePrefetchScheduledForVideoUrl != widget.videoUrl) {
+        _suggestedEnginePrefetchScheduledForVideoUrl = widget.videoUrl;
+        final nextUrl = _lvPlayableUrl(suggestedLongVideos.first);
+        if (nextUrl.isNotEmpty && nextUrl != widget.videoUrl.trim()) {
+          ref.read(globalVideoEngineProvider.notifier).schedulePrefetch(nextUrl);
+        }
+      }
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -2540,7 +2850,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
                 padding: const EdgeInsets.all(20),
                 child: showDetailsShimmer
                     ? _buildEmbeddedVideoDetailsShimmer()
-                    : _buildEmbeddedVideoDetailsColumn(),
+                    : _buildEmbeddedVideoDetailsColumn(
+                        isLiked: isLiked,
+                        likeCount: likeCount,
+                        commentCount: commentCount,
+                      ),
               ),
             ),
             const SizedBox(height: 24),
@@ -2668,6 +2982,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
       child: GlassCard(
         padding: const EdgeInsets.all(12),
         onTap: () {
+          if (_suggestedRouteTransitionInFlight) return;
           final nextUrl = _isValidRemoteUrl(video.videoUrl) ? (video.videoUrl ?? '') : '';
           if (nextUrl.isEmpty) return;
           final sessionSwitch = widget.onSuggestedLongVideoSelected;
@@ -2675,18 +2990,35 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen>
             sessionSwitch(video);
             return;
           }
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => VideoPlayerScreen(
-                key: ValueKey<String>('lv_embedded_$nextUrl'),
-                videoUrl: nextUrl,
-                title: video.caption,
-                author: video.author,
-                post: video,
+          _suggestedRouteTransitionInFlight = true;
+          unawaited(() async {
+            // Normalize system UI before replacing route to avoid bottom inset
+            // drift on devices with 3-button navigation.
+            await _ensureStandardSystemUi();
+            // Start next long-video session immediately so the destination screen
+            // can reuse an already-active controller when possible.
+            unawaited(
+              ref.read(globalVideoEngineProvider.notifier).playLongVideo(
+                    id: video.id,
+                    url: nextUrl,
+                  ),
+            );
+            if (!mounted) return;
+            await Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => VideoPlayerScreen(
+                  key: ValueKey<String>('lv_embedded_$nextUrl'),
+                  videoUrl: nextUrl,
+                  title: video.caption,
+                  author: video.author,
+                  post: video,
+                ),
               ),
-            ),
-          );
+            );
+          }().catchError((_) {
+            _suggestedRouteTransitionInFlight = false;
+          }));
         },
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2819,11 +3151,13 @@ class _LongVideoEmbeddedPlaybackRootSheet extends ConsumerStatefulWidget {
     required this.videoUrl,
     required this.notifier,
     required this.onFinished,
+    this.post,
   });
 
   final String videoUrl;
   final VideoPlayerNotifier notifier;
   final VoidCallback onFinished;
+  final PostModel? post;
 
   @override
   ConsumerState<_LongVideoEmbeddedPlaybackRootSheet> createState() =>
@@ -2852,41 +3186,61 @@ class _LongVideoEmbeddedPlaybackRootSheetState
 
   @override
   Widget build(BuildContext context) {
-    final playerState = ref.watch(videoPlayerProvider(widget.videoUrl));
-    final tracks = playerState.controller?.betterPlayerAsmsTracks ??
-        const <BetterPlayerAsmsTrack>[];
-    final sorted = _asmsTracksDescendingByResolution(tracks);
+    final playerState = ref.watch(
+      videoPlayerProvider(
+        videoPlayerKeyLongForm(widget.videoUrl, postId: widget.post?.id),
+      ),
+    );
+    final resolutions = widget.post?.availableResolutions ?? const <String>[];
+    final resolutionUrls =
+        widget.post?.videoResolutions ?? const <String, String>{};
+    final masterUrl = widget.post?.videoMasterUrl ?? widget.videoUrl;
+    final activeKey = playerState.activeResolutionKey;
+    const resolutionOrder = ['1080p', '720p', '480p', '360p', '240p', '144p'];
+    final sortedResolutions = [...resolutions]..sort((a, b) {
+        final ai = resolutionOrder.indexOf(a);
+        final bi = resolutionOrder.indexOf(b);
+        final aIdx = ai == -1 ? 999 : ai;
+        final bIdx = bi == -1 ? 999 : bi;
+        return aIdx.compareTo(bIdx);
+      });
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = ThemeHelper.getBackgroundColor(context);
+    final borderColor = ThemeHelper.getBorderColor(context);
 
-    return DraggableScrollableSheet(
-      initialChildSize: 0.42,
-      minChildSize: 0.28,
-      maxChildSize: 0.88,
-      builder: (_, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: ThemeHelper.getSurfaceColor(context),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            border: Border.all(
-              color:
-                  ThemeHelper.getBorderColor(context).withValues(alpha: 0.35),
-            ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: borderColor.withAlpha(isDark ? 120 : 80),
+            width: 1,
           ),
-          child: ListView(
-            controller: scrollController,
-            padding: const EdgeInsets.only(bottom: 24),
-            children: [
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: ThemeHelper.getBorderColor(context)
-                        .withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(2),
+        ),
+        child: SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.76,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.only(bottom: 16),
+              children: [
+                const SizedBox(height: 10),
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: ThemeHelper.getBorderColor(context)
+                          .withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
               if (_page != _EmbeddedPbMenuPage.root)
                 ListTile(
                   leading: Icon(
@@ -2958,7 +3312,7 @@ class _LongVideoEmbeddedPlaybackRootSheetState
                     ),
                   ),
                   subtitle: Text(
-                    tracks.length < 2
+                    resolutions.isEmpty
                         ? 'Auto (only one stream)'
                         : 'Auto or fixed resolution',
                     style: TextStyle(
@@ -3014,47 +3368,88 @@ class _LongVideoEmbeddedPlaybackRootSheetState
                       color: ThemeHelper.getTextMuted(context),
                     ),
                   ),
+                  trailing: activeKey == null
+                      ? Icon(Icons.check,
+                          color: ThemeHelper.getAccentColor(context))
+                      : null,
                   onTap: () {
-                    unawaited(widget.notifier.applyAutoQualityIfAdaptive(
-                      settleDelay: Duration.zero,
-                    ));
+                    unawaited(
+                      widget.notifier.switchToResolution(
+                        resolutionKey: null,
+                        videoResolutions: resolutionUrls,
+                        masterUrl: masterUrl,
+                      ),
+                    );
                     _close();
                   },
                 ),
-                if (sorted.isEmpty)
+                if (resolutions.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Text(
-                      'No separate resolutions for this video.',
+                      'Only auto quality available.',
                       style: TextStyle(
                         fontSize: 12,
                         color: ThemeHelper.getTextMuted(context),
                       ),
                     ),
                   )
-                else
-                  for (final t in sorted)
-                    ListTile(
-                      leading: Icon(
-                        Icons.high_quality_outlined,
+                else ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                    child: Text(
+                      'Resolution',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                         color: ThemeHelper.getTextSecondary(context),
                       ),
-                      title: Text(
-                        _resolutionLabelYoutubeStyle(t),
-                        style: TextStyle(
-                          color: ThemeHelper.getTextPrimary(context),
-                        ),
-                      ),
-                      onTap: () {
-                        unawaited(widget.notifier.setVideoQualityTrack(t));
-                        _close();
-                      },
                     ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final resolution in sortedResolutions)
+                          OutlinedButton(
+                            onPressed: () {
+                              unawaited(
+                                widget.notifier.switchToResolution(
+                                  resolutionKey: resolution,
+                                  videoResolutions: resolutionUrls,
+                                  masterUrl: masterUrl,
+                                ),
+                              );
+                              _close();
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_resolutionLabelYoutubeStyleFromKey(
+                                    resolution)),
+                                if (activeKey == resolution) ...[
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    Icons.check,
+                                    size: 16,
+                                    color: ThemeHelper.getAccentColor(context),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
-            ],
+              ],
+            ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }

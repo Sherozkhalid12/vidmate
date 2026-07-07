@@ -30,9 +30,9 @@ BetterPlayerCacheConfiguration? longVideoNetworkCache(String url) {
   }
   return BetterPlayerCacheConfiguration(
     useCache: true,
-    maxCacheSize: 256 * 1024 * 1024,
-    maxCacheFileSize: 80 * 1024 * 1024,
-    preCacheSize: 8 * 1024 * 1024,
+    maxCacheSize: 200 * 1024 * 1024,
+    maxCacheFileSize: 50 * 1024 * 1024,
+    preCacheSize: 0,
     key: url,
   );
 }

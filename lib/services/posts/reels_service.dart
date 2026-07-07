@@ -10,6 +10,7 @@ import '../../core/api/dio_client.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/models/reel_response_model.dart';
 import '../../core/utils/reels_json_parser.dart';
+import '../../core/utils/reels_logger.dart';
 
 class CreateReelResult {
   final bool success;
@@ -50,8 +51,15 @@ class GetReelsResult {
 class CreateReelParams {
   final File? video;
   final File? thumbnailFile;
+  final File? audioFile;
   final String? thumbnailUrl;
   final String? music;
+  final String? musicName;
+  final String? musicTitle;
+  final String? musicArtist;
+  final bool? isOriginalSound;
+  final String? musicSource;
+  final int? soundtrackDurationMs;
   final String? caption;
   final List<String> locations;
   final List<String> taggedUsers;
@@ -60,8 +68,15 @@ class CreateReelParams {
   CreateReelParams({
     this.video,
     this.thumbnailFile,
+    this.audioFile,
     this.thumbnailUrl,
     this.music,
+    this.musicName,
+    this.musicTitle,
+    this.musicArtist,
+    this.isOriginalSound,
+    this.musicSource,
+    this.soundtrackDurationMs,
     this.caption,
     this.locations = const [],
     this.taggedUsers = const [],
@@ -121,6 +136,37 @@ class ReelsService {
       if (params.music != null && params.music!.trim().isNotEmpty) {
         formData.fields.add(MapEntry('music', params.music!.trim()));
       }
+      if (params.musicName != null && params.musicName!.trim().isNotEmpty) {
+        formData.fields.add(MapEntry('musicName', params.musicName!.trim()));
+      }
+      if (params.musicTitle != null && params.musicTitle!.trim().isNotEmpty) {
+        formData.fields.add(MapEntry('musicTitle', params.musicTitle!.trim()));
+        formData.fields
+            .add(MapEntry('soundtrackTitle', params.musicTitle!.trim()));
+      }
+      if (params.musicArtist != null && params.musicArtist!.trim().isNotEmpty) {
+        formData.fields.add(MapEntry('musicArtist', params.musicArtist!.trim()));
+        formData.fields
+            .add(MapEntry('soundtrackArtist', params.musicArtist!.trim()));
+      }
+      if (params.isOriginalSound != null) {
+        formData.fields.add(MapEntry(
+          'isOriginalSound',
+          params.isOriginalSound! ? 'true' : 'false',
+        ));
+      } else if (_hasLibrarySoundtrack(params)) {
+        formData.fields.add(const MapEntry('isOriginalSound', 'false'));
+      }
+      if (params.musicSource != null && params.musicSource!.trim().isNotEmpty) {
+        formData.fields.add(MapEntry('musicSource', params.musicSource!.trim()));
+      }
+      if (params.soundtrackDurationMs != null &&
+          params.soundtrackDurationMs! > 0) {
+        formData.fields.add(MapEntry(
+          'soundtrackDurationMs',
+          params.soundtrackDurationMs.toString(),
+        ));
+      }
 
       if (params.thumbnailFile != null &&
           params.thumbnailFile!.path.isNotEmpty &&
@@ -147,10 +193,27 @@ class ReelsService {
         ));
       }
 
-      debugPrint('[Reels] Creating reel...');
+      if (params.audioFile != null &&
+          params.audioFile!.path.isNotEmpty &&
+          params.audioFile!.existsSync()) {
+        final audio = params.audioFile!;
+        final audioExt = _audioExtension(audio.path);
+        formData.files.add(MapEntry(
+          'audio',
+          await MultipartFile.fromFile(audio.path, filename: 'soundtrack$audioExt'),
+        ));
+      }
+
+      ReelsLogger.lifecycle('ReelsService creating reel...');
+      // Large edited reels (overlays + baked music) can exceed short Dio windows.
+      const noCap = Duration(days: 30);
       final response = await _dio.post(
         ApiConstants.reelCreate,
         data: formData,
+        options: Options(
+          sendTimeout: noCap,
+          receiveTimeout: noCap,
+        ),
       );
 
       final responseData = response.data as Map<String, dynamic>?;
@@ -158,18 +221,18 @@ class ReelsService {
         final err = responseData?['message'] as String? ??
             responseData?['error'] as String? ??
             'Failed to create reel';
-        debugPrint('[Reels] Failed: $err');
+        ReelsLogger.error('ReelsService failed: $err');
         return CreateReelResult.failure(err);
       }
 
       final reelJson = responseData['reel'] as Map<String, dynamic>?;
       if (reelJson == null) {
-        debugPrint('[Reels] Failed: Invalid response (missing reel)');
+        ReelsLogger.error('ReelsService failed: Invalid response (missing reel)');
         return CreateReelResult.failure('Invalid response: missing reel');
       }
 
       final reel = ReelModelApi.fromJson(reelJson);
-      debugPrint('[Reels] Created: ${reel.id}');
+      ReelsLogger.lifecycle('ReelsService created: ${reel.id}');
       return CreateReelResult.success(reel);
     } on DioException catch (e) {
       if (e.response != null) {
@@ -178,17 +241,17 @@ class ReelsService {
             ? (errorData['message'] ?? errorData['error'] ?? 'Request failed')
             : 'Request failed';
         final msg = errorMsg.toString();
-        debugPrint('[Reels] Failed: $msg');
+        ReelsLogger.error('ReelsService failed: $msg');
         return CreateReelResult.failure(msg);
       }
       final msg = _networkErrorMessage(e.message);
-      debugPrint('[Reels] Failed: $msg');
+      ReelsLogger.error('ReelsService failed: $msg');
       return CreateReelResult.failure(msg);
     } on TimeoutException catch (_) {
-      debugPrint('[Reels] Failed: Request timed out');
+      ReelsLogger.error('ReelsService failed: Request timed out');
       return CreateReelResult.failure('Request timed out');
     } catch (e) {
-      debugPrint('[Reels] Failed: $e');
+      ReelsLogger.error('ReelsService failed: $e');
       return CreateReelResult.failure(
         e is Exception ? e.toString() : 'Something went wrong',
       );
@@ -303,5 +366,21 @@ class ReelsService {
     if (lower.endsWith('.mkv')) return '.mkv';
     if (lower.endsWith('.3gp')) return '.3gp';
     return '.mp4';
+  }
+
+  String _audioExtension(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.mp3')) return '.mp3';
+    if (lower.endsWith('.m4a')) return '.m4a';
+    if (lower.endsWith('.mp4')) return '.mp4';
+    if (lower.endsWith('.aac')) return '.aac';
+    return '.mp3';
+  }
+
+  static bool _hasLibrarySoundtrack(CreateReelParams params) {
+    return (params.music != null && params.music!.trim().isNotEmpty) ||
+        (params.musicTitle != null && params.musicTitle!.trim().isNotEmpty) ||
+        (params.musicName != null && params.musicName!.trim().isNotEmpty) ||
+        (params.musicArtist != null && params.musicArtist!.trim().isNotEmpty);
   }
 }

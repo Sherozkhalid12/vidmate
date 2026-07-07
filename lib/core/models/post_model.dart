@@ -2,6 +2,7 @@ import 'user_model.dart';
 import 'post_response_model.dart';
 import 'reel_response_model.dart';
 import 'long_video_response_model.dart';
+import 'chat_message_bubble.dart';
 import '../utils/video_thumbnail_helper.dart';
 
 /// Post model for feed
@@ -17,9 +18,13 @@ class PostModel {
   final int likes;
   final int comments;
   final int shares;
+  final int views;
   final bool isLiked;
   final Duration? videoDuration;
   final bool isVideo;
+  final String? videoMasterUrl;
+  final Map<String, String> videoResolutions;
+  final List<String> availableResolutions;
   /// Optional audio track id for reels (e.g. "original_sound_authorId")
   final String? audioId;
   /// Display name for audio (e.g. "Original sound - username")
@@ -37,6 +42,18 @@ class PostModel {
 
   /// Get all image URLs. Always returns a non-null list.
   List<String> get imageUrls => _imageUrls;
+
+  /// Views from API when present; otherwise derived from likes for legacy feeds.
+  int get displayViews => views > 0 ? views : likes * 10;
+
+  static int parseViewsField(Map<String, dynamic> json) {
+    final raw = json['views'] ??
+        json['viewCount'] ??
+        json['viewsCount'] ??
+        json['Views'];
+    if (raw is int) return raw;
+    return int.tryParse(raw?.toString() ?? '') ?? 0;
+  }
 
   /// Thumbnail for display; uses thumbnailUrl or derived from video URL when missing.
   String? get effectiveThumbnailUrl {
@@ -84,9 +101,13 @@ class PostModel {
     this.likes = 0,
     this.comments = 0,
     this.shares = 0,
+    this.views = 0,
     this.isLiked = false,
     this.videoDuration,
     this.isVideo = false,
+    this.videoMasterUrl,
+    this.videoResolutions = const {},
+    this.availableResolutions = const [],
     this.audioId,
     this.audioName,
     this.musicName,
@@ -139,6 +160,7 @@ class PostModel {
       likes: likeCount,
       comments: api.commentsCount,
       shares: 0,
+      views: api.views,
       isLiked: isLiked,
       isVideo: hasVideo,
       postType: type,
@@ -146,6 +168,36 @@ class PostModel {
       musicName: api.musicName,
       musicTitle: api.musicTitle,
       musicPreviewUrl: api.musicPreviewUrl,
+    );
+  }
+
+  /// Build a minimal post from chat [PostPreview] / resolve-post API.
+  static PostModel fromPostPreview(PostPreview preview) {
+    UserModel author = authorPlaceholder(preview.userId);
+    final userJson = preview.user;
+    if (userJson != null) {
+      try {
+        author = UserModel.fromJson(userJson);
+      } catch (_) {}
+    }
+    final type = preview.type.isEmpty ? 'post' : preview.type;
+    final hasVideo = preview.effectiveVideoUrl.isNotEmpty;
+    final thumb = preview.effectiveThumbnailUrl;
+    return PostModel(
+      id: preview.id,
+      author: author,
+      imageUrl: preview.images.isNotEmpty ? preview.images.first : null,
+      imageUrls: preview.images,
+      videoUrl: hasVideo ? preview.effectiveVideoUrl : null,
+      thumbnailUrl: thumb,
+      caption: preview.caption,
+      createdAt: preview.createdAt ?? DateTime.now(),
+      likes: preview.likesCount,
+      comments: preview.commentsCount,
+      shares: preview.sharesCount,
+      views: 0,
+      isVideo: hasVideo,
+      postType: type,
     );
   }
 
@@ -170,6 +222,12 @@ class PostModel {
     final isLiked = currentUserId != null &&
         currentUserId.isNotEmpty &&
         r.reel.likes.contains(currentUserId);
+    final songTitle = (r.reel.musicTitle ?? r.reel.musicName ?? '').trim();
+    final artist = (r.reel.musicArtist ?? '').trim();
+    final musicUrl = (r.reel.musicUrl ?? '').trim();
+    final audioName = r.reel.displayAudioName(
+      fallbackUsername: author.username,
+    );
     return PostModel(
       id: r.reel.id,
       author: author,
@@ -179,10 +237,16 @@ class PostModel {
       createdAt: r.reel.createdAt,
       likes: likeCount,
       comments: r.reel.commentsCount,
+      views: r.reel.views,
       isLiked: isLiked,
       isVideo: true,
       postType: 'reel',
       blurHash: r.reel.blurHash,
+      audioId: musicUrl.isNotEmpty ? musicUrl : null,
+      audioName: audioName,
+      musicName: songTitle.isEmpty ? null : songTitle,
+      musicTitle: artist.isEmpty ? null : artist,
+      musicPreviewUrl: musicUrl.isEmpty ? null : musicUrl,
     );
   }
 
@@ -221,14 +285,28 @@ class PostModel {
       likes: (map['likes'] is int) ? map['likes'] as int : int.tryParse('${map['likes']}') ?? 0,
       comments: (map['comments'] is int) ? map['comments'] as int : int.tryParse('${map['comments']}') ?? 0,
       shares: (map['shares'] is int) ? map['shares'] as int : int.tryParse('${map['shares']}') ?? 0,
+      views: (map['views'] is int) ? map['views'] as int : int.tryParse('${map['views']}') ?? 0,
       isLiked: map['isLiked'] == true,
       videoDuration: videoDuration,
       isVideo: map['isVideo'] == true,
+      videoMasterUrl: map['videoMasterUrl']?.toString(),
+      videoResolutions: (map['videoResolutions'] is Map)
+          ? Map<String, String>.from(
+              (map['videoResolutions'] as Map).map(
+                (k, v) => MapEntry(k.toString(), v.toString()),
+              ),
+            )
+          : const <String, String>{},
+      availableResolutions: (map['availableResolutions'] is List)
+          ? (map['availableResolutions'] as List)
+              .map((e) => e.toString())
+              .toList()
+          : const <String>[],
       audioId: map['audioId']?.toString(),
       audioName: map['audioName']?.toString(),
       musicName: map['musicName']?.toString(),
       musicTitle: map['musicTitle']?.toString(),
-      musicPreviewUrl: (map['musicPreviewUrl'] ?? map['music'])?.toString(),
+      musicPreviewUrl: (map['musicPreviewUrl'] ?? map['musicUrl'] ?? map['music'])?.toString(),
       postType: map['postType']?.toString() ?? 'post',
       blurHash: (blur != null && blur.isNotEmpty) ? blur : null,
     );
@@ -264,9 +342,69 @@ class PostModel {
       createdAt: v.video.createdAt,
       likes: likeCount,
       comments: v.video.commentsCount,
+      views: v.video.views,
       isLiked: isLiked,
       isVideo: true,
       postType: 'longVideo',
+      videoMasterUrl: v.video.videoMasterUrl,
+      videoResolutions: v.video.videoResolutions,
+      availableResolutions: v.video.availableResolutions,
+    );
+  }
+
+  PostModel copyWith({
+    String? id,
+    UserModel? author,
+    String? imageUrl,
+    List<String>? imageUrls,
+    String? videoUrl,
+    String? thumbnailUrl,
+    String? caption,
+    DateTime? createdAt,
+    int? likes,
+    int? comments,
+    int? shares,
+    int? views,
+    bool? isLiked,
+    Duration? videoDuration,
+    bool? isVideo,
+    String? videoMasterUrl,
+    Map<String, String>? videoResolutions,
+    List<String>? availableResolutions,
+    String? audioId,
+    String? audioName,
+    String? musicName,
+    String? musicTitle,
+    String? musicPreviewUrl,
+    String? postType,
+    String? blurHash,
+  }) {
+    return PostModel(
+      id: id ?? this.id,
+      author: author ?? this.author,
+      imageUrl: imageUrl ?? this.imageUrl,
+      imageUrls: imageUrls ?? _imageUrls,
+      videoUrl: videoUrl ?? this.videoUrl,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      caption: caption ?? this.caption,
+      createdAt: createdAt ?? this.createdAt,
+      likes: likes ?? this.likes,
+      comments: comments ?? this.comments,
+      shares: shares ?? this.shares,
+      views: views ?? this.views,
+      isLiked: isLiked ?? this.isLiked,
+      videoDuration: videoDuration ?? this.videoDuration,
+      isVideo: isVideo ?? this.isVideo,
+      videoMasterUrl: videoMasterUrl ?? this.videoMasterUrl,
+      videoResolutions: videoResolutions ?? this.videoResolutions,
+      availableResolutions: availableResolutions ?? this.availableResolutions,
+      audioId: audioId ?? this.audioId,
+      audioName: audioName ?? this.audioName,
+      musicName: musicName ?? this.musicName,
+      musicTitle: musicTitle ?? this.musicTitle,
+      musicPreviewUrl: musicPreviewUrl ?? this.musicPreviewUrl,
+      postType: postType ?? this.postType,
+      blurHash: blurHash ?? this.blurHash,
     );
   }
 }

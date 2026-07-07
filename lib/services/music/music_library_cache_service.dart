@@ -9,7 +9,7 @@ import '../../core/utils/preview_url_expiry.dart';
 import '../auth/auth_service.dart';
 import 'music_service.dart';
 
-/// Persisted snapshot of the Add Music (Deezer browse) payload.
+/// Persisted snapshot of the Add Music (Jamendo browse) payload.
 class MusicBrowseCacheSnapshot {
   final List<DeezerPlaylistSummary> playlists;
   final List<MusicModel> songs;
@@ -24,7 +24,7 @@ class MusicBrowseCacheSnapshot {
   });
 }
 
-/// Local cache for Deezer browse (playlists + default playlist tracks).
+/// Local cache for Jamendo browse (trending tracks; playlists optional/empty).
 ///
 /// Uses [SharedPreferences] only so WorkManager isolates can read/write
 /// without Hive/Flutter plugin dependencies beyond prefs.
@@ -32,8 +32,8 @@ class MusicLibraryCacheService {
   MusicLibraryCacheService._();
   static final MusicLibraryCacheService instance = MusicLibraryCacheService._();
 
-  static const String _prefsKey = 'music_library.deezer_browse_cache_v1';
-  static const int _jsonVersion = 1;
+  static const String _prefsKey = 'music_library.jamendo_browse_cache_v2';
+  static const int _jsonVersion = 2;
 
   Future<SharedPreferences> get _prefs async => SharedPreferences.getInstance();
 
@@ -134,7 +134,7 @@ class MusicLibraryCacheService {
     await prefs.setString(_prefsKey, jsonEncode(map));
   }
 
-  /// Fetches Deezer browse from the API, merges preview URLs using [isPreviewUrlExpired],
+  /// Fetches Jamendo trending from the API, merges preview URLs using [isPreviewUrlExpired],
   /// and persists. Safe for WorkManager isolates (HTTP + prefs only).
   Future<bool> syncBrowseFromNetwork() async {
     final token = await AuthService().getToken();
@@ -144,10 +144,7 @@ class MusicLibraryCacheService {
       DioClient.clearAuthToken();
     }
 
-    final fresh = await MusicService().fetchDeezerPlaylistsBrowse(
-      limit: 24,
-      playlistLimit: 24,
-    );
+    final fresh = await MusicService().fetchJamendoTrending(limit: 24);
     if (!fresh.success) {
       if (kDebugMode) {
         debugPrint('[MusicLibraryCache] browse failed: ${fresh.errorMessage}');
@@ -158,15 +155,12 @@ class MusicLibraryCacheService {
     final existing = await readBrowseCache();
     final mergedSongs = mergeSongsByPreviewExpiry(
       stored: existing?.songs ?? const [],
-      fresh: fresh.songs,
+      fresh: fresh.tracks,
     );
-    final initialId = fresh.selectedPlaylist?.id ??
-        (fresh.playlists.isNotEmpty ? fresh.playlists.first.id : null);
-
     await writeBrowseCache(
-      playlists: fresh.playlists,
+      playlists: const [],
       songs: mergedSongs,
-      activePlaylistId: initialId,
+      activePlaylistId: null,
     );
     return true;
   }

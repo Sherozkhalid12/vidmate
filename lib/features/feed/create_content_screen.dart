@@ -9,24 +9,26 @@ import 'package:video_player/video_player.dart';
 
 import '../../core/audio/music_preview_player.dart';
 import '../../core/utils/create_content_visibility.dart';
+import '../../core/utils/video_frame_extractor.dart';
+import '../../core/utils/video_upload_transcode.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
+import '../../core/widgets/natural_aspect_image.dart';
 import '../../core/services/mock_data_service.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
-import '../../core/providers/posts_provider_riverpod.dart';
-import '../../core/providers/stories_provider_riverpod.dart';
-import '../../core/providers/reels_provider_riverpod.dart';
-import '../../services/posts/stories_service.dart';
-import '../../services/posts/reels_service.dart';
-import '../../services/posts/long_video_service.dart';
-import '../long_videos/providers/long_videos_provider.dart';
+import '../../core/providers/content_publish_provider_riverpod.dart';
+import '../../core/models/user_model.dart';
+import 'content_preview_draft.dart';
+import 'content_preview_screen.dart';
+import 'providers/long_video_pick_workflow_provider.dart';
 import 'select_music_screen.dart';
 // LiveStreamScreen is kept for legacy/demo; livestream now uses Agora + backend token.
 import 'live_agora_screen.dart';
 import 'post_crop_screen.dart';
 import 'post_edit_screen.dart';
 import 'reel_edit_screen.dart';
+import 'reel_edit_feature/reel_edit_export_result.dart';
 import 'choose_cover_photo_screen.dart';
 import '../../core/providers/livestream_controller_riverpod.dart';
 
@@ -35,7 +37,7 @@ enum ContentType {
   post,      // Multiple photos only (carousel, 1-10 images)
   story,     // Multiple photos/videos (1-10 items)
   reel,      // Single short video (15-180 sec)
-  longVideo, // Single longer video (30+ sec, 1-60 min)
+  longVideo, // Long-form video (no client-side duration cap)
   live,      // Live stream (camera preview + Start Live)
 }
 
@@ -44,11 +46,13 @@ class MediaItem {
   final File file;
   final bool isVideo;
   final Duration? videoDuration;
+  final File? thumbnailFile;
 
   MediaItem({
     required this.file,
     required this.isVideo,
     this.videoDuration,
+    this.thumbnailFile,
   });
 }
 
@@ -63,7 +67,7 @@ class CreateContentScreen extends ConsumerStatefulWidget {
   const CreateContentScreen({
     super.key,
     this.bottomNavigationBar,
-    this.initialType = ContentType.post,
+    this.initialType = ContentType.reel,
     this.selectedAudioId,
     this.selectedAudioName,
   });
@@ -77,7 +81,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   final _picker = ImagePicker();
   final PageController _carouselController = PageController();
 
-  ContentType _selectedType = ContentType.post;
+  ContentType _selectedType = ContentType.reel;
   
   // Post: multiple images + optional single video
   List<File> _postImages = [];
@@ -87,6 +91,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   
   // Story: multiple media items (images + videos)
   List<MediaItem> _storyMedia = [];
+  int _currentStoryPreviewIndex = 0;
   
   // Reel & Long Video: single video
   File? _videoFile;
@@ -94,7 +99,6 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   VideoPlayerController? _videoController;
   File? _coverPhoto;
 
-  bool _isUploading = false;
   /// True while video is being prepared (duration + controller init) after pick
   bool _isLoadingVideo = false;
   int _currentCarouselIndex = 0;
@@ -114,6 +118,9 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   String? _selectedLocation;
   final List<String> _taggedUsers = [];
   String? _selectedFeeling;
+
+  /// Long video: fixed preferred encode height for create API (`maxResolution`).
+  static const int _kLongVideoPreferredMaxHeightPixels = 1080;
 
   /// Live tab: camera for preview (disposed when switching tab or going full screen)
   CameraController? _liveCameraController;
@@ -146,6 +153,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   @override
   void dispose() {
     createContentVisibleNotifier.value = false;
+    unawaited(ref.read(longVideoPickWorkflowProvider.notifier).clear());
     _captionController.dispose();
     _carouselController.dispose();
     _postVideoController?.dispose();
@@ -205,6 +213,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   /// Dispose video when switching content type; dispose audio when navigating to select music
   void _disposeMediaForTabChange() {
+    unawaited(ref.read(longVideoPickWorkflowProvider.notifier).clear());
     _postVideoController?.dispose();
     _postVideoController = null;
     _postVideo = null;
@@ -310,16 +319,19 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
       final pickedFile = await _picker.pickVideo(source: source);
       if (pickedFile != null) {
-        final videoFile = File(pickedFile.path);
-        final duration = await _getVideoDuration(videoFile);
+        final original = File(pickedFile.path);
+        final opened = await _openPickedVideoForPreview(
+          original,
+          maxVideoHeight: 1920,
+        );
+        final duration = opened.duration;
 
         _postVideoController?.dispose();
-        final controller = VideoPlayerController.file(videoFile);
-        await controller.initialize();
+        final controller = opened.controller;
         controller.pause();
 
         setState(() {
-          _postVideo = videoFile;
+          _postVideo = opened.videoFile;
           _postVideoDuration = duration;
           _postVideoController = controller;
           _selectedAudioId = null;
@@ -528,9 +540,14 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         // Pick single video (can be called multiple times)
         final pickedFile = await _picker.pickVideo(source: source);
         if (pickedFile != null) {
-          final videoFile = File(pickedFile.path);
+          final original = File(pickedFile.path);
+          final videoFile = await _resolvePlayableVideo(
+            original,
+            maxVideoHeight: 1920,
+          );
           final duration = await _getVideoDuration(videoFile);
-          
+          final thumbnail = await _generateStoryVideoThumbnail(videoFile);
+
           if (_storyMedia.length >= 10) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -556,6 +573,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
               file: videoFile,
               isVideo: true,
               videoDuration: duration,
+              thumbnailFile: thumbnail,
             ));
             _selectedAudioId = null;
             _selectedAudioName = null;
@@ -577,7 +595,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   Future<void> _pushReelEditForStorySegment(int index) async {
     if (index < 0 || index >= _storyMedia.length) return;
     final item = _storyMedia[index];
-    final exported = await Navigator.push<File>(
+    final exported = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ReelEditScreen(
@@ -586,12 +604,22 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         ),
       ),
     );
-    if (exported != null && mounted) {
+    final File? exportedFile = exported is ReelEditExportResult
+        ? exported.video
+        : exported is File
+            ? exported
+            : null;
+    if (exportedFile != null && mounted) {
+      File? thumb = item.thumbnailFile;
+      if (item.isVideo) {
+        thumb = await _generateStoryVideoThumbnail(exportedFile);
+      }
       setState(() {
         _storyMedia[index] = MediaItem(
-          file: exported,
+          file: exportedFile,
           isVideo: item.isVideo,
           videoDuration: item.videoDuration,
+          thumbnailFile: thumb,
         );
       });
     }
@@ -656,7 +684,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   bool get _postShowsMusicTile => _postVideo == null;
 
   bool get _storyShowsMusicTile =>
-      _storyMedia.isNotEmpty && !_storyMedia.any((m) => m.isVideo);
+      _storyMedia.length == 1 && !_storyMedia.first.isVideo;
 
   bool get _hasMusicPreview =>
       _selectedAudioUrl != null && _selectedAudioUrl!.trim().isNotEmpty;
@@ -715,44 +743,43 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
       final pickedFile = await _picker.pickVideo(source: source);
       if (pickedFile != null) {
+        if (_selectedType == ContentType.longVideo) {
+          final workflow = ref.read(longVideoPickWorkflowProvider.notifier);
+          await workflow.pickAndStart(
+            rawFile: File(pickedFile.path),
+          );
+          return;
+        }
         if (mounted) setState(() => _isLoadingVideo = true);
 
-        final videoFile = File(pickedFile.path);
-        final duration = await _getVideoDuration(videoFile);
+        final original = File(pickedFile.path);
+        final maxH = _selectedType == ContentType.longVideo
+            ? _kLongVideoPreferredMaxHeightPixels
+            : 1920;
+        final opened = await _openPickedVideoForPreview(original, maxVideoHeight: maxH);
+        final videoFile = opened.videoFile;
+        final duration = opened.duration;
 
         if (!mounted) return;
 
-        // Validate duration based on type
         if (_selectedType == ContentType.reel) {
           if (duration.inSeconds < 5) {
+            opened.controller.dispose();
             setState(() => _isLoadingVideo = false);
             _showErrorSnackBar('Reel must be at least 5 seconds long.');
             return;
           }
           if (duration.inSeconds > 180) {
+            opened.controller.dispose();
             setState(() => _isLoadingVideo = false);
             _showErrorSnackBar('Reel must be 180 seconds (3 minutes) or less.');
             return;
           }
-        } else if (_selectedType == ContentType.longVideo) {
-          if (duration.inSeconds < 30) {
-            setState(() => _isLoadingVideo = false);
-            _showErrorSnackBar('Long video must be at least 30 seconds long.');
-            return;
-          }
-          if (duration.inMinutes > 60) {
-            setState(() => _isLoadingVideo = false);
-            _showErrorSnackBar('Long video must be 60 minutes or less.');
-            return;
-          }
         }
 
-        // Dispose previous controller
         _videoController?.dispose();
 
-        // Create new controller for preview - never auto-play
-        final controller = VideoPlayerController.file(videoFile);
-        await controller.initialize();
+        final controller = opened.controller;
         controller.pause();
 
         if (mounted) {
@@ -764,12 +791,108 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           });
         }
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint(
+        '[CreateContent] Error picking video (type=$_selectedType): $e',
+      );
+      debugPrint('$st');
       if (mounted) {
         setState(() => _isLoadingVideo = false);
         _showErrorSnackBar('Error picking video: ${e.toString()}');
       }
     }
+  }
+
+  void _showVideoConvertingSnackBar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Converting video for playback and upload…',
+          style: TextStyle(
+            color: ThemeHelper.getTextPrimary(context),
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        backgroundColor: ThemeHelper.getSurfaceColor(context),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        duration: const Duration(seconds: 6),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
+  Future<File> _preparePickedVideoFile(
+    File original, {
+    required int maxVideoHeight,
+  }) async {
+    final codec = await VideoUploadTranscode.probeVideoCodecName(original);
+    if (VideoUploadTranscode.shouldSoftwareTranscode(codec)) {
+      _showVideoConvertingSnackBar();
+      return VideoUploadTranscode.transcodeToH264AacMp4(
+        input: original,
+        maxVideoHeight: maxVideoHeight,
+      );
+    }
+    return original;
+  }
+
+  /// Ensures the file can be decoded; transcodes from [original] if needed.
+  Future<File> _resolvePlayableVideo(
+    File original, {
+    required int maxVideoHeight,
+  }) async {
+    File work = await _preparePickedVideoFile(
+      original,
+      maxVideoHeight: maxVideoHeight,
+    );
+    if (work.path != original.path) {
+      return work;
+    }
+    try {
+      final probe = VideoPlayerController.file(work);
+      await probe.initialize();
+      await probe.dispose();
+      return work;
+    } catch (e) {
+      debugPrint('[CreateContent] Decoder probe failed, transcoding: $e');
+      _showVideoConvertingSnackBar();
+      work = await VideoUploadTranscode.transcodeToH264AacMp4(
+        input: original,
+        maxVideoHeight: maxVideoHeight,
+      );
+      final probe2 = VideoPlayerController.file(work);
+      await probe2.initialize();
+      await probe2.dispose();
+      return work;
+    }
+  }
+
+  Future<
+      ({
+        VideoPlayerController controller,
+        File videoFile,
+        Duration duration,
+      })> _openPickedVideoForPreview(
+    File original, {
+    required int maxVideoHeight,
+  }) async {
+    final file = await _resolvePlayableVideo(
+      original,
+      maxVideoHeight: maxVideoHeight,
+    );
+    final controller = VideoPlayerController.file(file);
+    await controller.initialize();
+    controller.pause();
+    var duration = controller.value.duration;
+    if (duration <= Duration.zero) {
+      duration = await _getVideoDuration(file);
+    }
+    return (controller: controller, videoFile: file, duration: duration);
   }
 
   /// Get video duration from file
@@ -779,9 +902,73 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       await controller.initialize();
       final duration = controller.value.duration;
       await controller.dispose();
-      return duration;
+      if (duration > Duration.zero) return duration;
     } catch (e) {
-      return const Duration(seconds: 0);
+      debugPrint('[CreateContent] VideoPlayer duration failed, using ffprobe: $e');
+    }
+    final ms = await VideoFrameExtractor.getDurationMs(videoFile);
+    if (ms > 0) return Duration(milliseconds: ms);
+    return Duration.zero;
+  }
+
+  /// JPEG frame for story tray preview when the segment is a video.
+  Future<File?> _generateStoryVideoThumbnail(File videoFile) async {
+    try {
+      final durationMs = await VideoFrameExtractor.getDurationMs(videoFile);
+      final positionMs = durationMs > 500 ? 500 : 0;
+      return await VideoFrameExtractor.extractJpegFrame(
+        videoFile: videoFile,
+        positionMs: positionMs,
+        maxWidth: 720,
+      );
+    } catch (e) {
+      debugPrint('[CreateContent] Story thumbnail failed: $e');
+      return null;
+    }
+  }
+
+  void _applyEditorSoundtrack(ReelSoundtrackInfo? soundtrack) {
+    if (soundtrack == null || !soundtrack.hasLibraryMusic) return;
+    final title = soundtrack.title?.trim() ?? '';
+    final artist = soundtrack.artist?.trim() ?? '';
+    setState(() {
+      _selectedAudioId = soundtrack.trackId;
+      _selectedAudioUrl = soundtrack.musicUrl;
+      _selectedMusicName = title.isEmpty ? null : title;
+      _selectedMusicTitle = artist.isEmpty ? null : artist;
+      if (title.isNotEmpty && artist.isNotEmpty) {
+        _selectedAudioName = '$title · $artist';
+      } else if (title.isNotEmpty) {
+        _selectedAudioName = title;
+      } else if (artist.isNotEmpty) {
+        _selectedAudioName = artist;
+      }
+      _isAudioPlaying = false;
+    });
+  }
+
+  bool get _hasReelLibraryMusic =>
+      _hasMusicPreview ||
+      (_selectedMusicName != null && _selectedMusicName!.trim().isNotEmpty) ||
+      (_selectedAudioId != null && _selectedAudioId!.trim().isNotEmpty);
+
+  Future<void> _handleReelEditResult(dynamic result) async {
+    if (result == null || !mounted) return;
+    if (result is ReelEditExportResult) {
+      _applyEditorSoundtrack(result.soundtrack);
+      if (_selectedType == ContentType.reel) {
+        await _replaceReelVideoWithExported(result.video);
+      } else {
+        await _replaceLongVideoWithExported(result.video);
+      }
+      return;
+    }
+    if (result is File) {
+      if (_selectedType == ContentType.reel) {
+        await _replaceReelVideoWithExported(result);
+      } else {
+        await _replaceLongVideoWithExported(result);
+      }
     }
   }
 
@@ -793,26 +980,30 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     _videoController?.dispose();
     _videoController = null;
     try {
-      final duration = await _getVideoDuration(exportedFile);
+      final opened = await _openPickedVideoForPreview(
+        exportedFile,
+        maxVideoHeight: 1920,
+      );
+      final duration = opened.duration;
       if (!mounted) return;
       if (duration.inSeconds < 5) {
+        opened.controller.dispose();
         setState(() => _isLoadingVideo = false);
         _showErrorSnackBar('Exported reel must be at least 5 seconds long.');
         return;
       }
       if (duration.inSeconds > 180) {
+        opened.controller.dispose();
         setState(() => _isLoadingVideo = false);
         _showErrorSnackBar('Exported reel must be 180 seconds or less.');
         return;
       }
-      final controller = VideoPlayerController.file(exportedFile);
-      await controller.initialize();
-      controller.pause();
+      opened.controller.pause();
       if (mounted) {
         setState(() {
-          _videoFile = exportedFile;
+          _videoFile = opened.videoFile;
           _videoDuration = duration;
-          _videoController = controller;
+          _videoController = opened.controller;
           _isLoadingVideo = false;
         });
       }
@@ -832,25 +1023,24 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     _videoController?.dispose();
     _videoController = null;
     try {
-      final duration = await _getVideoDuration(exportedFile);
+      final opened = await _openPickedVideoForPreview(
+        exportedFile,
+        maxVideoHeight: _kLongVideoPreferredMaxHeightPixels,
+      );
+      final duration = opened.duration;
       if (!mounted) return;
-      if (duration.inSeconds < 30) {
-        setState(() => _isLoadingVideo = false);
-        _showErrorSnackBar('Video must be at least 30 seconds long.');
-        return;
-      }
-      final controller = VideoPlayerController.file(exportedFile);
-      await controller.initialize();
-      controller.pause();
+      opened.controller.pause();
       if (mounted) {
         setState(() {
-          _videoFile = exportedFile;
+          _videoFile = opened.videoFile;
           _videoDuration = duration;
-          _videoController = controller;
+          _videoController = opened.controller;
           _isLoadingVideo = false;
         });
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('[CreateContent] Error loading long video export: $e');
+      debugPrint('$st');
       if (mounted) {
         setState(() => _isLoadingVideo = false);
         _showErrorSnackBar('Error loading exported video: ${e.toString()}');
@@ -864,22 +1054,19 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   /// Validate content before publishing
   bool _validateContent() {
+    final rawCaption = _captionController.text.trim();
     switch (_selectedType) {
       case ContentType.post:
-        if (_postImages.isEmpty && _postVideo == null && _captionController.text.trim().isEmpty) {
-          _showErrorSnackBar('Please add at least one image, a video, or a caption.');
-          return false;
-        }
         if (_postImages.isEmpty && _postVideo == null) {
           _showErrorSnackBar('Post requires at least one image or a video.');
           return false;
         }
-        break;
-      case ContentType.story:
-        if (_storyMedia.isEmpty && _captionController.text.trim().isEmpty) {
-          _showErrorSnackBar('Please add at least one media item or a caption.');
+        if (rawCaption.isEmpty) {
+          _showErrorSnackBar('Caption is required for posts.');
           return false;
         }
+        break;
+      case ContentType.story:
         if (_storyMedia.isEmpty) {
           _showErrorSnackBar('Story requires at least one media item.');
           return false;
@@ -894,6 +1081,10 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           _showErrorSnackBar('Please choose a cover photo for your reel.');
           return false;
         }
+        if (rawCaption.isEmpty) {
+          _showErrorSnackBar('Caption is required for reels.');
+          return false;
+        }
         if (_videoDuration != null) {
           if (_videoDuration!.inSeconds < 5) {
             _showErrorSnackBar('Reel must be at least 5 seconds long.');
@@ -906,16 +1097,14 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         }
         break;
       case ContentType.longVideo:
-        if (_videoFile == null) {
+        final lvState = ref.read(longVideoPickWorkflowProvider);
+        final hasLongVideo = _videoFile != null || lvState.rawVideoFile != null;
+        if (!hasLongVideo) {
           _showErrorSnackBar('Please select a video.');
           return false;
         }
-        if (_coverPhoto == null) {
-          _showErrorSnackBar('Please choose a cover photo for your video.');
-          return false;
-        }
-        if (_videoDuration != null && _videoDuration!.inSeconds < 30) {
-          _showErrorSnackBar('Long video must be at least 30 seconds long.');
+        if (rawCaption.isEmpty) {
+          _showErrorSnackBar('Caption is required for long videos.');
           return false;
         }
         break;
@@ -926,176 +1115,66 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     return true;
   }
 
-  /// Publish content. Post tab uses real API; others simulated for now.
-  Future<void> _publishContent() async {
+  void _openPublishPreview() {
     if (!_validateContent()) return;
-    if (_isUploading) return;
+    if (ref.read(contentPublishUploadingProvider)) return;
 
-    if (_selectedType == ContentType.post) {
-      final notifier = ref.read(createPostProvider.notifier);
-      final success = await notifier.createPost(
-        images: _postImages,
-        video: _postVideo,
-        thumbnailFile: _coverPhoto,
-        caption: _captionController.text.trim().isEmpty
-            ? null
-            : _captionController.text.trim(),
-        locations: _selectedLocation != null ? [_selectedLocation!] : [],
-        taggedUsers: _taggedUsers.isEmpty ? [] : List.from(_taggedUsers),
-        feelings: _selectedFeeling != null ? [_selectedFeeling!] : [],
-        music: (_postVideo == null &&
-                _selectedAudioUrl != null &&
-                _selectedAudioUrl!.trim().isNotEmpty)
-            ? _selectedAudioUrl!.trim()
-            : null,
-      );
-      if (!mounted) return;
-      ref.read(createPostProvider.notifier).clearError();
-      if (success) {
-        final messenger = ScaffoldMessenger.of(context);
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              'Post shared successfully!',
-              style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
-            ),
-            backgroundColor: ThemeHelper.getAccentColor(context),
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        );
-        if (Navigator.canPop(context)) {
-          Navigator.pop(context, true);
-        } else {
-          _resetForm();
-        }
-      } else {
-        final error =
-            ref.read(createPostProvider).error ?? 'Failed to create post';
-        _showErrorSnackBar(error);
-      }
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      _showErrorSnackBar('Please sign in to continue.');
       return;
     }
 
-    setState(() {
-      _isUploading = true;
-    });
+    ref.read(contentPublishProvider.notifier).setDraft(_buildPreviewDraft(user));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ContentPreviewScreen()),
+    );
+  }
 
-    final locations = _selectedLocation != null ? [_selectedLocation!] : <String>[];
-    final taggedUsers = List<String>.from(_taggedUsers);
-    final feelings = _selectedFeeling != null ? [_selectedFeeling!] : <String>[];
-    final caption = _captionController.text.trim().isEmpty ? null : _captionController.text.trim();
+  ContentPreviewDraft _buildPreviewDraft(UserModel user) {
+    final lv = ref.read(longVideoPickWorkflowProvider);
+    return ContentPreviewDraft(
+      type: _selectedType,
+      author: user,
+      displayCaption: _buildUnifiedCaption() ?? '',
+      location: _selectedLocation,
+      taggedUsers: List<String>.from(_taggedUsers),
+      feeling: _selectedFeeling,
+      postImages: List<File>.from(_postImages),
+      postVideo: _postVideo,
+      postVideoCover: _coverPhoto,
+      storyMedia: List<MediaItem>.from(_storyMedia),
+      reelVideo: _videoFile,
+      reelCover: _coverPhoto,
+      reelDuration: _videoDuration,
+      longVideoFile: lv.rawVideoFile ?? _videoFile,
+      longVideoCover: lv.posterFile ?? _coverPhoto,
+      musicId: _selectedAudioId,
+      musicName: _selectedMusicName ?? _selectedAudioName,
+      musicTitle: _selectedMusicTitle,
+      musicPreviewUrl: _selectedAudioUrl,
+      includePostMusic: _postShowsMusicTile && _hasMusicPreview,
+      includeStoryMusic: _storyShowsMusicTile && _selectedAudioId != null,
+      isOriginalSound:
+          _selectedType == ContentType.reel && !_hasReelLibraryMusic,
+      musicSource: _hasReelLibraryMusic ? 'library' : null,
+    );
+  }
 
-    bool success = false;
-    String? errorMessage;
-
-    switch (_selectedType) {
-      case ContentType.story:
-        debugPrint('[CreateContent] Uploading story...');
-        final storyFiles = _storyMedia.map((m) => m.file).toList();
-        final result = await StoriesService().createStory(CreateStoryParams(
-          storyFiles: storyFiles,
-          caption: caption,
-          locations: locations,
-          taggedUsers: taggedUsers,
-          feelings: feelings,
-          music: (_storyShowsMusicTile &&
-                  _selectedAudioUrl != null &&
-                  _selectedAudioUrl!.trim().isNotEmpty)
-              ? _selectedAudioUrl!.trim()
-              : null,
-        ));
-        success = result.success;
-        errorMessage = result.errorMessage;
-        if (success) {
-          debugPrint('[CreateContent] Story uploaded: ${result.data?.id ?? "ok"}');
-          ref.read(storiesProvider.notifier).refresh();
-        } else {
-          debugPrint('[CreateContent] Story upload failed: $errorMessage');
-        }
-        break;
-      case ContentType.reel:
-        if (_videoFile != null) {
-          debugPrint('[CreateContent] Uploading reel...');
-          final result = await ReelsService().createReel(CreateReelParams(
-            video: _videoFile,
-            thumbnailFile: _coverPhoto,
-            caption: caption,
-            locations: locations,
-            taggedUsers: taggedUsers,
-            feelings: feelings,
-            music: _selectedAudioId,
-          ));
-          success = result.success;
-          errorMessage = result.errorMessage;
-          if (success) {
-            debugPrint('[CreateContent] Reel uploaded: ${result.data?.id ?? "ok"}');
-            await ref.read(reelsProvider.notifier).refresh();
-          } else {
-            debugPrint('[CreateContent] Reel upload failed: $errorMessage');
-          }
-        } else {
-          errorMessage = 'Please select a video for your reel.';
-        }
-        break;
-      case ContentType.longVideo:
-        if (_videoFile != null) {
-          debugPrint('[CreateContent] Uploading long video...');
-          final result = await LongVideoService().createLongVideo(CreateLongVideoParams(
-            video: _videoFile,
-            thumbnailFile: _coverPhoto,
-            caption: caption,
-          ));
-          success = result.success;
-          errorMessage = result.errorMessage;
-          if (success) {
-            debugPrint('[CreateContent] Long video uploaded: ${result.data?.id ?? "ok"}');
-            ref.read(longVideosProvider.notifier).loadVideos(refresh: true);
-          } else {
-            debugPrint('[CreateContent] Long video upload failed: $errorMessage');
-          }
-        } else {
-          errorMessage = 'Please select a video.';
-        }
-        break;
-      case ContentType.post:
-        break;
-      case ContentType.live:
-        break;
-    }
-
+  void _onPublishOutcome(ContentPublishState next) {
     if (!mounted) return;
-    setState(() {
-      _isUploading = false;
-    });
-
-    if (success) {
-      _resetForm();
-      String successMessage;
-      switch (_selectedType) {
-        case ContentType.story:
-          successMessage = 'Added to your story!';
-          break;
-        case ContentType.reel:
-          successMessage = 'Reel shared successfully!';
-          break;
-        case ContentType.longVideo:
-          successMessage = 'Video posted successfully!';
-          break;
-        case ContentType.live:
-          successMessage = 'Shared successfully!';
-          break;
-        default:
-          successMessage = 'Shared successfully!';
-      }
-      if (!mounted) return;
+    if (next.phase == ContentPublishPhase.failed &&
+        next.errorMessage != null &&
+        next.errorMessage!.isNotEmpty) {
+      _showErrorSnackBar(next.errorMessage!);
+      ref.read(contentPublishProvider.notifier).acknowledgeOutcome();
+    } else if (next.phase == ContentPublishPhase.success) {
+      final message = next.successMessage ?? 'Shared successfully!';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            successMessage,
+            message,
             style: TextStyle(color: ThemeHelper.getOnAccentColor(context)),
           ),
           backgroundColor: ThemeHelper.getAccentColor(context),
@@ -1106,16 +1185,27 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           ),
         ),
       );
+      _resetForm();
+      ref.read(contentPublishProvider.notifier).clearDraft();
+      ref.read(contentPublishProvider.notifier).acknowledgeOutcome();
       if (Navigator.canPop(context)) {
         Navigator.pop(context, true);
       }
-    } else {
-      _showErrorSnackBar(errorMessage ?? 'Failed to share. Please try again.');
     }
+  }
+
+  String? _buildUnifiedCaption() {
+    final rawCaption = _captionController.text.trim();
+    final feeling = _selectedFeeling?.trim() ?? '';
+    if (rawCaption.isEmpty && feeling.isEmpty) return null;
+    if (feeling.isEmpty) return rawCaption;
+    if (rawCaption.isEmpty) return feeling;
+    return '$feeling $rawCaption';
   }
 
   /// Reset form to initial state. Clears all media and reel/long-video state so the same content is not posted again.
   void _resetForm() {
+    unawaited(ref.read(longVideoPickWorkflowProvider.notifier).clear());
     _captionController.clear();
     _videoFile = null;
     _videoDuration = null;
@@ -1560,9 +1650,13 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final createPostState = ref.watch(createPostProvider);
-    final isPostUploading = _selectedType == ContentType.post && createPostState.isCreating;
-    final isUploading = isPostUploading || _isUploading;
+    ref.listen<ContentPublishState>(contentPublishProvider, (prev, next) {
+      if (prev?.phase == next.phase) return;
+      _onPublishOutcome(next);
+    });
+
+    final longVideoWorkflow = ref.watch(longVideoPickWorkflowProvider);
+    final isUploading = ref.watch(contentPublishUploadingProvider);
     final screenHeight = MediaQuery.of(context).size.height;
     final minMediaHeight = screenHeight * 0.45;
     return Scaffold(
@@ -1576,14 +1670,24 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(child: _buildAppBar(isUploading)),
+              if (isUploading) ...[
+                const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                SliverToBoxAdapter(
+                  child: LinearProgressIndicator(
+                    value: (_selectedType == ContentType.longVideo &&
+                            longVideoWorkflow.isUploading)
+                        ? longVideoWorkflow.uploadProgress.clamp(0.0, 1.0)
+                        : null,
+                    backgroundColor: context.surfaceColor,
+                    valueColor: AlwaysStoppedAnimation<Color>(context.buttonColor),
+                  ),
+                ),
+              ],
               SliverToBoxAdapter(child: _buildTypeSelector()),
               const SliverToBoxAdapter(child: SizedBox(height: 12)),
               SliverToBoxAdapter(child: _buildAuthorInfo()),
               SliverToBoxAdapter(
-                child: SizedBox(
-                  height: minMediaHeight,
-                  child: _buildMediaSection(minMediaHeight),
-                ),
+                child: _buildMediaSection(minMediaHeight),
               ),
               if (_selectedAudioName != null &&
                   ((_selectedType == ContentType.reel) ||
@@ -1608,15 +1712,6 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                 const SliverToBoxAdapter(child: SizedBox(height: 16)),
                 SliverToBoxAdapter(child: _buildSelectedTiles()),
               ],
-              if (isUploading) ...[
-                const SliverToBoxAdapter(child: SizedBox(height: 20)),
-                SliverToBoxAdapter(
-                  child: LinearProgressIndicator(
-                    backgroundColor: context.surfaceColor,
-                    valueColor: AlwaysStoppedAnimation<Color>(context.buttonColor),
-                  ),
-                ),
-              ],
               const SliverToBoxAdapter(child: SizedBox(height: 40)),
             ],
           ),
@@ -1627,28 +1722,23 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
   /// Build AppBar with dynamic title and action button
   PreferredSizeWidget _buildAppBar(bool isUploading) {
-    String title;
+    const title = 'Create Content';
     String actionText;
     
     switch (_selectedType) {
       case ContentType.post:
-        title = 'Create Post';
         actionText = 'Share';
         break;
       case ContentType.story:
-        title = 'Create Story';
         actionText = 'Your Story';
         break;
       case ContentType.reel:
-        title = 'Create Reel';
         actionText = 'Share Reel';
         break;
       case ContentType.longVideo:
-        title = 'Upload Video';
         actionText = 'Post';
         break;
       case ContentType.live:
-        title = 'Create';
         actionText = '';
         break;
     }
@@ -1698,7 +1788,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                     ),
                   )
                 : TextButton(
-                    onPressed: _publishContent,
+                    onPressed: _openPublishPreview,
                     child: Text(
                       actionText,
                       style: TextStyle(
@@ -1712,24 +1802,37 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
     );
   }
 
-  /// Build type selector (segmented control) – scrollable for many options
+  /// Build type selector (segmented control) – equal-width tabs
   Widget _buildTypeSelector() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GlassCard(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         borderRadius: BorderRadius.circular(16),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildTypeChip(ContentType.post, 'Post', Icons.grid_on_outlined),
-              _buildTypeChip(ContentType.story, 'Story', Icons.auto_stories_outlined),
-              _buildTypeChip(ContentType.reel, 'Reel', Icons.video_library_outlined),
-              _buildTypeChip(ContentType.longVideo, 'Video', Icons.movie_outlined),
-            ],
-          ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _buildTypeChip(
+                ContentType.story,
+                'Story',
+                Icons.auto_stories_outlined,
+              ),
+            ),
+            Expanded(
+              child: _buildTypeChip(
+                ContentType.reel,
+                'Reel',
+                Icons.video_library_outlined,
+              ),
+            ),
+            Expanded(
+              child: _buildTypeChip(
+                ContentType.longVideo,
+                'Video',
+                Icons.movie_outlined,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1746,7 +1849,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         : Colors.transparent;
     final textColor = isSelected ? (isLive ? Colors.red : accentColor) : context.textSecondary;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
       child: GestureDetector(
         onTap: () {
           setState(() {
@@ -1767,7 +1870,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           decoration: BoxDecoration(
             color: bgColor,
             borderRadius: BorderRadius.circular(12),
@@ -1776,16 +1880,20 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                 : null,
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 18, color: textColor),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: textColor,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  fontSize: 14,
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                    fontSize: 14,
+                  ),
                 ),
               ),
             ],
@@ -2138,6 +2246,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   /// Build Post media section (multiple images + optional video with carousel)
   Widget _buildPostMediaSection({double? fillHeight}) {
     final h = fillHeight ?? 400;
+    final previewWidth = MediaQuery.of(context).size.width - 32;
+    final previewHeight = previewWidth * (5 / 4);
     final hasMedia = _postImages.isNotEmpty || _postVideo != null;
     
     if (!hasMedia) {
@@ -2210,13 +2320,13 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
 
     final totalItems = _postImages.length + (_postVideo != null ? 1 : 0);
     return Container(
-      height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Carousel preview
-          Expanded(
+          // Carousel preview (same square ratio as feed post card)
+          SizedBox(
+            height: previewHeight,
             child: Stack(
               children: [
                 PageView.builder(
@@ -2281,41 +2391,77 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                                     ),
                                 ],
                               )
-                            : Image.file(
-                                _postImages[index],
-                                fit: BoxFit.cover,
-                                width: double.infinity,
+                            : Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.file(
+                                    _postImages[index],
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                  ),
+                                  Positioned(
+                                    top: 10,
+                                    right: 10,
+                                    child: Material(
+                                      color: Colors.black.withOpacity(0.55),
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: () {
+                                          final removeIndex = index;
+                                          setState(() {
+                                            _postImages.removeAt(removeIndex);
+                                            if (_postImages.isEmpty && _postVideo == null) {
+                                              _currentCarouselIndex = 0;
+                                              return;
+                                            }
+                                            final maxIndex =
+                                                _postImages.length + (_postVideo != null ? 1 : 0) - 1;
+                                            if (_currentCarouselIndex > maxIndex) {
+                                              _currentCarouselIndex = maxIndex;
+                                            }
+                                          });
+                                        },
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(6),
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 16,
+                                            color: ThemeHelper.getOnAccentColor(context),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                       ),
                     );
                   },
                 ),
-                if (totalItems > 1)
-                  Positioned(
-                    bottom: 12,
-                    left: 0,
-                    right: 0,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(
-                        totalItems,
-                        (index) => Container(
-                          width: 8,
-                          height: 8,
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _currentCarouselIndex == index
-                                ? context.buttonColor
-                                : context.buttonColor.withOpacity(0.3),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
+          if (totalItems > 1) ...[
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                totalItems,
+                (index) => Container(
+                  width: 8,
+                  height: 8,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _currentCarouselIndex == index
+                        ? context.buttonColor
+                        : context.buttonColor.withOpacity(0.3),
+                  ),
+                ),
+              ),
+            ),
+          ],
           // Buttons below preview (column)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -2378,13 +2524,15 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                                 BorderRadius.vertical(top: Radius.circular(24)),
                           ),
                           builder: (ctx) {
-                            return SafeArea(
-                              top: false,
-                              child: Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
+                            return Container(
+                              color: ThemeHelper.getSurfaceColor(ctx),
+                              child: SafeArea(
+                                top: false,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
                                     Container(
                                       width: 44,
                                       height: 4,
@@ -2448,7 +2596,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                                         }
                                       },
                                     ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             );
@@ -2472,54 +2621,6 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       style: OutlinedButton.styleFrom(
                         side: BorderSide(
                             color: ThemeHelper.getBorderColor(context)),
-                        backgroundColor: ThemeHelper.getSurfaceColor(context),
-                        foregroundColor: ThemeHelper.getTextPrimary(context),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (_postImages.isNotEmpty || _postVideo != null) const SizedBox(height: 8),
-                if (_postImages.isNotEmpty || _postVideo != null)
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        final isVideo = _postVideo != null && _currentCarouselIndex == _postImages.length;
-                        setState(() {
-                          if (isVideo) {
-                            _postVideoController?.dispose();
-                            _postVideoController = null;
-                            _postVideo = null;
-                            _postVideoDuration = null;
-                            _coverPhoto = null;
-                          } else {
-                            _postImages.removeAt(_currentCarouselIndex);
-                          }
-                          if (_currentCarouselIndex >= totalItems - 1) {
-                            _currentCarouselIndex = (totalItems - 2).clamp(0, double.infinity).toInt();
-                          }
-                          if (_postImages.isEmpty && _postVideo == null) {
-                            _currentCarouselIndex = 0;
-                          }
-                        });
-                      },
-                      icon: Icon(
-                        Icons.delete_outline,
-                        color: ThemeHelper.getTextPrimary(context),
-                        size: 20,
-                      ),
-                      label: Text(
-                        'Remove',
-                        style: TextStyle(
-                          color: ThemeHelper.getTextPrimary(context),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: ThemeHelper.getBorderColor(context)),
                         backgroundColor: ThemeHelper.getSurfaceColor(context),
                         foregroundColor: ThemeHelper.getTextPrimary(context),
                         padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2671,102 +2772,97 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
       );
     }
 
+    final previewIndex = _currentStoryPreviewIndex.clamp(0, (_storyMedia.length - 1).clamp(0, double.infinity).toInt());
+    final previewItem = _storyMedia[previewIndex];
+
     return Container(
       height: h,
       margin: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Grid preview
           Expanded(
-            child: GridView.builder(
-              shrinkWrap: false,
-              physics: const ClampingScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount: _storyMedia.length,
-            itemBuilder: (context, index) {
-              final item = _storyMedia[index];
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: item.isVideo
-                        ? Container(
-                            color: Colors.black,
-                            child: Center(
-                              child: Icon(
-                                Icons.play_circle_filled,
-                                size: 32,
+            child: Center(
+              child: previewItem.isVideo
+                  ? StoryPhonePreviewFrame(
+                      maxWidth: 220,
+                      maxHeight: h * 0.85,
+                      innerChild: Icon(
+                        Icons.play_circle_filled,
+                        size: 44,
+                        color: context.textPrimary,
+                      ),
+                    )
+                  : StoryPhonePreviewFrame(
+                      imageFile: previewItem.file,
+                      maxWidth: 220,
+                      maxHeight: h * 0.85,
+                      overlays: [
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              'Story preview',
+                              style: TextStyle(
                                 color: context.textPrimary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                          )
-                        : Image.file(
-                            item.file,
-                            fit: BoxFit.cover,
                           ),
-                  ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _storyMedia.removeAt(index);
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: ThemeHelper.getSurfaceColor(context).withOpacity(0.95),
-                          border: Border.all(
-                            color: ThemeHelper.getBorderColor(context),
-                            width: 1,
-                          ),
-                          shape: BoxShape.circle,
                         ),
-                        child: Icon(
-                          Icons.close,
-                          size: 16,
-                          color: ThemeHelper.getTextPrimary(context),
+                      ],
+                    ),
+            ),
+          ),
+          if (_storyMedia.length > 1) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 56,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _storyMedia.length,
+                itemBuilder: (context, index) {
+                  final item = _storyMedia[index];
+                  final selected = index == previewIndex;
+                  return GestureDetector(
+                    onTap: () => setState(() => _currentStoryPreviewIndex = index),
+                    child: Container(
+                      width: 44,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: selected
+                              ? ThemeHelper.getAccentColor(context)
+                              : ThemeHelper.getBorderColor(context),
+                          width: selected ? 2 : 1,
                         ),
                       ),
-                    ),
-                  ),
-                  // Video duration badge
-                  if (item.isVideo && item.videoDuration != null)
-                    Positioned(
-                      bottom: 4,
-                      left: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.8),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          _formatDuration(item.videoDuration!),
-                          style: TextStyle(
-                            color: context.textPrimary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: item.isVideo
+                            ? Container(
+                                color: Colors.black,
+                                child: Icon(Icons.play_arrow_rounded, color: context.textPrimary, size: 18),
+                              )
+                            : Image.file(item.file, fit: BoxFit.cover),
                       ),
                     ),
-                ],
-              );
-            },
-          ),
-          ),
+                  );
+                },
+              ),
+            ),
+          ],
           // Buttons below grid (column)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -2896,7 +2992,19 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
   /// Build video media section (single video preview)
   Widget _buildVideoMediaSection({double? fillHeight}) {
     final h = fillHeight ?? 400;
-    if (_videoFile == null) {
+    final longVideoWorkflow = ref.watch(longVideoPickWorkflowProvider);
+    final effectiveVideoFile = _selectedType == ContentType.longVideo
+        ? (longVideoWorkflow.rawVideoFile ?? _videoFile)
+        : _videoFile;
+    final effectiveVideoController = _selectedType == ContentType.longVideo
+        ? (longVideoWorkflow.previewController ?? _videoController)
+        : _videoController;
+
+    if (effectiveVideoFile == null) {
+      final longVideoSelecting =
+          _selectedType == ContentType.longVideo &&
+              (longVideoWorkflow.isProcessingPick ||
+                  longVideoWorkflow.isTranscodingPreview);
       return Container(
         height: h,
         margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -2912,44 +3020,80 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.videocam,
-                size: 64,
-                color: context.buttonColor,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _selectedType == ContentType.reel
-                    ? 'Add Reel Video (5-180 sec)'
-                    : 'Add Video (30+ sec)',
-                style: TextStyle(
-                  color: context.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ElevatedButton.icon(
-                onPressed: _pickVideo,
-                icon: Icon(Icons.video_library, color: context.buttonTextColor),
-                label: Text(
-                  'Select Video',
-                  style: TextStyle(color: context.buttonTextColor),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: context.buttonColor,
-                  foregroundColor: context.buttonTextColor,
-                ),
-              ),
-            ],
+            children: longVideoSelecting
+                ? [
+                    SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: ThemeHelper.getAccentColor(context),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Converting video…',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'This can take a minute for long clips.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: context.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ]
+                : [
+                    Icon(
+                      Icons.videocam,
+                      size: 64,
+                      color: context.buttonColor,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _selectedType == ContentType.reel
+                          ? 'Add Reel Video (5-180 sec)'
+                          : 'Add Video (30+ sec)',
+                      style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ElevatedButton.icon(
+                      onPressed: _pickVideo,
+                      icon: Icon(Icons.video_library, color: context.buttonTextColor),
+                      label: Text(
+                        'Select Video',
+                        style: TextStyle(color: context.buttonTextColor),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: context.buttonColor,
+                        foregroundColor: context.buttonTextColor,
+                      ),
+                    ),
+                  ],
           ),
         ),
       );
     }
 
-    final showVideoLoader = _isLoadingVideo ||
-        (_videoController == null || !_videoController!.value.isInitialized);
+    final showVideoLoader = _selectedType == ContentType.longVideo
+        ? (longVideoWorkflow.isTranscodingPreview ||
+            (effectiveVideoController == null ||
+                !effectiveVideoController.value.isInitialized))
+        : (_isLoadingVideo ||
+            (effectiveVideoController == null ||
+                !effectiveVideoController.value.isInitialized));
 
     return Container(
       height: h,
@@ -2960,26 +3104,61 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
           Expanded(
             child: Stack(
               children: [
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    color: Colors.black,
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: _videoController != null &&
-                            _videoController!.value.isInitialized
-                        ? AspectRatio(
-                            aspectRatio: _videoController!.value.aspectRatio,
-                            child: VideoPlayer(_videoController!),
-                          )
-                        : Center(
-                            child: Icon(
-                              Icons.play_circle_filled,
-                              size: 64,
-                              color: context.textPrimary,
-                            ),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: _selectedType == ContentType.longVideo ? double.infinity : 220,
+                    ),
+                    child: AspectRatio(
+                      aspectRatio: _selectedType == ContentType.reel
+                          ? 9 / 16
+                          : (_selectedType == ContentType.longVideo ? 16 / 9 : 4 / 5),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          color: Colors.black,
+                          border: Border.all(
+                            color: ThemeHelper.getBorderColor(context),
+                            width: 1.2,
                           ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.22),
+                              blurRadius: 16,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: effectiveVideoController != null &&
+                                  effectiveVideoController.value.isInitialized
+                              ? FittedBox(
+                                  fit: BoxFit.cover,
+                                  child: SizedBox(
+                                    width: effectiveVideoController.value.size.width,
+                                    height: effectiveVideoController.value.size.height,
+                                    child: VideoPlayer(effectiveVideoController),
+                                  ),
+                                )
+                              : (_selectedType == ContentType.longVideo &&
+                                      longVideoWorkflow.posterFile != null)
+                                  ? Image.file(
+                                      longVideoWorkflow.posterFile!,
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                    )
+                              : Center(
+                                  child: Icon(
+                                    Icons.play_circle_filled,
+                                    size: 64,
+                                    color: context.textPrimary,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 if (showVideoLoader)
@@ -3076,6 +3255,7 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                       });
                       _videoController?.dispose();
                       _videoController = null;
+                      unawaited(ref.read(longVideoPickWorkflowProvider.notifier).clear());
                     },
                     icon: Icon(
                       Icons.delete_outline,
@@ -3105,7 +3285,11 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
-                      final file = _videoFile;
+                      final longVideoWorkflow =
+                          ref.read(longVideoPickWorkflowProvider);
+                      final file = _selectedType == ContentType.longVideo
+                          ? (longVideoWorkflow.rawVideoFile ?? _videoFile)
+                          : _videoFile;
                       if (file == null) return;
                       await showModalBottomSheet<void>(
                         context: context,
@@ -3115,13 +3299,15 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                               BorderRadius.vertical(top: Radius.circular(24)),
                         ),
                         builder: (ctx) {
-                          return SafeArea(
-                            top: false,
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
+                          return Container(
+                            color: ThemeHelper.getSurfaceColor(ctx),
+                            child: SafeArea(
+                              top: false,
+                              child: Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
                                   Container(
                                     width: 44,
                                     height: 4,
@@ -3181,7 +3367,8 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                                       }
                                     },
                                   ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           );
@@ -3222,21 +3409,19 @@ class _CreateContentScreenState extends ConsumerState<CreateContentScreen> {
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: () async {
-                        final file = _videoFile;
+                        final longVideoWorkflow =
+                            ref.read(longVideoPickWorkflowProvider);
+                        final file = _selectedType == ContentType.longVideo
+                            ? (longVideoWorkflow.rawVideoFile ?? _videoFile)
+                            : _videoFile;
                         if (file == null) return;
-                        final exportedFile = await Navigator.push<File>(
+                        final exported = await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => ReelEditScreen(mediaFile: file),
                           ),
                         );
-                        if (exportedFile != null && mounted) {
-                          if (_selectedType == ContentType.reel) {
-                            _replaceReelVideoWithExported(exportedFile);
-                          } else {
-                            _replaceLongVideoWithExported(exportedFile);
-                          }
-                        }
+                        await _handleReelEditResult(exported);
                       },
                       icon: Icon(
                         Icons.edit_outlined,

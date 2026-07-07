@@ -1,11 +1,6 @@
+import '../utils/video_thumbnail_helper.dart';
+
 /// API chat message (returned by send/share/forward/history APIs).
-///
-/// Backend shape (abbreviated):
-/// - `_id`, `conversationId`, `senderId`, `receiverId`, `groupId`
-/// - `message`, `messageType`, `attachments[]`
-/// - `sharedPostId`, `sharedPostData`, `forwardedFrom`
-/// - `readBy[]`, `deletedFor[]`, `isDeletedForEveryone`
-/// - `createdAt`, `updatedAt`, `senderProfilePicture`, `sender{...}`
 class ChatMessageBubble {
   final String id;
   final String conversationId;
@@ -223,6 +218,7 @@ class PostPreview {
   final String caption;
   final List<String> images;
   final String video;
+  final String thumbnailUrl;
   final String music;
   final int likesCount;
   final int commentsCount;
@@ -237,6 +233,7 @@ class PostPreview {
     required this.caption,
     this.images = const [],
     this.video = '',
+    this.thumbnailUrl = '',
     this.music = '',
     this.likesCount = 0,
     this.commentsCount = 0,
@@ -261,22 +258,85 @@ class PostPreview {
     return v.map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList();
   }
 
+  String get effectiveVideoUrl {
+    final v = video.trim();
+    if (v.isNotEmpty) return v;
+    return '';
+  }
+
+  String? get effectiveThumbnailUrl {
+    final typeLower = type.toLowerCase();
+    final isLongVideo =
+        typeLower == 'longvideo' || typeLower == 'long_video';
+    final isReel = typeLower == 'reel';
+    final thumb = thumbnailUrl.trim();
+    final generated = effectiveVideoUrl.isNotEmpty
+        ? VideoThumbnailHelper.thumbnailFromVideoUrl(effectiveVideoUrl)
+        : null;
+
+    if (isLongVideo) {
+      if (thumb.isNotEmpty) return thumb;
+      if (images.isNotEmpty) return images.first;
+      return generated;
+    }
+
+    if (isReel || effectiveVideoUrl.isNotEmpty) {
+      if (thumb.isNotEmpty && !thumb.contains('/posts/videos/')) {
+        return thumb;
+      }
+      if (generated != null && generated.isNotEmpty) return generated;
+      if (thumb.isNotEmpty) return thumb;
+    }
+
+    if (thumb.isNotEmpty) return thumb;
+    if (images.isNotEmpty) return images.first;
+    return null;
+  }
+
   factory PostPreview.fromJson(Map<String, dynamic> json) {
+    final nested = json['post'];
+    final source = nested is Map<String, dynamic>
+        ? nested
+        : (nested is Map ? Map<String, dynamic>.from(nested) : json);
+
+    final vid = _str(
+      source['video'] ??
+          source['videoUrl'] ??
+          source['video_url'] ??
+          source['videoMasterUrl'] ??
+          source['mediaUrl'],
+    );
+    final thumb = _str(
+      source['thumbnailUrl'] ??
+          source['thumbnail'] ??
+          source['cover'] ??
+          source['coverImage'] ??
+          source['thumb'],
+    );
+    final imageList = _strList(source['images']);
+    final singleImage = _str(source['imageUrl'] ?? source['image']);
+    final images = imageList.isNotEmpty
+        ? imageList
+        : (singleImage.isNotEmpty ? [singleImage] : const <String>[]);
+
     return PostPreview(
-      id: _str(json['id'] ?? json['_id']),
-      userId: _str(json['userId']),
-      caption: _str(json['caption']),
-      images: _strList(json['images']),
-      video: _str(json['video']),
-      music: _str(json['music']),
-      likesCount: _int(json['likesCount']),
-      commentsCount: _int(json['commentsCount']),
-      sharesCount: _int(json['sharesCount']),
-      createdAt: _dateOrNull(json['createdAt']),
-      type: _str(json['type']),
-      user: json['user'] is Map<String, dynamic>
-          ? json['user'] as Map<String, dynamic>
-          : (json['user'] is Map ? Map<String, dynamic>.from(json['user'] as Map) : null),
+      id: _str(source['id'] ?? source['_id'] ?? json['id'] ?? json['_id']),
+      userId: _str(source['userId'] ?? source['user_id']),
+      caption: _str(source['caption']),
+      images: images,
+      video: vid,
+      thumbnailUrl: thumb,
+      music: _str(source['music']),
+      likesCount: _int(source['likesCount'] ?? source['likes']),
+      commentsCount: _int(source['commentsCount'] ?? source['comments']),
+      sharesCount: _int(source['sharesCount'] ?? source['shares']),
+      createdAt: _dateOrNull(source['createdAt']),
+      type: _str(source['type'] ?? source['postType']),
+      user: source['user'] is Map<String, dynamic>
+          ? source['user'] as Map<String, dynamic>
+          : (source['user'] is Map
+              ? Map<String, dynamic>.from(source['user'] as Map)
+              : null),
     );
   }
 
@@ -286,6 +346,7 @@ class PostPreview {
         'caption': caption,
         'images': images,
         'video': video,
+        if (thumbnailUrl.isNotEmpty) 'thumbnailUrl': thumbnailUrl,
         'music': music,
         'likesCount': likesCount,
         'commentsCount': commentsCount,

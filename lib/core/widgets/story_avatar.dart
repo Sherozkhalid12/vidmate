@@ -49,6 +49,19 @@ class _StoryAvatarState extends State<StoryAvatar>
     super.dispose();
   }
 
+  Widget _avatarFallback(BuildContext context) {
+    return Container(
+      width: widget.size,
+      height: widget.size,
+      color: ThemeHelper.getSurfaceColor(context),
+      child: Icon(
+        Icons.person,
+        color: ThemeHelper.getTextSecondary(context),
+        size: widget.size * 0.5,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimationConfiguration.staggeredList(
@@ -92,24 +105,17 @@ class _StoryAvatarState extends State<StoryAvatar>
                           color: ThemeHelper.getBackgroundColor(context), // Theme-aware background
                         ),
                         child: ClipOval(
-                          child: Image.network(
-                            widget.imageUrl,
-                            width: widget.size,
-                            height: widget.size,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                width: widget.size,
-                                height: widget.size,
-                                color: ThemeHelper.getSurfaceColor(context), // Theme-aware surface
-                                child: Icon(
-                                  Icons.person,
-                                  color: ThemeHelper.getTextSecondary(context), // Theme-aware icon color
-                                  size: widget.size * 0.5,
-                                ),
-                              );
-                            },
-                          ),
+                          child: widget.imageUrl.isNotEmpty
+                              ? Image.network(
+                                  widget.imageUrl,
+                                  width: widget.size,
+                                  height: widget.size,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return _avatarFallback(context);
+                                  },
+                                )
+                              : _avatarFallback(context),
                         ),
                       ),
                     );

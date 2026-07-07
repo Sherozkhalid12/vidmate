@@ -49,3 +49,32 @@ BetterPlayerAsmsTrack? pickBetterPlayerTrackForConnectivity(
   }
   return e.first;
 }
+
+/// Picks the HLS/DASH variant for a target height (360, 480, 720, 1080, …).
+/// Uses the **largest** representation with height ≤ [targetHeight]; if none,
+/// uses the **smallest** representation above the target (closest from above).
+BetterPlayerAsmsTrack? pickBetterPlayerTrackForTargetHeight(
+  List<BetterPlayerAsmsTrack> tracks,
+  int targetHeight,
+) {
+  if (tracks.isEmpty) return null;
+  int heightOf(BetterPlayerAsmsTrack t) {
+    final h = t.height;
+    if (h != null && h > 0) return h;
+    final w = t.width;
+    if (w != null && w > 0) return w;
+    return 0;
+  }
+
+  final withDims = tracks.where((t) => heightOf(t) > 0).toList();
+  final pool = withDims.isNotEmpty ? withDims : tracks;
+  final sorted = [...pool]..sort((a, b) => heightOf(a).compareTo(heightOf(b)));
+
+  BetterPlayerAsmsTrack? bestAtOrBelow;
+  for (final t in sorted) {
+    final h = heightOf(t);
+    if (h <= targetHeight) bestAtOrBelow = t;
+  }
+  if (bestAtOrBelow != null) return bestAtOrBelow;
+  return sorted.isNotEmpty ? sorted.first : null;
+}

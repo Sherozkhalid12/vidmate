@@ -53,12 +53,21 @@ class CreateLongVideoParams {
   final File? thumbnailFile;
   final String? thumbnailUrl;
   final String? caption;
+  final int? trimStartMs;
+  final int? trimEndMs;
+  final bool? deferPublish;
+  /// Optional max height hint for encoding (360, 480, 720, 1080). Sent as `maxResolution`.
+  final int? preferredMaxHeightPixels;
 
   CreateLongVideoParams({
     this.video,
     this.thumbnailFile,
     this.thumbnailUrl,
     this.caption,
+    this.trimStartMs,
+    this.trimEndMs,
+    this.deferPublish,
+    this.preferredMaxHeightPixels,
   });
 
   String? validate() {
@@ -79,7 +88,10 @@ class LongVideoService {
     return prefs.getString(_tokenKey);
   }
 
-  Future<CreateLongVideoResult> createLongVideo(CreateLongVideoParams params) async {
+  Future<CreateLongVideoResult> createLongVideo(
+    CreateLongVideoParams params, {
+    void Function(int sent, int total)? onSendProgress,
+  }) async {
     final validationError = params.validate();
     if (validationError != null) {
       return CreateLongVideoResult.failure(validationError);
@@ -96,6 +108,20 @@ class LongVideoService {
 
       if (params.caption != null && params.caption!.trim().isNotEmpty) {
         formData.fields.add(MapEntry('caption', params.caption!.trim()));
+      }
+      if (params.deferPublish != null) {
+        formData.fields.add(MapEntry('deferPublish', '${params.deferPublish}'));
+      }
+      if (params.trimStartMs != null && params.trimStartMs! >= 0) {
+        formData.fields.add(MapEntry('trimStartMs', '${params.trimStartMs}'));
+      }
+      if (params.trimEndMs != null && params.trimEndMs! >= 0) {
+        formData.fields.add(MapEntry('trimEndMs', '${params.trimEndMs}'));
+      }
+
+      final px = params.preferredMaxHeightPixels;
+      if (px != null && (px == 360 || px == 480 || px == 720 || px == 1080)) {
+        formData.fields.add(MapEntry('maxResolution', '$px'));
       }
 
       if (params.thumbnailFile != null &&
@@ -124,14 +150,15 @@ class LongVideoService {
       }
 
       debugPrint('[LongVideo] Creating long video...');
+      // No practical Dio timeouts: large uploads + slow transcoding can exceed any short window.
+      const noCap = Duration(days: 30);
       final response = await _dio.post(
         ApiConstants.longVideoCreate,
         data: formData,
+        onSendProgress: onSendProgress,
         options: Options(
-          // Long video uploads can take several minutes on slow networks.
-          // Do not abort just because it exceeds the default 60s sendTimeout.
-          sendTimeout: const Duration(minutes: 10),
-          receiveTimeout: const Duration(minutes: 5),
+          sendTimeout: noCap,
+          receiveTimeout: noCap,
         ),
       );
 
@@ -171,9 +198,6 @@ class LongVideoService {
       final msg = _networkErrorMessage(e.message);
       debugPrint('[LongVideo] Failed: $msg');
       return CreateLongVideoResult.failure(msg);
-    } on TimeoutException catch (_) {
-      debugPrint('[LongVideo] Failed: Request timed out');
-      return CreateLongVideoResult.failure('Request timed out');
     } catch (e) {
       debugPrint('[LongVideo] Failed: $e');
       return CreateLongVideoResult.failure(

@@ -8,12 +8,14 @@ import '../providers/auth_provider_riverpod.dart';
 import '../providers/follow_provider_riverpod.dart';
 import '../providers/video_player_provider.dart';
 import '../providers/posts_provider_riverpod.dart';
+import '../providers/saved_posts_provider_riverpod.dart';
 import '../models/post_model.dart';
 import '../media/app_media_cache.dart';
 import 'comments_bottom_sheet.dart';
 import 'share_bottom_sheet.dart';
 import 'safe_better_player.dart';
 import 'feed_cached_post_image.dart';
+import 'music_sticker_row.dart';
 import 'dart:async';
 import 'dart:ui';
 
@@ -37,6 +39,11 @@ class VideoTile extends ConsumerStatefulWidget {
   final String? authorId;
   /// Called when author name or avatar is tapped (navigate to profile).
   final VoidCallback? onAuthorTap;
+  /// Media aspect ratio (feed videos use 4:5 like Instagram).
+  final double mediaAspectRatio;
+  final String? musicName;
+  final String? musicTitle;
+  final String? musicPreviewUrl;
 
   const VideoTile({
     super.key,
@@ -56,6 +63,10 @@ class VideoTile extends ConsumerStatefulWidget {
     this.blurHash,
     this.authorId,
     this.onAuthorTap,
+    this.mediaAspectRatio = 1.0,
+    this.musicName,
+    this.musicTitle,
+    this.musicPreviewUrl,
   });
 
   @override
@@ -63,7 +74,6 @@ class VideoTile extends ConsumerStatefulWidget {
 }
 
 class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserver, SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
-  bool _isSaved = false;
   bool _isVideoVisible = false; // Track visibility for auto-pause - start as false
   late AnimationController _playPauseAnimationController;
   bool _showControls = true;
@@ -95,7 +105,9 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     _controlsTimer = Timer(const Duration(seconds: 3), () {
       if (mounted && widget.videoUrl != null) {
         try {
-          final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+          final playerState = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!,
+                  scopeId: widget.postId)));
           if (playerState.hasValidController && playerState.isPlaying) {
             setState(() {
               _showControls = false;
@@ -140,10 +152,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     if (widget.videoUrl == null || !mounted) return;
 
     try {
-      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      final playerState = ref.read(videoPlayerProvider(
+          videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId)));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
 
-      final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+      final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
       notifier.play();
       // YouTube style: Show controls briefly, then hide when playing
       if (mounted) {
@@ -164,7 +179,8 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
     }
 
     try {
-      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      final playerState = ref.read(videoPlayerProvider(
+          videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId)));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
 
       // Animate button press for smooth feedback
@@ -174,7 +190,9 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         }
       });
 
-      final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+      final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
       notifier.togglePlayPause();
 
       // Show controls and reset timer
@@ -198,10 +216,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
   void _seekForward() {
     if (widget.videoUrl == null) return;
     try {
-      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      final playerState = ref.read(videoPlayerProvider(
+          videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId)));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
 
-      final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+      final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
       notifier.seekForward();
       _showControlsTemporarily();
     } catch (e) {
@@ -212,10 +233,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
   void _seekBackward() {
     if (widget.videoUrl == null) return;
     try {
-      final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+      final playerState = ref.read(videoPlayerProvider(
+          videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId)));
       if (!playerState.hasValidController || !playerState.isInitialized) return;
 
-      final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+      final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
       // Seek backward without pausing
       final wasPlaying = playerState.isPlaying;
       notifier.seekBackward();
@@ -257,9 +281,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         if (_isVideoVisible && widget.videoUrl != null) {
           _isVideoVisible = false;
           try {
-            final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+            final playerState = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!,
+                  scopeId: widget.postId)));
             if (playerState.hasValidController) {
-              final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+              final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
               notifier.pause();
             }
           } catch (e) {
@@ -274,9 +302,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
         if (_isVideoVisible && widget.videoUrl != null) {
           _isVideoVisible = false;
           try {
-            final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+            final playerState = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!,
+                  scopeId: widget.postId)));
             if (playerState.hasValidController) {
-              final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+              final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
               notifier.pause();
             }
           } catch (e) {
@@ -309,9 +341,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
           // Pause immediately when video goes out of view
           if (widget.videoUrl != null) {
             try {
-              final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+              final playerState = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!,
+                  scopeId: widget.postId)));
               if (playerState.hasValidController) {
-                final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+                final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
                 notifier.pause();
               }
             } catch (e) {
@@ -323,9 +359,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       } else if (!isVisible && widget.videoUrl != null) {
         // Double-check: if not visible but playing, pause immediately
         try {
-          final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+          final playerState = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!,
+                  scopeId: widget.postId)));
           if (playerState.hasValidController && playerState.isPlaying) {
-            final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+            final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
             notifier.pause();
           }
         } catch (e) {
@@ -337,9 +377,13 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
       if (_isVideoVisible && widget.videoUrl != null) {
         _isVideoVisible = false;
         try {
-          final playerState = ref.read(videoPlayerProvider(widget.videoUrl!));
+          final playerState = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!,
+                  scopeId: widget.postId)));
           if (playerState.hasValidController) {
-            final notifier = ref.read(videoPlayerProvider(widget.videoUrl!).notifier);
+            final notifier = ref.read(videoPlayerProvider(
+              videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId))
+          .notifier);
             notifier.pause();
           }
         } catch (e) {
@@ -360,7 +404,8 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
 
     // Get video player state if video URL is available
     final playerState = widget.videoUrl != null
-        ? ref.watch(videoPlayerProvider(widget.videoUrl!))
+        ? ref.watch(videoPlayerProvider(
+            videoPlayerKeyFeedInline(widget.videoUrl!, scopeId: widget.postId)))
         : null;
     final isVideoInitialized = (playerState?.isInitialized ?? false) &&
         (playerState?.hasValidController == true);
@@ -446,13 +491,27 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
                   Expanded(
                     child: GestureDetector(
                       onTap: widget.onAuthorTap ?? widget.onTap,
-                      child: Text(
-                        widget.channelName!,
-                        style: TextStyle(
-                          color: ThemeHelper.getTextPrimary(context),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.channelName!,
+                            style: TextStyle(
+                              color: ThemeHelper.getTextPrimary(context),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          MusicStickerRow(
+                            previewUrl: widget.musicPreviewUrl,
+                            musicName: widget.musicName,
+                            musicTitle: widget.musicTitle,
+                            padding: const EdgeInsets.only(top: 2),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -558,7 +617,7 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
               children: [
                 // Video player (HLS) or thumbnail — only build BetterPlayer when we have a valid controller
                 AspectRatio(
-                  aspectRatio: 1.0,
+                  aspectRatio: widget.mediaAspectRatio,
                   child: isVideoInitialized && playerState?.hasValidController == true && playerState?.controller != null
                       ? KeyedSubtree(
                     key: ValueKey('${widget.videoUrl}_${playerState!.controller.hashCode}'),
@@ -721,19 +780,32 @@ class _VideoTileState extends ConsumerState<VideoTile> with WidgetsBindingObserv
           child: Row(
             children: [
               // Left side - Bookmark, Backward, Forward (only when playing)
-              GestureDetector(
-                onTap: () => setState(() => _isSaved = !_isSaved),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _isSaved ? Icons.star : Icons.star_border,
-                      size: 28,
-                      color: _isSaved ? ThemeHelper.getAccentColor(context) : ThemeHelper.getTextPrimary(context),
-                    ),
-                  ],
-                ),
-              ),
+              if (widget.postId != null)
+                Consumer(
+                  builder: (context, ref, _) {
+                    final postId = widget.postId!;
+                    final isSaved = ref.watch(isPostSavedProvider(postId));
+                    return GestureDetector(
+                      onTap: () {
+                        ref.read(savedPostsProvider.notifier).toggleSave(postId);
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isSaved ? Icons.star : Icons.star_border,
+                            size: 28,
+                            color: isSaved
+                                ? ThemeHelper.getAccentColor(context)
+                                : ThemeHelper.getTextPrimary(context),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                )
+              else
+                const SizedBox.shrink(),
               // Backward 10s (only visible when playing - no empty space when hidden)
               if (isPlaying && isVideoInitialized) ...[
                 const SizedBox(width: 16),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -9,14 +11,12 @@ import '../../core/models/post_model.dart';
 import '../../core/perf/explore_perf_metrics.dart';
 import '../../core/providers/network_status_provider.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/utils/media_viewer_navigation.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/utils/video_thumbnail_helper.dart';
 import '../../core/widgets/feed_cached_post_image.dart';
 import '../../core/widgets/feed_image_precache.dart';
-import '../long_videos/long_video_embedded_session_host.dart';
 import '../long_videos/providers/long_videos_provider.dart';
-import '../reels/reels_screen.dart';
-import '../video/video_player_screen.dart';
 import 'search_screen.dart';
 
 /// Explore screen: staggered grid of reels from [reelsProvider] (Hive-backed SWR, Feature 4.2).
@@ -411,19 +411,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
       child: GestureDetector(
         onTap: () {
           if (video.videoUrl == null || video.videoUrl!.isEmpty) return;
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => video.postType == 'longVideo'
-                  ? LongVideoEmbeddedSessionHost(post: video)
-                  : VideoPlayerScreen(
-                      videoUrl: video.videoUrl!,
-                      title: video.caption,
-                      author: video.author,
-                      post: video,
-                    ),
-            ),
-          );
+          unawaited(openLongVideoViewer(context, ref, video));
         },
         child: SizedBox(
           width: double.infinity,
@@ -496,12 +484,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen>
     return RepaintBoundary(
       child: GestureDetector(
         onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ReelsScreen(initialPostId: reel.id),
-            ),
-          );
+          unawaited(openReelViewer(context, ref, initialPostId: reel.id));
         },
         child: AspectRatio(
           aspectRatio: 9 / 16,

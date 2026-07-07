@@ -16,7 +16,9 @@ import 'services/notifications/push_notifications_service.dart';
 import 'services/background/content_prefetch_workmanager.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'services/storage/hive_content_store.dart';
+import 'services/posts/post_views_service.dart';
 import 'features/long_videos/providers/long_video_playback_provider.dart';
+import 'core/boot/low_ram.dart';
 
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
@@ -34,11 +36,14 @@ void main() {
   runZonedGuarded(() {
     WidgetsFlutterBinding.ensureInitialized();
 
+    unawaited(PostViewsService.ensureSessionScope());
+
     // Long-form feeds + long-video thumbnails: larger cache reduces tab-switch
-    // thumbnail reloads; cap bytes to limit pressure on low-RAM devices.
+    // thumbnail reloads; smaller caps on low-RAM Android (see [detectLowRamForImageCache]).
+    final isLowRam = detectLowRamForImageCache();
     PaintingBinding.instance.imageCache
-      ..maximumSize = 200
-      ..maximumSizeBytes = 96 << 20;
+      ..maximumSize = isLowRam ? 150 : 300
+      ..maximumSizeBytes = isLowRam ? (75 << 20) : (150 << 20);
 
     _configureLogging();
 

@@ -13,7 +13,10 @@ import '../../services/storage/hive_content_store.dart';
 import '../../services/storage/user_storage_service.dart';
 import '../utils/hive_posts_payload_parse.dart';
 import '../perf/feed_perf_metrics.dart';
+import '../utils/blocked_content_filter.dart';
+import 'blocked_users_provider.dart';
 import 'network_status_provider.dart';
+import '../media/app_media_cache.dart';
 
 /// Home feed page size (API `limit` / pagination).
 const int kFeedPageSize = 10;
@@ -94,6 +97,21 @@ class PostsNotifier extends StateNotifier<PostsState> {
   CancelToken? _loadCancel;
   bool _loadInFlight = false;
   bool _loadMoreInFlight = false;
+
+  Future<void> _warmFeedMediaDiskCache(List<PostModel> posts) async {
+    if (posts.isEmpty) return;
+    final urls = <String>{};
+    for (final p in posts.take(18)) {
+      final hero = p.effectiveThumbnailUrl ?? p.thumbnailUrl ?? p.imageUrl;
+      if (hero != null && hero.isNotEmpty) urls.add(hero);
+      for (final u in p.imageUrls.take(3)) {
+        if (u.isNotEmpty) urls.add(u);
+      }
+    }
+    for (final url in urls) {
+      unawaited(AppMediaCache.feedMedia.downloadFile(url).catchError((_) {}));
+    }
+  }
 
   /// Debug: extra invocations should be rare (splash + empty-feed guard only).
   int loadPostsInvocationCount = 0;
@@ -199,17 +217,19 @@ class PostsNotifier extends StateNotifier<PostsState> {
                 currentUserId: currentUserId,
               ))
           .toList();
+      final blocked = _ref.read(blockedUserIdsProvider);
+      final filteredPosts = filterPostsByBlockedAuthors(postModels, blocked);
       final likedPosts = <String, bool>{};
       final likeCounts = <String, int>{};
       final commentCounts = <String, int>{};
-      for (var post in postModels) {
+      for (var post in filteredPosts) {
         likedPosts[post.id] = post.isLiked;
         likeCounts[post.id] = post.likes;
         commentCounts[post.id] = post.comments;
       }
-      final hasMore = postModels.length >= kFeedPageSize;
+      final hasMore = filteredPosts.length >= kFeedPageSize;
       state = state.copyWith(
-        posts: postModels,
+        posts: filteredPosts,
         isLoading: false,
         isRefreshing: false,
         initialFetchCompleted: true,
@@ -223,6 +243,7 @@ class PostsNotifier extends StateNotifier<PostsState> {
       UserStorageService.instance.runInBackground(() async {
         await UserStorageService.instance.cacheUnseenFeed(posts: postModels);
       });
+      unawaited(_warmFeedMediaDiskCache(postModels));
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -292,6 +313,7 @@ class PostsNotifier extends StateNotifier<PostsState> {
       UserStorageService.instance.runInBackground(() async {
         await UserStorageService.instance.cacheUnseenFeed(posts: combined);
       });
+      unawaited(_warmFeedMediaDiskCache(batch));
     } catch (_) {
       state = state.copyWith(isLoadingMoreFeed: false);
     } finally {
@@ -370,6 +392,15 @@ class PostsNotifier extends StateNotifier<PostsState> {
     });
   }
 
+  void removePostsByAuthor(String authorId) {
+    final id = authorId.trim();
+    if (id.isEmpty) return;
+    final filtered =
+        state.posts.where((p) => p.author.id != id).toList(growable: false);
+    if (filtered.length == state.posts.length) return;
+    state = state.copyWith(posts: filtered);
+  }
+
   /// Increment comment count for a post (optimistic when user adds a comment).
   void incrementCommentCount(String postId) {
     final current = state.commentCounts[postId] ?? 0;
@@ -444,23 +475,7 @@ class PostsNotifier extends StateNotifier<PostsState> {
           isFollowing: isFollowingNow,
           isOnline: post.author.isOnline,
         );
-        return PostModel(
-          id: post.id,
-          author: updatedAuthor,
-          imageUrl: post.imageUrl,
-          imageUrls: post.imageUrls,
-          videoUrl: post.videoUrl,
-          thumbnailUrl: post.thumbnailUrl,
-          caption: post.caption,
-          createdAt: post.createdAt,
-          likes: post.likes,
-          comments: post.comments,
-          shares: post.shares,
-          isLiked: post.isLiked,
-          videoDuration: post.videoDuration,
-          isVideo: post.isVideo,
-          postType: post.postType,
-        );
+        return post.copyWith(author: updatedAuthor);
       }
       return post;
     }).toList();
@@ -478,24 +493,9 @@ List<PostModel> _updatePostsList(
   if (posts.isEmpty) return posts;
   return posts
       .map((p) => p.id == postId
-          ? PostModel(
-              id: p.id,
-              author: p.author,
-              imageUrl: p.imageUrl,
-              imageUrls: p.imageUrls,
-              videoUrl: p.videoUrl,
-              thumbnailUrl: p.thumbnailUrl,
-              caption: p.caption,
-              createdAt: p.createdAt,
-              likes: likes ?? p.likes,
-              comments: p.comments,
-              shares: p.shares,
+          ? p.copyWith(
               isLiked: isLiked ?? p.isLiked,
-              videoDuration: p.videoDuration,
-              isVideo: p.isVideo,
-              audioId: p.audioId,
-              audioName: p.audioName,
-              postType: p.postType,
+              likes: likes ?? p.likes,
             )
           : p)
       .toList();
@@ -664,7 +664,9 @@ class CreatePostNotifier extends StateNotifier<CreatePostState> {
     List<String>? locations,
     List<String>? taggedUsers,
     List<String>? feelings,
-    String? music,
+    String? musicUrl,
+    String? musicName,
+    String? musicTitle,
   }) async {
     if (state.isCreating) {
       debugPrint('[CreatePost] ignored duplicate submit (already creating)');
@@ -674,6 +676,8 @@ class CreatePostNotifier extends StateNotifier<CreatePostState> {
     state = state.copyWith(isCreating: true, clearError: true);
 
     final imageList = images ?? [];
+    final hasVideo = video != null && video.path.isNotEmpty;
+    final isImagePost = imageList.isNotEmpty && !hasVideo;
     final params = CreatePostParams(
       images: imageList,
       video: video,
@@ -683,9 +687,26 @@ class CreatePostNotifier extends StateNotifier<CreatePostState> {
       locations: locations ?? [],
       taggedUsers: taggedUsers ?? [],
       feelings: feelings ?? [],
-      music: (music != null && music.trim().isNotEmpty) ? music.trim() : null,
+      musicUrl: isImagePost &&
+              musicUrl != null &&
+              musicUrl.trim().isNotEmpty
+          ? musicUrl.trim()
+          : null,
+      musicName: isImagePost &&
+              musicName != null &&
+              musicName.trim().isNotEmpty
+          ? musicName.trim()
+          : null,
+      musicTitle: isImagePost &&
+              musicTitle != null &&
+              musicTitle.trim().isNotEmpty
+          ? musicTitle.trim()
+          : null,
     );
-    debugPrint('[CreatePost] params: ${imageList.length} image(s), video: ${video != null}, caption: ${caption != null && caption.trim().isNotEmpty}');
+    debugPrint(
+      '[CreatePost] params: ${imageList.length} image(s), video: $hasVideo, '
+      'music: ${params.musicUrl != null}',
+    );
 
     final result = await _postsService.createPost(params);
 

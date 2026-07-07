@@ -10,10 +10,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 class LongVideoEmbedResumeHint {
   final String videoUrl;
   final Duration position;
+  /// When true, cold start must begin at 0:00 (do not load stale saved progress).
+  final bool forceStartFromZero;
 
   const LongVideoEmbedResumeHint({
     required this.videoUrl,
     required this.position,
+    this.forceStartFromZero = false,
   });
 }
 

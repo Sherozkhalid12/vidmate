@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/story_model.dart';
@@ -10,6 +10,7 @@ import '../models/story_response_model.dart';
 import '../models/user_model.dart';
 import '../../services/posts/stories_service.dart';
 import '../../services/storage/hive_content_store.dart';
+import '../../services/stories/story_audio_preloader.dart';
 import 'network_status_provider.dart';
 
 /// State: stories grouped by user for UI, plus user list and loading/error.
@@ -21,6 +22,10 @@ class StoriesState {
   final bool initialFetchCompleted;
   final String? error;
   final bool trayOfflineBanner;
+  /// Remote story media URL → local file path (instant display after upload).
+  final Map<String, String> storyLocalMediaPaths;
+  /// Remote story video URL → local thumbnail JPEG path (tray preview).
+  final Map<String, String> storyLocalThumbnailPaths;
 
   StoriesState({
     this.userStoriesMap = const {},
@@ -30,6 +35,8 @@ class StoriesState {
     this.initialFetchCompleted = false,
     this.error,
     this.trayOfflineBanner = false,
+    this.storyLocalMediaPaths = const {},
+    this.storyLocalThumbnailPaths = const {},
   });
 
   StoriesState copyWith({
@@ -41,6 +48,8 @@ class StoriesState {
     String? error,
     bool clearError = false,
     bool? trayOfflineBanner,
+    Map<String, String>? storyLocalMediaPaths,
+    Map<String, String>? storyLocalThumbnailPaths,
   }) {
     return StoriesState(
       userStoriesMap: userStoriesMap ?? this.userStoriesMap,
@@ -51,6 +60,9 @@ class StoriesState {
           initialFetchCompleted ?? this.initialFetchCompleted,
       error: clearError ? null : (error ?? this.error),
       trayOfflineBanner: trayOfflineBanner ?? this.trayOfflineBanner,
+      storyLocalMediaPaths: storyLocalMediaPaths ?? this.storyLocalMediaPaths,
+      storyLocalThumbnailPaths:
+          storyLocalThumbnailPaths ?? this.storyLocalThumbnailPaths,
     );
   }
 }
@@ -102,16 +114,23 @@ void _groupStories(
       final seg = story.segments[i];
       list.add(StoryModel(
         id: '${story.id}_$i',
+        parentStoryId: story.id,
         author: user,
         mediaUrl: seg.url,
+        thumbnailUrl: seg.thumbnailUrl,
+        caption: story.caption,
         isVideo: seg.isVideo,
         createdAt: story.createdAt,
-        isViewed: false,
+        isViewed: story.hasViewed,
+        hasViewed: story.hasViewed,
+        viewCount: story.viewCount,
+        viewers: story.viewers,
         locations: story.locations,
         taggedUsers: story.taggedUsers,
         musicName: mn,
         musicTitle: mt,
         musicPreviewUrl: mp,
+        musicUrl: mp,
       ));
     }
   }
@@ -130,6 +149,12 @@ class StoriesNotifier extends StateNotifier<StoriesState> {
   /// Debug: duplicate loads (Feature 5.8).
   static int loadStoriesInvocationCount = 0;
 
+  Future<void> _prewarmAllStoryAudio(
+    Map<String, List<StoryModel>> userStoriesMap,
+  ) async {
+    await StoryAudioPreloader.instance.prewarmAll(userStoriesMap);
+  }
+
   void _tryHydrateFromHive() {
     if (!HiveContentStore.instance.isReady) return;
     final raw = HiveContentStore.instance.storiesTrayPayloadRaw;
@@ -144,6 +169,7 @@ class StoriesNotifier extends StateNotifier<StoriesState> {
       initialFetchCompleted: false,
       trayOfflineBanner: _ref.read(apiOfflineSignalProvider),
     );
+    unawaited(_prewarmAllStoryAudio(parsed.$1));
   }
 
   (Map<String, List<StoryModel>>, List<UserModel>)? _parseStoriesTrayRaw(
@@ -201,6 +227,7 @@ class StoriesNotifier extends StateNotifier<StoriesState> {
         initialFetchCompleted: false,
         trayOfflineBanner: _ref.read(apiOfflineSignalProvider),
       );
+      unawaited(_prewarmAllStoryAudio(parsed.$1));
       return;
     }
   }
@@ -274,6 +301,7 @@ class StoriesNotifier extends StateNotifier<StoriesState> {
         clearError: true,
         trayOfflineBanner: false,
       );
+      unawaited(_prewarmAllStoryAudio(outMap));
       _ref.read(apiOfflineSignalProvider.notifier).state = false;
       await _persistToHive();
     } on DioException catch (e) {
@@ -302,7 +330,142 @@ class StoriesNotifier extends StateNotifier<StoriesState> {
     }
   }
 
-  Future<void> refresh() => loadStories();
+  Future<void> refresh() async {
+    if (_loadInFlight) {
+      for (var i = 0; i < 30 && _loadInFlight; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    return loadStories();
+  }
+
+  /// Instantly show a newly created story in the tray before CDN is warm.
+  void insertCreatedStory({
+    required StoryModelApi apiStory,
+    required UserModel author,
+    List<File>? localFiles,
+    List<File?>? localThumbnailFiles,
+  }) {
+    if (apiStory.segments.isEmpty) return;
+
+    final newMap = Map<String, List<StoryModel>>.from(state.userStoriesMap);
+    final newUsers = List<UserModel>.from(state.users);
+    final localPaths = Map<String, String>.from(state.storyLocalMediaPaths);
+    final localThumbPaths =
+        Map<String, String>.from(state.storyLocalThumbnailPaths);
+
+    final mn = apiStory.musicName.trim().isNotEmpty
+        ? apiStory.musicName.trim()
+        : null;
+    final mt = apiStory.musicTitle.trim().isNotEmpty
+        ? apiStory.musicTitle.trim()
+        : null;
+    final mp =
+        apiStory.music.trim().isNotEmpty ? apiStory.music.trim() : null;
+
+    final segments = <StoryModel>[];
+    for (var i = 0; i < apiStory.segments.length; i++) {
+      final seg = apiStory.segments[i];
+      if (seg.url.isNotEmpty &&
+          localFiles != null &&
+          i < localFiles.length) {
+        localPaths[seg.url] = localFiles[i].path;
+      }
+      if (seg.isVideo &&
+          seg.url.isNotEmpty &&
+          localThumbnailFiles != null &&
+          i < localThumbnailFiles.length) {
+        final thumb = localThumbnailFiles[i];
+        if (thumb != null && thumb.path.isNotEmpty) {
+          localThumbPaths[seg.url] = thumb.path;
+        }
+      }
+      segments.add(
+        StoryModel(
+          id: '${apiStory.id}_$i',
+          parentStoryId: apiStory.id,
+          author: author,
+          mediaUrl: seg.url,
+          thumbnailUrl: seg.thumbnailUrl,
+          caption: apiStory.caption,
+          isVideo: seg.isVideo,
+          createdAt: apiStory.createdAt,
+          isViewed: apiStory.hasViewed,
+          hasViewed: apiStory.hasViewed,
+          viewCount: apiStory.viewCount,
+          viewers: apiStory.viewers,
+          locations: apiStory.locations,
+          taggedUsers: apiStory.taggedUsers,
+          musicName: mn,
+          musicTitle: mt,
+          musicPreviewUrl: mp,
+          musicUrl: mp,
+        ),
+      );
+    }
+
+    newMap[author.id] = segments;
+    if (!newUsers.any((u) => u.id == author.id)) {
+      newUsers.insert(0, author);
+    } else {
+      final idx = newUsers.indexWhere((u) => u.id == author.id);
+      if (idx > 0) {
+        newUsers.removeAt(idx);
+        newUsers.insert(0, author);
+      }
+    }
+
+    state = state.copyWith(
+      userStoriesMap: newMap,
+      users: newUsers,
+      storyLocalMediaPaths: localPaths,
+      storyLocalThumbnailPaths: localThumbPaths,
+      isRefreshing: false,
+      isLoading: false,
+      initialFetchCompleted: true,
+      clearError: true,
+    );
+    unawaited(_prewarmAllStoryAudio(newMap));
+    unawaited(_persistToHive());
+  }
+
+  /// POST /post/story/:id/view — updates local tray with viewCount / viewers.
+  Future<void> markStoryViewed(String parentStoryId) async {
+    if (parentStoryId.isEmpty) return;
+    final result = await _service.markStoryViewed(parentStoryId);
+    if (!result.success) return;
+
+    final updatedMap = <String, List<StoryModel>>{};
+    state.userStoriesMap.forEach((userId, stories) {
+      updatedMap[userId] = stories
+          .map((s) {
+            final pid = s.parentStoryId.isNotEmpty ? s.parentStoryId : s.id;
+            if (pid != parentStoryId) return s;
+            return StoryModel(
+              id: s.id,
+              parentStoryId: pid,
+              author: s.author,
+              mediaUrl: s.mediaUrl,
+              thumbnailUrl: s.thumbnailUrl,
+              caption: s.caption,
+              isVideo: s.isVideo,
+              createdAt: s.createdAt,
+              isViewed: result.hasViewed,
+              hasViewed: result.hasViewed,
+              viewCount: result.viewCount,
+              viewers: result.viewers.isNotEmpty ? result.viewers : s.viewers,
+              locations: s.locations,
+              taggedUsers: s.taggedUsers,
+              musicName: s.musicName,
+              musicTitle: s.musicTitle,
+              musicPreviewUrl: s.musicPreviewUrl,
+              musicUrl: s.musicUrl,
+            );
+          })
+          .toList();
+    });
+    state = state.copyWith(userStoriesMap: updatedMap);
+  }
 }
 
 final storiesProvider =

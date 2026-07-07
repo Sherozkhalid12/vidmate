@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/user_model.dart';
+import '../models/message_attachment.dart';
 import '../models/message_model.dart';
 import '../models/chat_message_bubble.dart';
 import '../models/chat_conversation_api.dart';
@@ -91,7 +92,7 @@ class ConversationsNotifier extends StateNotifier<ConversationsState> {
     }
     state = state.copyWith(
       loading: false,
-      conversations: result.conversations,
+      conversations: _dedupeConversations(result.conversations),
       clearError: true,
       initialFetchCompleted: true,
     );
@@ -165,11 +166,91 @@ class ConversationsNotifier extends StateNotifier<ConversationsState> {
   }
 
   static String _normalizeConvId(String id) {
-    if (id.isEmpty || !id.contains('_')) return id;
+    if (id.isEmpty) return id;
+    if (id.startsWith('group:')) {
+      final gid = id.split(':').last.trim();
+      return gid.isNotEmpty ? 'group:$gid' : id;
+    }
+    if (!id.contains('_')) return id;
     final parts = id.split('_');
     if (parts.length != 2) return id;
     parts.sort();
     return '${parts[0]}_${parts[1]}';
+  }
+
+  static String _conversationDedupeKey(ChatConversationItem item) {
+    if (item.isGroup) {
+      final gid = item.group?.id.trim() ?? '';
+      if (gid.isNotEmpty) return 'group:$gid';
+      final conv = item.conversationId.trim();
+      if (conv.startsWith('group:')) return _normalizeConvId(conv);
+      if (conv.isNotEmpty) return 'group:$conv';
+      return conv;
+    }
+    final userId = item.user.id.trim();
+    if (userId.isNotEmpty) return 'dm:$userId';
+    return _normalizeConvId(item.conversationId);
+  }
+
+  static List<ChatConversationItem> _dedupeConversations(
+    List<ChatConversationItem> items,
+  ) {
+    final map = <String, ChatConversationItem>{};
+    for (final item in items) {
+      final key = _conversationDedupeKey(item);
+      final existing = map[key];
+      if (existing == null ||
+          item.lastMessageAt.isAfter(existing.lastMessageAt)) {
+        map[key] = item;
+      }
+    }
+    final result = map.values.toList()
+      ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+    return result;
+  }
+
+  /// Insert or refresh a group row without reloading the full list.
+  void upsertGroupConversation({
+    required String groupId,
+    required String groupName,
+    String? avatarUrl,
+    String lastMessage = 'Group created',
+  }) {
+    final gid = groupId.trim();
+    if (gid.isEmpty) return;
+    final convId = 'group:$gid';
+    final item = ChatConversationItem(
+      conversationId: convId,
+      user: ChatConversationUser(
+        id: gid,
+        username: groupName,
+        profilePicture: avatarUrl ?? '',
+      ),
+      group: ChatConversationGroup(
+        id: gid,
+        name: groupName,
+        avatarUrl: avatarUrl ?? '',
+      ),
+      isGroup: true,
+      lastMessage: lastMessage,
+      lastMessageType: 'text',
+      lastMessageAt: DateTime.now(),
+    );
+    final list = List<ChatConversationItem>.from(state.conversations);
+    final key = _conversationDedupeKey(item);
+    final idx = list.indexWhere((c) => _conversationDedupeKey(c) == key);
+    if (idx >= 0) {
+      list[idx] = item;
+    } else {
+      list.insert(0, item);
+    }
+    state = state.copyWith(conversations: _dedupeConversations(list));
+    UserStorageService.instance.runInBackground(() async {
+      await UserStorageService.instance.cacheConversationsSnapshot(
+        items: state.conversations,
+        unreadConversationIds: state.unreadConversationIds,
+      );
+    });
   }
 }
 
@@ -231,6 +312,15 @@ MessageModel _messageFromBubble(
   String text = raw;
   MessageType type = MessageType.text;
   String? mediaUrl;
+  var attachments = b.attachments
+      .where((a) => a.url.trim().isNotEmpty)
+      .map(
+        (a) => MessageAttachment(
+          url: a.url.trim(),
+          mediaType: a.mediaType.trim().isEmpty ? 'image' : a.mediaType.trim(),
+        ),
+      )
+      .toList();
 
   if (b.isDeletedForEveryone || msgType == 'deleted') {
     text = 'Message deleted';
@@ -238,25 +328,31 @@ MessageModel _messageFromBubble(
     mediaUrl = null;
   } else if (msgType == 'post') {
     final p = b.sharedPostData;
-    final img = (p != null && p.images.isNotEmpty) ? p.images.first : '';
-    final vid = (p != null && p.video.isNotEmpty) ? p.video : '';
-    if (img.isNotEmpty) {
-      type = MessageType.image;
-      mediaUrl = img;
-    } else if (vid.isNotEmpty) {
-      type = MessageType.video;
-      mediaUrl = vid;
-    } else {
-      type = MessageType.text;
+    final postId = b.sharedPostId.isNotEmpty ? b.sharedPostId : (p?.id ?? '');
+    type = MessageType.sharedPost;
+    if (p != null) {
+      final thumb = p.effectiveThumbnailUrl;
+      if (thumb != null && thumb.isNotEmpty) {
+        mediaUrl = thumb;
+      }
     }
     final caption = (p != null && p.caption.trim().isNotEmpty) ? p.caption.trim() : '';
-    text = raw.trim().isNotEmpty ? raw.trim() : (caption.isNotEmpty ? caption : 'Shared a post');
-    // If we have a preview image/video but no caption, don't render placeholder text inside the bubble.
-    if (type != MessageType.text && text == 'Shared a post') {
-      text = '';
-    }
+    text = raw.trim().isNotEmpty ? raw.trim() : (caption.isNotEmpty ? caption : '');
+    return MessageModel(
+      id: b.id,
+      sender: sender,
+      text: text,
+      timestamp: b.createdAt,
+      isRead: isRead,
+      readBy: b.readBy,
+      type: type,
+      mediaUrl: mediaUrl,
+      attachments: attachments,
+      sharedPostId: postId,
+      sharedPostPreview: p,
+    );
   } else if (msgType == 'image' || msgType == 'video' || msgType == 'media') {
-    final att = b.attachments.where((a) => a.url.trim().isNotEmpty).toList();
+    final att = attachments;
     final pick = att.isNotEmpty ? att.first : null;
     final attType = pick?.mediaType.trim().toLowerCase() ?? '';
     final url = pick?.url.trim() ?? '';
@@ -322,8 +418,78 @@ MessageModel _messageFromBubble(
     text: text,
     timestamp: b.createdAt,
     isRead: isRead,
+    readBy: b.readBy,
     type: type,
     mediaUrl: mediaUrl,
+    attachments: attachments,
+    sharedPostId: null,
+    sharedPostPreview: null,
+  );
+}
+
+/// Public helper for shared-media and other chat consumers.
+MessageModel messageModelFromChatBubble(
+  ChatMessageBubble bubble,
+  UserModel currentUser,
+  UserModel peerUser,
+) =>
+    _messageFromBubble(bubble, currentUser.id, currentUser, peerUser);
+
+String conversationPreviewFromBubble(ChatMessageBubble bubble) {
+  final type = bubble.messageType.trim().isEmpty ? 'text' : bubble.messageType.trim();
+  if (type == 'deleted') return 'Message deleted';
+  if (type == 'post') {
+    return bubble.message.trim().isNotEmpty ? bubble.message.trim() : 'Shared a post';
+  }
+  if (type == 'image') return 'Photo';
+  if (type == 'video') return 'Video';
+  if ((type == 'media' || type == 'image' || type == 'video') &&
+      bubble.attachments.isNotEmpty) {
+    final mediaType = bubble.attachments.first.mediaType.toLowerCase();
+    return mediaType.contains('video') ? 'Video' : 'Photo';
+  }
+  return bubble.message.trim().isNotEmpty ? bubble.message.trim() : 'Message';
+}
+
+MessageModel _messageFromCachedMap(
+  Map<String, dynamic> m,
+  String currentUserId,
+  UserModel currentUser,
+  UserModel peerUser,
+) {
+  final senderRaw = m['sender'];
+  var sender = peerUser;
+  if (senderRaw is Map) {
+    final sm = Map<String, dynamic>.from(senderRaw);
+    sender = UserModel(
+      id: (sm['id'] ?? peerUser.id).toString(),
+      username: (sm['username'] ?? peerUser.username).toString(),
+      displayName: (sm['displayName'] ?? peerUser.displayName).toString(),
+      avatarUrl: (sm['avatarUrl'] ?? peerUser.avatarUrl).toString(),
+    );
+  }
+  if (sender.id == currentUserId) {
+    sender = currentUser;
+  }
+
+  final typeName = (m['type'] ?? 'text').toString();
+  var type = MessageType.text;
+  for (final t in MessageType.values) {
+    if (t.name == typeName) {
+      type = t;
+      break;
+    }
+  }
+
+  return MessageModel(
+    id: (m['id'] ?? '').toString(),
+    sender: sender,
+    text: (m['text'] ?? '').toString(),
+    mediaUrl: m['mediaUrl']?.toString(),
+    timestamp: DateTime.tryParse((m['timestamp'] ?? '').toString()) ??
+        DateTime.now(),
+    isRead: m['isRead'] == true,
+    type: type,
   );
 }
 
@@ -356,25 +522,60 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   static const int _pageSize = 20;
 
   Future<void> load() async {
-    state = ChatMessagesState(
-      loading: true,
-      messages: state.messages,
-      conversationId: state.conversationId,
-      hasMoreOlder: state.hasMoreOlder,
-    );
-    final result = await _service.getUserChat(_peerUserId, limit: _pageSize, skip: 0);
     final currentUser = _ref.read(currentUserProvider);
-    if (!result.success || currentUser == null) {
+    if (currentUser == null) {
+      state = const ChatMessagesState(
+        loading: false,
+        error: 'Not authenticated',
+      );
+      return;
+    }
+
+    final peerUser = _peerFallback();
+
+    // WhatsApp-style: show cached messages instantly, refresh in background.
+    if (state.messages.isEmpty) {
+      final cached = await UserStorageService.instance
+          .getCachedMessagesForChat(_peerUserId);
+      if (cached.isNotEmpty) {
+        final cachedMessages = cached
+            .map(
+              (m) => _messageFromCachedMap(
+                m,
+                currentUser.id,
+                currentUser,
+                peerUser,
+              ),
+            )
+            .toList();
+        state = ChatMessagesState(
+          loading: true,
+          messages: cachedMessages,
+          conversationId: state.conversationId,
+          hasMoreOlder: true,
+        );
+      } else {
+        state = ChatMessagesState(
+          loading: true,
+          messages: state.messages,
+          conversationId: state.conversationId,
+          hasMoreOlder: state.hasMoreOlder,
+        );
+      }
+    }
+
+    final result =
+        await _service.getUserChat(_peerUserId, limit: _pageSize, skip: 0);
+    if (!result.success) {
       state = ChatMessagesState(
         loading: false,
-        error: result.errorMessage ?? 'Not authenticated',
+        error: result.errorMessage ?? 'Failed to load messages',
         messages: state.messages,
         conversationId: state.conversationId,
         hasMoreOlder: state.hasMoreOlder,
       );
       return;
     }
-    final peerUser = _peerFallback();
     final messages = result.messages
         .map((b) => _messageFromBubble(b, currentUser.id, currentUser, peerUser))
         .toList();
@@ -514,7 +715,20 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       loadingOlder: state.loadingOlder,
       hasMoreOlder: state.hasMoreOlder,
     );
+    _bumpConversationList(chat);
     _cacheChatSnapshot();
+  }
+
+  void _bumpConversationList(ChatMessageBubble chat) {
+    final convId = (state.conversationId ?? chat.conversationId).trim();
+    if (convId.isEmpty) return;
+    _ref.read(conversationsProvider.notifier).updateLastMessageFromSocket(
+          convId,
+          conversationPreviewFromBubble(chat),
+          chat.createdAt,
+          isFromPeer: false,
+          lastMessageType: chat.messageType,
+        );
   }
 
   Future<bool> sendMessage(String text) async {
@@ -688,8 +902,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   void appendFromSocket(Map<String, dynamic> data) {
     final id = (data['_id'] ?? data['id'] ?? data['messageId'] ?? 'socket-${DateTime.now().millisecondsSinceEpoch}').toString();
     final conversationId = data['conversationId']?.toString();
-    if (state.messages.any((m) => m.id == id || m.serverId == id)) return;
-
     final currentUser = _ref.read(currentUserProvider);
     if (currentUser == null) return;
     final senderId = data['senderId']?.toString() ?? data['sender_id']?.toString() ?? '';
@@ -715,6 +927,30 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
                         ''))),
       );
       final msg = _messageFromBubble(bubble, currentUser.id, currentUser, peerUser);
+
+      final existingIdx =
+          state.messages.indexWhere((m) => m.id == id || m.serverId == id);
+      if (existingIdx >= 0) {
+        final updated = List<MessageModel>.from(state.messages);
+        final existing = updated[existingIdx];
+        updated[existingIdx] = existing.copyWith(
+          isRead: msg.isRead,
+          readBy: msg.readBy,
+          status: MessageSendStatus.sent,
+        );
+        state = ChatMessagesState(
+          conversationId: state.conversationId ?? conversationId ?? state.conversationId,
+          messages: updated,
+          loading: state.loading,
+          error: state.error,
+          sending: state.sending,
+          loadingOlder: state.loadingOlder,
+          hasMoreOlder: state.hasMoreOlder,
+        );
+        _cacheChatSnapshot();
+        return;
+      }
+
       if (senderId == currentUser.id) {
         final idx = state.messages.indexWhere((m) =>
             m.sender.id == currentUser.id && _matchesPendingMessage(m, msg));
@@ -873,7 +1109,9 @@ class ChatComposerNotifier extends StateNotifier<ChatComposerState> {
   void clearPreview() {
     if (!state.resolvingPost &&
         state.resolvedPostPreview == null &&
-        state.lastResolvedInput.isEmpty) return;
+        state.lastResolvedInput.isEmpty) {
+      return;
+    }
     state = const ChatComposerState();
   }
 
@@ -908,6 +1146,8 @@ class GroupChatState {
   final bool loading;
   final String? error;
   final bool sending;
+  final bool loadingOlder;
+  final bool hasMoreOlder;
 
   const GroupChatState({
     this.conversationId = '',
@@ -915,6 +1155,8 @@ class GroupChatState {
     this.loading = false,
     this.error,
     this.sending = false,
+    this.loadingOlder = false,
+    this.hasMoreOlder = true,
   });
 }
 
@@ -923,6 +1165,8 @@ class GroupChatNotifier extends StateNotifier<GroupChatState> {
 
   final String _groupId;
   final Ref _ref;
+
+  static const int _pageSize = 20;
 
   ChatService get _service => _ref.read(chatServiceProvider);
 
@@ -962,19 +1206,35 @@ class GroupChatNotifier extends StateNotifier<GroupChatState> {
       error: null,
       sending: false,
     );
+    _bumpConversationList(chat);
   }
 
-  Future<void> load({int limit = 50, int skip = 0}) async {
+  void _bumpConversationList(ChatMessageBubble chat) {
+    final convId = (state.conversationId.isNotEmpty ? state.conversationId : chat.conversationId).trim();
+    if (convId.isEmpty) return;
+    _ref.read(conversationsProvider.notifier).updateLastMessageFromSocket(
+          convId,
+          conversationPreviewFromBubble(chat),
+          chat.createdAt,
+          isFromPeer: false,
+          lastMessageType: chat.messageType,
+        );
+  }
+
+  Future<void> load({int limit = _pageSize, int skip = 0}) async {
     if (_groupId.trim().isEmpty) {
       state = const GroupChatState(loading: false, error: 'Missing group id');
       return;
     }
+    final isInitial = skip == 0;
     state = GroupChatState(
       conversationId: state.conversationId.isNotEmpty ? state.conversationId : roomId,
-      messages: state.messages,
-      loading: true,
+      messages: isInitial ? state.messages : state.messages,
+      loading: isInitial,
       error: null,
       sending: state.sending,
+      loadingOlder: !isInitial,
+      hasMoreOlder: state.hasMoreOlder,
     );
     final res = await _service.getGroupMessages(_groupId, limit: limit, skip: skip);
     final currentUser = _ref.read(currentUserProvider);
@@ -985,6 +1245,8 @@ class GroupChatNotifier extends StateNotifier<GroupChatState> {
         loading: false,
         error: res.errorMessage ?? 'Failed to load messages',
         sending: state.sending,
+        loadingOlder: false,
+        hasMoreOlder: state.hasMoreOlder,
       );
       return;
     }
@@ -1010,14 +1272,41 @@ class GroupChatNotifier extends StateNotifier<GroupChatState> {
       }
     }
 
+    if (isInitial) {
+      state = GroupChatState(
+        conversationId: convId,
+        messages: out,
+        loading: false,
+        error: null,
+        sending: false,
+        hasMoreOlder: out.length >= limit,
+      );
+      return;
+    }
+
+    final existingIds = state.messages.map((m) => m.id).toSet();
+    final older = out.where((m) => !existingIds.contains(m.id)).toList();
+    final noMoreOlder =
+        out.isEmpty || out.length < limit || older.isEmpty;
     state = GroupChatState(
       conversationId: convId,
-      messages: out,
+      messages: older.isEmpty ? state.messages : [...state.messages, ...older],
       loading: false,
       error: null,
       sending: false,
+      loadingOlder: false,
+      hasMoreOlder: !noMoreOlder,
     );
   }
+
+  Future<void> loadOlder() async {
+    if (state.loadingOlder || !state.hasMoreOlder || state.messages.isEmpty) {
+      return;
+    }
+    await load(limit: _pageSize, skip: state.messages.length);
+  }
+
+  Future<void> loadInitial() => load(limit: _pageSize, skip: 0);
 
   Future<bool> sendText(String text) async {
     final t = text.trim();
@@ -1134,7 +1423,6 @@ class GroupChatNotifier extends StateNotifier<GroupChatState> {
     if (currentUser == null) return;
     final id = (data['_id'] ?? data['id'] ?? data['messageId'] ?? '').toString();
     if (id.isEmpty) return;
-    if (state.messages.any((m) => m.id == id || m.serverId == id)) return;
     final senderId = data['senderId']?.toString() ?? data['sender_id']?.toString() ?? '';
     final bubble = ChatMessageBubble.fromJson(Map<String, dynamic>.from(data));
     final senderFallback = UserModel(
@@ -1144,6 +1432,27 @@ class GroupChatNotifier extends StateNotifier<GroupChatState> {
       avatarUrl: bubble.sender?.profilePicture ?? bubble.senderProfilePicture,
     );
     final msg = _messageFromBubble(bubble, currentUser.id, currentUser, senderFallback);
+
+    final existingIdx =
+        state.messages.indexWhere((m) => m.id == id || m.serverId == id);
+    if (existingIdx >= 0) {
+      final updated = List<MessageModel>.from(state.messages);
+      final existing = updated[existingIdx];
+      updated[existingIdx] = existing.copyWith(
+        isRead: msg.isRead,
+        readBy: msg.readBy,
+        status: MessageSendStatus.sent,
+      );
+      state = GroupChatState(
+        conversationId: state.conversationId.isNotEmpty ? state.conversationId : roomId,
+        messages: updated,
+        loading: state.loading,
+        error: state.error,
+        sending: state.sending,
+      );
+      return;
+    }
+
     if (senderId == currentUser.id) {
       final idx = state.messages.indexWhere((m) =>
           m.sender.id == currentUser.id && _matchesPendingMessage(m, msg));

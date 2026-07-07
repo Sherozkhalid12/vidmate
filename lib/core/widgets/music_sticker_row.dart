@@ -13,6 +13,8 @@ class MusicStickerRow extends StatelessWidget {
   final Color? textColor;
   final Color? iconColor;
   final Color? playButtonColor;
+  /// When true and [previewUrl] is set, shows a music note (reel-style) instead of play/pause.
+  final bool useMusicNoteLeadingForPreview;
 
   const MusicStickerRow({
     super.key,
@@ -23,6 +25,7 @@ class MusicStickerRow extends StatelessWidget {
     this.textColor,
     this.iconColor,
     this.playButtonColor,
+    this.useMusicNoteLeadingForPreview = false,
   });
 
   @override
@@ -61,7 +64,14 @@ class MusicStickerRow extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    if (hasAudio) ...[
+                    if (hasAudio && useMusicNoteLeadingForPreview) ...[
+                      Icon(
+                        Icons.music_note_rounded,
+                        size: 18,
+                        color: accent,
+                      ),
+                      const SizedBox(width: 8),
+                    ] else if (hasAudio) ...[
                       Icon(
                         playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
                         size: 28,

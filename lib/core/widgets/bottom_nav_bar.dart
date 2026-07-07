@@ -1,9 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/notifications_provider_riverpod.dart';
+import '../providers/main_tab_index_provider.dart';
 
-/// Modern full-width glass bottom nav bar – white circle on selected (dark mode)
-/// Icons updated to: Home → Reels → Story → Long Videos → Music
-class BottomNavBar extends StatelessWidget {
+/// Glass bottom nav: Reels → Long Videos → Story → Notifications → Music
+class BottomNavBar extends ConsumerWidget {
   final int currentIndex;
   final Function(int) onTap;
 
@@ -14,7 +16,7 @@ class BottomNavBar extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return SafeArea(
@@ -42,7 +44,7 @@ class BottomNavBar extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 crossAxisAlignment: CrossAxisAlignment.center,
-                children: List.generate(5, (index) => _buildNavItem(context, index)),
+                children: List.generate(5, (index) => _buildNavItem(context, ref, index)),
               ),
             ),
           ),
@@ -51,24 +53,26 @@ class BottomNavBar extends StatelessWidget {
     );
   }
 
-  Widget _buildNavItem(BuildContext context, int index) {
+  Widget _buildNavItem(BuildContext context, WidgetRef ref, int index) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isSelected = currentIndex == index;
+    final unreadCount = ref.watch(
+      notificationsProvider.select((s) => s.unreadCount),
+    );
 
-    // Updated icons to match your desired "new" design
     final icons = [
-      Icons.home_outlined,          // 0: Home
-      Icons.movie_outlined,         // 1: Reels
+      Icons.home_outlined,          // 0: Reels (home)
+      Icons.play_circle_outline,    // 1: Long Videos
       Icons.access_time_outlined,   // 2: Story
-      Icons.play_circle_outline,    // 3: Long Videos
+      Icons.notifications_outlined, // 3: Notifications
       Icons.music_note_outlined,    // 4: Music
     ];
 
     final selectedIcons = [
       Icons.home_rounded,
-      Icons.movie_rounded,
-      Icons.access_time_rounded,
       Icons.play_circle_rounded,
+      Icons.access_time_rounded,
+      Icons.notifications_rounded,
       Icons.music_note,
     ];
 
@@ -96,14 +100,49 @@ class BottomNavBar extends StatelessWidget {
         )
             : null,
         child: Center(
-          child: Icon(
-            icon,
-            color: isSelected
-                ? (isDark ? Colors.black : Colors.white)
-                : (isDark
-                ? Colors.white.withOpacity(0.70)
-                : Colors.black.withOpacity(0.60)),
-            size: isSelected ? 28 : 26,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(
+                icon,
+                color: isSelected
+                    ? (isDark ? Colors.black : Colors.white)
+                    : (isDark
+                        ? Colors.white.withOpacity(0.70)
+                        : Colors.black.withOpacity(0.60)),
+                size: isSelected ? 28 : 26,
+              ),
+              if (index == kNotificationsTabIndex &&
+                  currentIndex != kNotificationsTabIndex &&
+                  unreadCount > 0)
+                Positioned(
+                  top: -5,
+                  right: -8,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: isDark ? Colors.black : Colors.white,
+                        width: 1.2,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        unreadCount > 99 ? '99+' : '$unreadCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          height: 1.0,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

@@ -25,14 +25,21 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   File? _profilePicture;
   bool _isSaving = false;
+  String? _seededUserId;
+
+  UserModel get _effectiveUser => ref.read(currentUserProvider) ?? widget.user;
+
+  void _seedForm(UserModel user) {
+    _usernameController.text =
+        user.username.isNotEmpty ? user.username : user.displayName;
+    _bioController.text = user.bio ?? '';
+    _seededUserId = user.id;
+  }
 
   @override
   void initState() {
     super.initState();
-    _usernameController.text = widget.user.username.isNotEmpty
-        ? widget.user.username
-        : widget.user.displayName;
-    _bioController.text = widget.user.bio ?? '';
+    _seedForm(_effectiveUser);
   }
 
   @override
@@ -144,15 +151,16 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       _isSaving = true;
     });
 
+    final user = _effectiveUser;
     final username = _usernameController.text.trim();
     final value = username.isEmpty
-        ? (widget.user.username.isNotEmpty ? widget.user.username : widget.user.displayName)
+        ? (user.username.isNotEmpty ? user.username : user.displayName)
         : username;
     final bio = _bioController.text.trim();
 
     final success = await ref.read(authProvider.notifier).updateUser(
-          userId: widget.user.id,
-          name: value,
+          userId: user.id,
+          name: user.displayName.isNotEmpty ? user.displayName : null,
           username: value,
           bio: bio,
           profilePicture: _profilePicture,
@@ -207,6 +215,19 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final current = ref.watch(currentUserProvider);
+    if (current != null && current.id != _seededUserId && !_isSaving) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _isSaving) return;
+        final latest = ref.read(currentUserProvider);
+        if (latest == null) return;
+        if (latest.id == _seededUserId) return;
+        setState(() {
+          _seedForm(latest);
+          _profilePicture = null;
+        });
+      });
+    }
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
@@ -286,6 +307,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 
   Widget _buildProfilePicture() {
+    final user = _effectiveUser;
     return Center(
       child: GestureDetector(
         onTap: _pickProfilePicture,
@@ -303,7 +325,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: ThemeHelper.getAccentColor(context).withOpacity(0.2),
+                    color: ThemeHelper.getAccentColor(context)
+                        .withValues(alpha: 0.2),
                     blurRadius: 16,
                     spreadRadius: 2,
                   ),
@@ -319,7 +342,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         height: double.infinity,
                       )
                     : Image.network(
-                        widget.user.avatarUrl,
+                        user.avatarUrl,
                         fit: BoxFit.cover,
                         width: double.infinity,
                         height: double.infinity,
@@ -412,8 +435,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: ThemeHelper.getAccentColor(context),
           foregroundColor: ThemeHelper.getOnAccentColor(context),
-          disabledBackgroundColor: ThemeHelper.getAccentColor(context).withOpacity(0.5),
-          disabledForegroundColor: ThemeHelper.getOnAccentColor(context).withOpacity(0.7),
+          disabledBackgroundColor:
+              ThemeHelper.getAccentColor(context).withValues(alpha: 0.5),
+          disabledForegroundColor:
+              ThemeHelper.getOnAccentColor(context).withValues(alpha: 0.7),
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),

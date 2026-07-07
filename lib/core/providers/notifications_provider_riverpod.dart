@@ -149,6 +149,8 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
     final Map<String, dynamic>? fromUser = data['fromUser'] is Map
         ? Map<String, dynamic>.from(data['fromUser'] as Map)
         : (data['user'] is Map ? Map<String, dynamic>.from(data['user'] as Map) : null);
+    final Map<String, dynamic> topLevelFromUser = n.fromUser;
+    final Map<String, dynamic>? normalizedFromUser = fromUser ?? (topLevelFromUser.isNotEmpty ? topLevelFromUser : null);
 
     String pickString(List<dynamic> candidates) {
       for (final c in candidates) {
@@ -161,7 +163,9 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
 
     final display = pickString([
       fromUser?['displayName'],
+      normalizedFromUser?['displayName'],
       fromUser?['name'],
+      normalizedFromUser?['name'],
       data['displayName'],
       data['name'],
       n.title,
@@ -170,6 +174,7 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
 
     final username = pickString([
       fromUser?['username'],
+      normalizedFromUser?['username'],
       data['username'],
       n.fromUserId,
       'user',
@@ -177,7 +182,9 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
 
     final id = pickString([
       fromUser?['id'],
+      normalizedFromUser?['id'],
       fromUser?['_id'],
+      normalizedFromUser?['_id'],
       data['userId'],
       data['fromUserId'],
       n.fromUserId,
@@ -185,8 +192,11 @@ class NotificationsNotifier extends StateNotifier<NotificationsState> {
 
     final avatarUrl = pickString([
       fromUser?['profilePicture'],
+      normalizedFromUser?['profilePicture'],
       fromUser?['avatarUrl'],
+      normalizedFromUser?['avatarUrl'],
       fromUser?['profilePic'],
+      normalizedFromUser?['profilePic'],
       data['profilePicture'],
       data['avatarUrl'],
       data['profilePic'],

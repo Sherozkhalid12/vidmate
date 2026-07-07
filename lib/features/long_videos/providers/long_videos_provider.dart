@@ -3,10 +3,15 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/long_video_logger.dart';
 import '../../../core/models/post_model.dart';
 import '../../../core/perf/long_video_perf_metrics.dart';
+import '../../../core/providers/active_long_video_url_provider.dart';
 import '../../../core/providers/auth_provider_riverpod.dart';
 import '../../../core/providers/network_status_provider.dart';
+import '../../../core/providers/post_views_provider.dart';
+import '../../../core/providers/blocked_users_provider.dart';
+import '../../../core/utils/blocked_content_filter.dart';
 import '../../../services/posts/long_video_service.dart';
 import '../../../services/posts/posts_service.dart';
 import '../../../services/storage/user_storage_service.dart';
@@ -151,11 +156,20 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
   void prefetchNextAfter(String currentVideoId) {
     final list = state.videos;
     final idx = list.indexWhere((v) => v.id == currentVideoId);
-    if (idx < 0 || idx + 1 >= list.length) return;
-    final next = list[idx + 1];
-    final url = next.videoUrl;
-    if (url == null || url.isEmpty) return;
-    unawaited(LongVideoHlsPrefetch.prefetchHeadSegments(url));
+    if (idx < 0) return;
+
+    final activeEmbedded = _ref.read(activeLongVideoUrlProvider);
+
+    for (var offset = 1; offset <= 2; offset++) {
+      final nextIdx = idx + offset;
+      if (nextIdx >= list.length) continue;
+      final next = list[nextIdx];
+      final url = next.videoUrl?.trim();
+      if (url == null || url.isEmpty) continue;
+      if (url == activeEmbedded) continue;
+      LongVideoLogger.prefetch('prefetch url=$url');
+      unawaited(LongVideoHlsPrefetch.prefetchHeadSegments(url));
+    }
   }
 
   /// Load initial videos or refresh from API.
@@ -168,6 +182,8 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
       LongVideoPerfMetrics.logLoadVideosSkipped();
       return;
     }
+
+    LongVideoLogger.lifecycle('loadVideos start refresh=$refresh');
 
     _loadVideosInFlight = true;
     loadVideosInvocationCount++;
@@ -213,15 +229,25 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
       _ref.read(apiOfflineSignalProvider.notifier).state = false;
 
       final currentUserId = _ref.read(authProvider).currentUser?.id;
-      final allVideos = result.videos
-          .map((v) => PostModel.fromLongVideo(v, currentUserId: currentUserId))
-          .toList();
+      final allVideos = filterPostsByBlockedAuthors(
+        result.videos
+            .map((v) => PostModel.fromLongVideo(v, currentUserId: currentUserId))
+            .toList(),
+        _ref.read(blockedUserIdsProvider),
+      );
       final dedupedVideos = _dedupeByIdPreserveOrder(allVideos);
       final likedVideos = <String, bool>{};
       final likeCounts = <String, int>{};
       for (final video in dedupedVideos) {
         likedVideos[video.id] = video.isLiked;
         likeCounts[video.id] = video.likes;
+      }
+      final viewOverrides =
+          _ref.read(postViewCountOverridesProvider.notifier);
+      for (final video in dedupedVideos) {
+        if (video.views > 0) {
+          viewOverrides.seedCount(video.id, video.views);
+        }
       }
 
       state = state.copyWith(
@@ -234,6 +260,9 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
         hasMore: false,
         currentPage: 1,
         feedOfflineBanner: false,
+      );
+      LongVideoLogger.lifecycle(
+        'loadVideos done count=${dedupedVideos.length}',
       );
       UserStorageService.instance.runInBackground(() async {
         await UserStorageService.instance.cacheUnseenLongVideos(videos: dedupedVideos);
@@ -342,6 +371,15 @@ class LongVideosNotifier extends StateNotifier<LongVideosState> {
     UserStorageService.instance.runInBackground(() async {
       await UserStorageService.instance.cacheUnseenLongVideos(videos: updatedVideos);
     });
+  }
+
+  void removeVideosByAuthor(String authorId) {
+    final id = authorId.trim();
+    if (id.isEmpty) return;
+    final filtered =
+        state.videos.where((v) => v.author.id != id).toList(growable: false);
+    if (filtered.length == state.videos.length) return;
+    state = state.copyWith(videos: filtered);
   }
 
   PostModel? getVideoById(String videoId) {

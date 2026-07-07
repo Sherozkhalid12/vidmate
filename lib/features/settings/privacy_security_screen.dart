@@ -5,6 +5,8 @@ import '../../core/utils/theme_helper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../core/providers/user_preferences_provider_riverpod.dart';
+import '../../core/providers/blocked_users_provider.dart';
+import 'blocked_accounts_screen.dart';
 
 /// Privacy & Security settings screen
 class PrivacySecurityScreen extends ConsumerStatefulWidget {
@@ -27,6 +29,7 @@ class _PrivacySecurityScreenState extends ConsumerState<PrivacySecurityScreen> {
   @override
   Widget build(BuildContext context) {
     final preferences = ref.watch(userPreferencesProvider).preferences;
+    final blockedCount = ref.watch(blockedUserIdsProvider).length;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -158,17 +161,17 @@ class _PrivacySecurityScreenState extends ConsumerState<PrivacySecurityScreen> {
                 icon: Icons.block,
                 title: 'Blocked Accounts',
                 trailing: Text(
-                  '0',
+                  '$blockedCount',
                   style: TextStyle(
                     color: context.textSecondary,
                     fontSize: 14,
                   ),
                 ),
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Blocked users list'),
-                      backgroundColor: ThemeHelper.getAccentColor(context), // Theme-aware accent color
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const BlockedAccountsScreen(),
                     ),
                   );
                 },

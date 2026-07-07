@@ -47,4 +47,22 @@ class AppMediaCache {
       fileService: HttpFileService(httpClient: _longVideoThumbClient),
     ),
   );
+
+  /// Dedicated pool for chat media (bubbles, collages, viewer). Isolated so
+  /// conversation images never compete with the feed for cache slots, and a
+  /// longer stale window keeps re-opened chats instant.
+  static final IOClient _chatMediaClient = IOClient(
+    HttpClient()
+      ..maxConnectionsPerHost = 6
+      ..connectionTimeout = const Duration(seconds: 12),
+  );
+
+  static final CacheManager chatMedia = CacheManager(
+    Config(
+      'vidconnect_chat_media',
+      stalePeriod: const Duration(days: 30),
+      maxNrOfCacheObjects: 1000,
+      fileService: HttpFileService(httpClient: _chatMediaClient),
+    ),
+  );
 }

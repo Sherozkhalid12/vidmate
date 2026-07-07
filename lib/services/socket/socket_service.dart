@@ -35,6 +35,9 @@ class SocketService {
 
   /// Callbacks set by Riverpod so socket events update state.
   void Function(Map<String, dynamic>)? onLikesUpdated;
+  void Function(Map<String, dynamic>)? onViewUpdated;
+  void Function(Map<String, dynamic>)? onUserBlocked;
+  void Function(Map<String, dynamic>)? onUserUnblocked;
 
   /// Connect to socket server. Single connection only.
   /// Steps: 1) Create socket 2) Attach listeners (comments, chat:message, likes) 3) On connect → chat:register (required for chat to work).
@@ -86,6 +89,10 @@ class SocketService {
         _notificationsSocket.join(_currentUserId!);
         _callsSocket.register(_currentUserId!);
         _livestreamSocket.register(_currentUserId!);
+        _socket!.emit('user:register', _currentUserId);
+        if (kDebugMode) {
+          debugPrint('[Socket] user:register sent userId=$_currentUserId');
+        }
       }
     });
 
@@ -117,10 +124,43 @@ class SocketService {
     _liveStreamSocket.attach(_socket);
     _livestreamSocket.attach(_socket);
     _socket!.on('likes:updated', _handleLikesUpdated);
+    _socket!.on('post:view.updated', _handleViewUpdated);
+    _socket!.on('user:blocked', _handleUserBlocked);
+    _socket!.on('user:unblocked', _handleUserUnblocked);
     if (kDebugMode) {
       debugPrint(
-          '[Socket] services attached (comments, chat:message, notifications:new, calls, live, likes)');
+          '[Socket] services attached (comments, chat:message, notifications:new, calls, live, likes, views, block)');
     }
+  }
+
+  void _handleViewUpdated(dynamic data) {
+    if (onViewUpdated == null) return;
+    try {
+      final map = data is Map<String, dynamic>
+          ? data
+          : (data is Map ? Map<String, dynamic>.from(data) : null);
+      if (map != null && map.isNotEmpty) onViewUpdated!(map);
+    } catch (_) {}
+  }
+
+  void _handleUserBlocked(dynamic data) {
+    if (onUserBlocked == null) return;
+    try {
+      final map = data is Map<String, dynamic>
+          ? data
+          : (data is Map ? Map<String, dynamic>.from(data) : null);
+      if (map != null && map.isNotEmpty) onUserBlocked!(map);
+    } catch (_) {}
+  }
+
+  void _handleUserUnblocked(dynamic data) {
+    if (onUserUnblocked == null) return;
+    try {
+      final map = data is Map<String, dynamic>
+          ? data
+          : (data is Map ? Map<String, dynamic>.from(data) : null);
+      if (map != null && map.isNotEmpty) onUserUnblocked!(map);
+    } catch (_) {}
   }
 
   void _handleLikesUpdated(dynamic data) {
@@ -138,6 +178,9 @@ class SocketService {
     if (kDebugMode) debugPrint('[Socket] disconnect()');
     _isConnecting = false;
     _socket?.off('likes:updated');
+    _socket?.off('post:view.updated');
+    _socket?.off('user:blocked');
+    _socket?.off('user:unblocked');
     _commentsSocket.detach();
     _chatSocket.detach();
     _notificationsSocket.detach();
@@ -149,5 +192,8 @@ class SocketService {
     _socket = null;
     _currentUserId = null;
     onLikesUpdated = null;
+    onViewUpdated = null;
+    onUserBlocked = null;
+    onUserUnblocked = null;
   }
 }

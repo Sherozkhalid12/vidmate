@@ -43,14 +43,23 @@ class _AudioReelsScreenState extends ConsumerState<AudioReelsScreen> {
     final Map<int, VideoPlayerController> _controllers = {};
 
   @override
-    void initState() {
-      super.initState();
-      _pageController = PageController(initialPage: widget.initialIndex.clamp(0, widget.reels.length - 1));
-      _currentIndex = widget.initialIndex.clamp(0, widget.reels.length - 1);
+  void initState() {
+    super.initState();
+    _pageController = PageController(
+      initialPage: widget.initialIndex.clamp(0, widget.reels.length - 1),
+    );
+    _currentIndex = widget.initialIndex.clamp(0, widget.reels.length - 1);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       ref.read(reelsProvider.notifier).seedReels(widget.reels);
-      _initializeVideo(_currentIndex);
-    if (_currentIndex + 1 < widget.reels.length) _initializeVideo(_currentIndex + 1);
-    if (_currentIndex + 2 < widget.reels.length) _initializeVideo(_currentIndex + 2);
+    });
+    _initializeVideo(_currentIndex);
+    if (_currentIndex + 1 < widget.reels.length) {
+      _initializeVideo(_currentIndex + 1);
+    }
+    if (_currentIndex + 2 < widget.reels.length) {
+      _initializeVideo(_currentIndex + 2);
+    }
     if (_currentIndex - 1 >= 0) _initializeVideo(_currentIndex - 1);
   }
 

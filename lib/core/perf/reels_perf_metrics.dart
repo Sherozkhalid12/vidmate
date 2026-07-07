@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import '../utils/reels_logger.dart';
 
 /// Debug / trace hooks for reel performance (Feature 1.12).
 class ReelsPerfMetrics {
@@ -15,17 +15,13 @@ class ReelsPerfMetrics {
   void onFirstReelVisible() {
     if (screenMountTime == null) return;
     final ms = DateTime.now().difference(screenMountTime!).inMilliseconds;
-    if (kDebugMode) {
-      debugPrint('[ReelsPerf] first_reel_visible_ms=$ms');
-    }
+    ReelsLogger.lifecycle('PERF first_reel_visible_ms=$ms');
     screenMountTime = null;
   }
 
   void recordRebuffer() {
     rebufferCountSession++;
-    if (kDebugMode) {
-      debugPrint('[ReelsPerf] video_rebuffer_count=$rebufferCountSession');
-    }
+    ReelsLogger.lifecycle('PERF video_rebuffer_count=$rebufferCountSession');
   }
 
   void resetSession() {

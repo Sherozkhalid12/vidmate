@@ -14,6 +14,7 @@ class NotificationItem {
   final String body;
   final String type;
   final Map<String, dynamic> data;
+  final Map<String, dynamic> fromUser;
   final bool isRead;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -26,6 +27,7 @@ class NotificationItem {
     required this.body,
     required this.type,
     required this.data,
+    required this.fromUser,
     required this.isRead,
     required this.createdAt,
     required this.updatedAt,
@@ -41,6 +43,9 @@ class NotificationItem {
       type: (json['type'] ?? '').toString(),
       data: json['data'] is Map<String, dynamic>
           ? Map<String, dynamic>.from(json['data'] as Map)
+          : <String, dynamic>{},
+      fromUser: json['fromUser'] is Map<String, dynamic>
+          ? Map<String, dynamic>.from(json['fromUser'] as Map)
           : <String, dynamic>{},
       isRead: json['isRead'] == true,
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
@@ -61,6 +66,7 @@ class NotificationItem {
       body: body,
       type: type,
       data: data,
+      fromUser: fromUser,
       isRead: isRead ?? this.isRead,
       createdAt: createdAt,
       updatedAt: updatedAt,

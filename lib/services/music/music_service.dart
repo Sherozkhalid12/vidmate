@@ -167,7 +167,7 @@ class MusicService {
 
   MusicModel mapSongJsonToMusicModel(Map<String, dynamic> json) {
     final id = (json['_id'] ?? json['id'] ?? '').toString();
-    final name = (json['name'] ?? '').toString();
+    final name = (json['name'] ?? json['title'] ?? '').toString();
     final album = json['album'] is Map<String, dynamic>
         ? (json['album'] as Map<String, dynamic>)
         : <String, dynamic>{};
@@ -301,7 +301,93 @@ class MusicService {
     }
   }
 
-  /// GET `/music/deezer/playlists/:playlistId` — tracks for one playlist.
+  /// GET `/music/jamendo/trending` — popular songs.
+  Future<MusicListResult> fetchJamendoTrending({int limit = 10}) async {
+    try {
+      final response = await _dio.get(
+        ApiConstants.musicJamendoTrending,
+        queryParameters: {'limit': limit},
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic> || data['success'] != true) {
+        final message = data is Map<String, dynamic>
+            ? (data['message']?.toString() ?? 'Failed to load music')
+            : 'Failed to load music';
+        return MusicListResult.failure(message);
+      }
+      final songs = _parseSongsList(data['songs']);
+      final total = (data['total'] is num)
+          ? (data['total'] as num).toInt()
+          : songs.length;
+      return MusicListResult.success(tracks: songs, total: total);
+    } on DioException catch (e) {
+      final d = e.response?.data;
+      final msg = d is Map
+          ? (d['message'] ?? d['error'] ?? 'Failed to load music').toString()
+          : 'Failed to load music';
+      return MusicListResult.failure(msg);
+    } catch (e) {
+      return MusicListResult.failure(e.toString());
+    }
+  }
+
+  /// GET `/music/jamendo/search` — search by text.
+  Future<MusicListResult> fetchJamendoSearch({
+    required String query,
+    int limit = 10,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) {
+      return const MusicListResult.success(tracks: [], total: 0);
+    }
+    try {
+      final response = await _dio.get(
+        ApiConstants.musicJamendoSearch,
+        queryParameters: {'query': q, 'limit': limit},
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic> || data['success'] != true) {
+        final message = data is Map<String, dynamic>
+            ? (data['message']?.toString() ?? 'Search failed')
+            : 'Search failed';
+        return MusicListResult.failure(message);
+      }
+      final songs = _parseSongsList(data['songs']);
+      final total = (data['total'] is num)
+          ? (data['total'] as num).toInt()
+          : songs.length;
+      return MusicListResult.success(tracks: songs, total: total);
+    } on DioException catch (e) {
+      final d = e.response?.data;
+      final msg = d is Map
+          ? (d['message'] ?? d['error'] ?? 'Search failed').toString()
+          : 'Search failed';
+      return MusicListResult.failure(msg);
+    } catch (e) {
+      return MusicListResult.failure(e.toString());
+    }
+  }
+
+  /// GET `/music/jamendo/track/:id` — refreshed playable preview URL.
+  Future<MusicModel?> fetchJamendoTrack(String trackId) async {
+    final id = trackId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final response = await _dio.get(ApiConstants.musicJamendoTrack(id));
+      final data = response.data;
+      if (data is! Map<String, dynamic> || data['success'] != true) {
+        return null;
+      }
+      final raw = data['song'];
+      if (raw is! Map<String, dynamic>) return null;
+      return mapSongJsonToMusicModel(raw);
+    } on DioException catch (_) {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<MusicListResult> fetchDeezerPlaylistSongs(
     String playlistId, {
     int limit = 30,

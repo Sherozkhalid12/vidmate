@@ -23,7 +23,7 @@ class _SavedScreenState extends ConsumerState<SavedScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 0);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(savedPostsProvider.notifier).loadSavedPosts();
     });
@@ -87,7 +87,6 @@ class _SavedScreenState extends ConsumerState<SavedScreen>
                     fontSize: 14,
                   ),
                   tabs: const [
-                    Tab(text: 'Post.'),
                     Tab(text: 'Reels.'),
                     Tab(text: 'Long Videos'),
                   ],
@@ -99,7 +98,6 @@ class _SavedScreenState extends ConsumerState<SavedScreen>
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildSavedTab('post'),
                   _buildSavedTab('reel'),
                   _buildSavedTab('longVideo'),
                 ],

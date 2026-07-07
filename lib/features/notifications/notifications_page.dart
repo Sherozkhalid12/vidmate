@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'notifications_screen.dart';
 
-/// Notifications Page - wrapper for NotificationsScreen
+/// Notifications tab — embeds [NotificationsScreen] in the bottom nav.
 class NotificationsPage extends StatelessWidget {
   final double bottomPadding;
 
@@ -11,18 +11,10 @@ class NotificationsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,
-      child: const NotificationsScreen(),
+      child: Padding(
+        padding: EdgeInsets.only(bottom: bottomPadding > 0 ? 0 : 0),
+        child: const NotificationsScreen(),
+      ),
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme_extensions.dart';
 import '../../core/utils/theme_helper.dart';
@@ -7,9 +8,11 @@ import '../../core/theme/app_colors.dart';
 import '../../core/models/user_model.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/notifications_provider_riverpod.dart';
+import '../../core/providers/posts_provider_riverpod.dart';
 import '../../services/notifications/notifications_service.dart';
 import '../../core/widgets/glass_card.dart';
 import '../profile/profile_screen.dart';
+import '../profile/profile_post_viewer_screen.dart';
 
 /// Notifications screen with activity feed
 class NotificationsScreen extends ConsumerStatefulWidget {
@@ -21,6 +24,54 @@ class NotificationsScreen extends ConsumerStatefulWidget {
 }
 
 class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
+  bool _isPostRelated(NotificationItem n) {
+    return n.type == 'post_like' ||
+        n.type == 'post_comment' ||
+        n.type == 'post_share' ||
+        n.data.containsKey('postId');
+  }
+
+  String _extractPostId(NotificationItem n) {
+    return (n.data['postId'] ?? '').toString().trim();
+  }
+
+  Future<void> _openPostFromNotification(NotificationItem n) async {
+    final postId = _extractPostId(n);
+    if (postId.isEmpty) return;
+
+    ref.read(notificationsProvider.notifier).markAsRead(n.id);
+
+    var posts = ref.read(postsProvider).posts;
+    var found = posts.where((p) => p.id == postId).toList();
+
+    if (found.isEmpty) {
+      await ref.read(postsProvider.notifier).loadPosts(forceRefresh: true);
+      posts = ref.read(postsProvider).posts;
+      found = posts.where((p) => p.id == postId).toList();
+    }
+
+    if (!mounted) return;
+    if (found.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Post not available right now'),
+          backgroundColor: ThemeHelper.getAccentColor(context),
+        ),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ProfilePostViewerScreen(
+          posts: found,
+          initialIndex: 0,
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -181,20 +232,20 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     final text = notification.body.isNotEmpty
         ? notification.body
         : notification.title;
+    final isPostNotification = _isPostRelated(notification);
+    final remainingText = text
+        .replaceFirst(RegExp('^${RegExp.escape(user.displayName)}\\s*', caseSensitive: false), '')
+        .trimLeft();
 
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProfileScreen(user: user),
-          ),
-        );
-        ref
-            .read(notificationsProvider.notifier)
-            .markAsRead(notification.id);
+      onTap: () async {
+        if (isPostNotification) {
+          await _openPostFromNotification(notification);
+          return;
+        }
+        ref.read(notificationsProvider.notifier).markAsRead(notification.id);
       },
       child: Row(
           children: [
@@ -244,10 +295,19 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                         TextSpan(
                           text: user.displayName,
                           style: const TextStyle(
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
                           ),
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ProfileScreen(user: user),
+                                ),
+                              );
+                            },
                         ),
-                        TextSpan(text: ' $text'),
+                        TextSpan(text: remainingText.isEmpty ? ' $text' : ' $remainingText'),
                       ],
                     ),
                   ),

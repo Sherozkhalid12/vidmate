@@ -1,4 +1,5 @@
-import 'package:flutter/cupertino.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -10,7 +11,13 @@ import '../../core/widgets/instagram_post_card.dart';
 import '../../core/widgets/ad_banner.dart';
 import '../../core/models/post_model.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
+import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/providers/home_feed_playback_provider_riverpod.dart';
+import '../../core/providers/saved_posts_provider_riverpod.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/audio/attached_music_preview.dart';
+import '../../core/widgets/home_feed_reel_tile.dart';
+import '../../core/providers/notifications_provider_riverpod.dart';
 import '../../core/perf/feed_perf_metrics.dart';
 import '../../core/media/app_media_cache.dart';
 import '../../core/widgets/feed_image_precache.dart';
@@ -112,6 +119,13 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
     super.initState();
     _skeletonStopwatch = Stopwatch()..start();
     _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final saved = ref.read(savedPostsProvider);
+      if (saved.savedPostIds.isEmpty && !saved.isLoading) {
+        unawaited(ref.read(savedPostsProvider.notifier).loadSavedPosts());
+      }
+    });
   }
 
   void _ensurePostsLoadedIfEmpty(WidgetRef ref) {
@@ -338,7 +352,19 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
         ref.watch(postsProvider.select((s) => s.initialFetchCompleted));
     final error = ref.watch(postsProvider.select((s) => s.error));
     final offlineBanner = ref.watch(postsProvider.select((s) => s.feedOfflineBanner));
-    final posts = allPosts.where((p) => p.postType == 'post').toList();
+    final feedPosts = allPosts.where((p) => p.postType == 'post').toList();
+    final reels = ref.watch(reelsListProvider);
+    final posts = _mergeFeedWithReels(feedPosts, reels);
+
+    ref.watch(homeFeedReelEngineBinderProvider);
+    ref.watch(homeFeedReelHandoffReturnSyncProvider);
+    ref.listen<String?>(feedActiveMusicPreviewUrlProvider, (previous, next) {
+      if (next == null || next.isEmpty) {
+        unawaited(AttachedMusicPreview.instance.stop());
+      } else if (previous != next) {
+        unawaited(AttachedMusicPreview.instance.playFromStart(next));
+      }
+    });
 
     final showSkeleton = !initialFetchCompleted || (posts.isEmpty && isLoading);
     _maybeLogSkeletonMetric(showSkeleton);
@@ -358,7 +384,6 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
     }
 
     final slivers = <Widget>[
-      CupertinoSliverRefreshControl(onRefresh: _pullToRefreshFeed),
       if (offlineBanner)
         SliverToBoxAdapter(
           child: Material(
@@ -461,12 +486,16 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
         children: [
           _buildAppBar(),
           Expanded(
-            child: CustomScrollView(
-              key: const PageStorageKey<String>('home_feed_scroll'),
-              controller: _scrollController,
-              physics: const AlwaysScrollableScrollPhysics(),
-              cacheExtent: MediaQuery.sizeOf(context).height * 0.65,
-              slivers: slivers,
+            child: RefreshIndicator(
+              onRefresh: _pullToRefreshFeed,
+              child: CustomScrollView(
+                key: const PageStorageKey<String>('home_feed_scroll'),
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
+                // Keep ~2-3 screens warm to reduce image pop-in when fast scrolling.
+                cacheExtent: (MediaQuery.sizeOf(context).height * 2.2).clamp(1200.0, 2000.0),
+                slivers: slivers,
+              ),
             ),
           ),
         ],
@@ -540,6 +569,9 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
   }
 
   Widget _buildAppBar() {
+    final unreadCount = ref.watch(
+      notificationsProvider.select((s) => s.unreadCount),
+    );
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
       child: Row(
@@ -630,10 +662,43 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
             },
             child: Container(
               padding: EdgeInsets.all(6.w),
-              child: Icon(
-                Icons.notifications_outlined,
-                color: ThemeHelper.getTextPrimary(context),
-                size: 24.r,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    Icons.notifications_outlined,
+                    color: ThemeHelper.getTextPrimary(context),
+                    size: 24.r,
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      top: -4,
+                      right: -4,
+                      child: Container(
+                        constraints: BoxConstraints(minWidth: 16.w, minHeight: 16.w),
+                        padding: EdgeInsets.symmetric(horizontal: 4.w),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10.r),
+                          border: Border.all(
+                            color: ThemeHelper.getBackgroundColor(context),
+                            width: 1.2,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            unreadCount > 99 ? '99+' : '$unreadCount',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9.sp,
+                              fontWeight: FontWeight.w700,
+                              height: 1.0,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -698,7 +763,28 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
     );
   }
 
+  /// Interleave reels into the home feed (every 4 posts) for Instagram-style discovery.
+  List<PostModel> _mergeFeedWithReels(List<PostModel> posts, List<PostModel> reels) {
+    if (reels.isEmpty) return posts;
+    final merged = <PostModel>[];
+    var reelIdx = 0;
+    for (var i = 0; i < posts.length; i++) {
+      merged.add(posts[i]);
+      if ((i + 1) % 4 == 0 && reelIdx < reels.length) {
+        merged.add(reels[reelIdx++]);
+      }
+    }
+    while (reelIdx < reels.length) {
+      merged.add(reels[reelIdx++]);
+    }
+    return merged;
+  }
+
   Widget _buildPostCard(PostModel post) {
+    if (post.postType == 'reel') {
+      return HomeFeedReelTile(key: ValueKey('feed_reel_${post.id}'), reel: post);
+    }
+
     if (!post.isVideo || post.imageUrl != null) {
       return InstagramPostCard(
         key: ValueKey('feed_post_${post.id}'),
@@ -717,6 +803,10 @@ class _HomeFeedPageState extends ConsumerState<HomeFeedPage>
         channelAvatar: post.author.avatarUrl,
         authorId: post.author.id,
         blurHash: post.blurHash,
+        mediaAspectRatio: 4 / 5,
+        musicName: post.musicName,
+        musicTitle: post.musicTitle,
+        musicPreviewUrl: post.musicPreviewUrl,
         onAuthorTap: () {
           final currentUser = ref.read(currentUserProvider);
           if (currentUser?.id == post.author.id) {

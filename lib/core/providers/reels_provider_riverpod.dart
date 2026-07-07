@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,7 +7,11 @@ import '../models/post_model.dart';
 import '../../services/posts/reels_service.dart';
 import '../../services/posts/posts_service.dart';
 import 'auth_provider_riverpod.dart';
+import 'blocked_users_provider.dart';
+import 'post_views_provider.dart';
 import '../../services/storage/user_storage_service.dart';
+import '../utils/reels_logger.dart';
+import '../utils/blocked_content_filter.dart';
 
 class ReelsState {
   final List<PostModel> reels;
@@ -93,7 +99,9 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
   Future<void> loadReels() async {
     loadReelsInvocationCount++;
     if (kDebugMode) {
-      debugPrint('[ReelsNotifier] loadReels invocation #$loadReelsInvocationCount (reels=${state.reels.length})');
+      ReelsLogger.lifecycle(
+        'ReelsNotifier loadReels invocation #$loadReelsInvocationCount (reels=${state.reels.length})',
+      );
     }
     final hasCache = state.reels.isNotEmpty;
     state = state.copyWith(
@@ -114,9 +122,12 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
         return;
       }
       final currentUserId = _ref.read(authProvider).currentUser?.id;
-      final list = result.reels
-          .map((r) => PostModel.fromReel(r, currentUserId: currentUserId))
-          .toList();
+      final list = filterPostsByBlockedAuthors(
+        result.reels
+            .map((r) => PostModel.fromReel(r, currentUserId: currentUserId))
+            .toList(),
+        _ref.read(blockedUserIdsProvider),
+      );
       if (list.isEmpty && state.reels.isNotEmpty) {
         state = state.copyWith(
           isLoading: false,
@@ -129,6 +140,12 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
       for (var reel in list) {
         liked[reel.id] = reel.isLiked;
         counts[reel.id] = reel.likes;
+      }
+      final viewOverrides = _ref.read(postViewCountOverridesProvider.notifier);
+      for (final reel in list) {
+        if (reel.views > 0) {
+          viewOverrides.seedCount(reel.id, reel.views);
+        }
       }
       state = state.copyWith(
         reels: list,
@@ -231,6 +248,15 @@ class ReelsNotifier extends StateNotifier<ReelsState> {
     UserStorageService.instance.runInBackground(() async {
       await UserStorageService.instance.cacheUnseenReels(reels: updatedReels);
     });
+  }
+
+  void removeReelsByAuthor(String authorId) {
+    final id = authorId.trim();
+    if (id.isEmpty) return;
+    final filtered =
+        state.reels.where((r) => r.author.id != id).toList(growable: false);
+    if (filtered.length == state.reels.length) return;
+    state = state.copyWith(reels: filtered);
   }
 
   void seedReels(List<PostModel> reels) {

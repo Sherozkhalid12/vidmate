@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'reels_screen.dart';
+import 'reels_app_bar.dart';
 
 /// Reels tab with [AutomaticKeepAliveClientMixin] so list state survives tab switches.
 class ReelsPage extends StatefulWidget {
@@ -22,9 +23,23 @@ class _ReelsPageState extends State<ReelsPage> with AutomaticKeepAliveClientMixi
       context: context,
       removeTop: true,
       removeBottom: true,
-      child: ReelsScreen(
-        key: const PageStorageKey<String>('reels_tab_scroll'),
-        bottomPadding: widget.bottomPadding,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ReelsScreen(
+            key: const PageStorageKey<String>('reels_tab_scroll'),
+            bottomPadding: widget.bottomPadding,
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: const ReelsAppBar(),
+            ),
+          ),
+        ],
       ),
     );
   }

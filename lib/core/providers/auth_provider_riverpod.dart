@@ -9,6 +9,7 @@ import '../../services/auth/auth_service.dart';
 import '../../services/notifications/push_notifications_service.dart';
 import '../../services/storage/user_storage_service.dart';
 import '../../services/calls/livestream_service.dart';
+import 'blocked_users_provider.dart';
 
 /// Authentication state
 class AuthState {
@@ -40,8 +41,9 @@ class AuthState {
 
 /// Authentication notifier using AuthService. Riverpod only, no setState.
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier() : super(AuthState());
+  AuthNotifier(this._ref) : super(AuthState());
 
+  final Ref _ref;
   final AuthService _authService = AuthService();
 
   /// Restore session from SharedPreferences (token + user). Call from splash so
@@ -71,6 +73,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
               .timeout(const Duration(seconds: 3));
         } catch (_) {}
       }());
+      unawaited(_ref.read(blockedUserIdsProvider.notifier).syncFromServer());
     } catch (_) {
       // Invalid stored user; clear auth so user can log in again
       await _authService.clearAuth();
@@ -89,6 +92,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         currentUser: result.data!.user,
         isLoading: false,
       );
+      unawaited(_ref.read(blockedUserIdsProvider.notifier).syncFromServer());
       return true;
     }
     state = state.copyWith(
@@ -147,6 +151,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         currentUser: result.data!.user,
         isLoading: false,
       );
+      unawaited(_ref.read(blockedUserIdsProvider.notifier).syncFromServer());
       return true;
     }
     state = state.copyWith(
@@ -163,6 +168,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await UserStorageService.instance.markLoggedOut(userId: uid);
     DioClient.clearAuthToken();
     await _authService.clearAuth();
+    _ref.read(blockedUserIdsProvider.notifier).clear();
     state = state.copyWith(currentUser: null);
   }
 
@@ -190,6 +196,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         currentUser: result.data!.user,
         isLoading: false,
       );
+      unawaited(_ref.read(blockedUserIdsProvider.notifier).syncFromServer());
       return true;
     }
     state = state.copyWith(
@@ -206,7 +213,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
 /// Auth provider
 final authProvider =
-    StateNotifierProvider<AuthNotifier, AuthState>((ref) => AuthNotifier());
+    StateNotifierProvider<AuthNotifier, AuthState>((ref) => AuthNotifier(ref));
 
 /// Convenience providers
 final currentUserProvider = Provider<UserModel?>((ref) {

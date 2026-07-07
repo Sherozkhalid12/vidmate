@@ -2,9 +2,13 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:just_audio/just_audio.dart' show LoopMode;
 import 'package:video_player/video_player.dart';
 
 import '../../core/audio/attached_music_preview.dart';
+import '../../core/providers/auth_provider_riverpod.dart';
+import '../../core/providers/stories_provider_riverpod.dart';
 import '../../core/media/app_media_cache.dart';
 import '../../core/models/story_model.dart';
 import '../../core/models/user_model.dart';
@@ -13,10 +17,13 @@ import '../../core/services/mock_data_service.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/music_sticker_row.dart';
 import '../../services/reels/reel_video_prefetch.dart';
+import '../../services/stories/story_audio_preloader.dart';
+import '../../core/widgets/natural_aspect_image.dart';
+import 'story_viewers_sheet.dart';
 
 /// Vertical stories viewer (like reels) - swipe vertically between users
 /// Horizontal swipe within each user's multiple stories
-class StoriesViewerScreen extends StatefulWidget {
+class StoriesViewerScreen extends ConsumerStatefulWidget {
   final int initialUserIndex;
   final int initialStoryIndex;
   /// Pre-loaded from API; when null, falls back to mock data.
@@ -36,10 +43,11 @@ class StoriesViewerScreen extends StatefulWidget {
   });
 
   @override
-  State<StoriesViewerScreen> createState() => _StoriesViewerScreenState();
+  ConsumerState<StoriesViewerScreen> createState() => _StoriesViewerScreenState();
 }
 
-class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
+class _StoriesViewerScreenState extends ConsumerState<StoriesViewerScreen>
+    with WidgetsBindingObserver {
   late PageController _userPageController;
   late Map<int, PageController> _storyPageControllers;
   late Map<String, List<StoryModel>> _userStoriesMap;
@@ -56,6 +64,9 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   bool _firstFrameLogged = false;
   int? _metricsUserIndex;
   int _storyMusicGeneration = 0;
+  String? _activeStoryMusicUrl;
+  bool _pausedForViewsSheet = false;
+  int _storyTransitionGeneration = 0;
 
   String _preloadKey(int userHash, int storyIndex) => '${userHash}_$storyIndex';
 
@@ -133,9 +144,56 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     }
   }
 
+  void _prewarmNeighborStoryAudio(int userIndex, int storyIndex) {
+    if (userIndex < 0 || userIndex >= _users.length) return;
+    final user = _users[userIndex];
+    final stories = _userStoriesMap[user.id] ?? [];
+
+    final nextStoryIndex = storyIndex + 1;
+    if (nextStoryIndex < stories.length) {
+      final nextUrl = stories[nextStoryIndex].storyMusicPlaybackUrl;
+      if (nextUrl.isNotEmpty) {
+        unawaited(StoryAudioPreloader.instance.prewarmSingle(nextUrl));
+      }
+    }
+
+    final previousStoryIndex = storyIndex - 1;
+    if (previousStoryIndex >= 0) {
+      final previousUrl = stories[previousStoryIndex].storyMusicPlaybackUrl;
+      if (previousUrl.isNotEmpty) {
+        unawaited(StoryAudioPreloader.instance.prewarmSingle(previousUrl));
+      }
+    }
+
+    final nextUserIndex = userIndex + 1;
+    if (nextUserIndex < _users.length) {
+      final nextUser = _users[nextUserIndex];
+      final nextUserStories = _userStoriesMap[nextUser.id] ?? [];
+      if (nextUserStories.isNotEmpty) {
+        final firstUrl = nextUserStories.first.storyMusicPlaybackUrl;
+        if (firstUrl.isNotEmpty) {
+          unawaited(StoryAudioPreloader.instance.prewarmSingle(firstUrl));
+        }
+      }
+    }
+
+    final previousUserIndex = userIndex - 1;
+    if (previousUserIndex >= 0) {
+      final previousUser = _users[previousUserIndex];
+      final previousUserStories = _userStoriesMap[previousUser.id] ?? [];
+      if (previousUserStories.isNotEmpty) {
+        final firstUrl = previousUserStories.first.storyMusicPlaybackUrl;
+        if (firstUrl.isNotEmpty) {
+          unawaited(StoryAudioPreloader.instance.prewarmSingle(firstUrl));
+        }
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _viewerOpenStopwatch = Stopwatch()..start();
     _metricsUserIndex = widget.initialUserIndex;
     _initializeStories();
@@ -143,17 +201,26 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     _userPageController = PageController(initialPage: widget.initialUserIndex);
     _storyPageControllers = {};
     _initializeStoryController(_currentUserIndex);
-    _startStoryProgress(_currentUserIndex, widget.initialStoryIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_transitionToStory(
+        userIndex: widget.initialUserIndex,
+        storyIndex: widget.initialStoryIndex,
+        markPreviousComplete: false,
+      ));
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _progressTimer?.cancel();
     _userPageController.dispose();
     for (var controller in _storyPageControllers.values) {
       controller.dispose();
     }
     unawaited(AttachedMusicPreview.instance.stop());
+    unawaited(_disposeStorySegmentAudio());
     for (var userControllers in _videoControllers.values) {
       for (var controller in userControllers.values) {
         controller.dispose();
@@ -212,85 +279,128 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
     final story = stories[storyIndex];
     _currentStoryIndex[userHash] = storyIndex;
-    _storyLoaded[userHash] = false;
 
     // Initialize video if needed
     if (story.isVideo) {
       unawaited(_initializeVideo(userHash, storyIndex, story.mediaUrl));
-    } else {
-      // For images, mark as loaded after a short delay
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          setState(() {
-            _storyLoaded[userHash] = true;
-          });
-        }
-      });
     }
 
-    // Reset progress
+    // Reset progress — timer starts only after media is displayed
     setState(() {
       _storyProgress[userHash] = 0.0;
-    });
-
-    // Wait for content to load and PageView to be ready
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (!mounted) return;
-      
-      // Verify controller is ready
-      final storyController = _storyPageControllers[userHash];
-      if (storyController != null && !storyController.hasClients) {
-        // Retry after more time
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted && storyController.hasClients && _storyLoaded[userHash] != false) {
-            _animateProgress(userHash, userIndex, storyIndex);
-          }
-        });
-        return;
-      }
-
-      // Start progress only if content is loaded
-      if (_storyLoaded[userHash] != false) {
-        _animateProgress(userHash, userIndex, storyIndex);
-      } else {
-        // Wait a bit more for content to load
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) {
-            _animateProgress(userHash, userIndex, storyIndex);
-          }
-        });
-      }
+      _storyLoaded[userHash] = false;
     });
 
     _warmNextRelativeTo(userIndex, storyIndex);
-    final gen = ++_storyMusicGeneration;
-    unawaited(_scheduleStoryMusic(story, gen));
+    _prewarmNeighborStoryAudio(userIndex, storyIndex);
   }
 
-  /// Autoplay sticker preview once per segment (capped at 30s in [MusicPreviewPlayer]).
-  Future<void> _scheduleStoryMusic(StoryModel story, int generation) async {
-    await Future<void>.delayed(const Duration(milliseconds: 450));
+  Future<void> _disposeStorySegmentAudio() async {
+    final url = _activeStoryMusicUrl;
+    _activeStoryMusicUrl = null;
+    if (url == null || url.isEmpty) return;
+    await StoryAudioPreloader.instance.stopAndRewind(url);
+  }
+
+  Duration _resolveStoryDisplayDuration(
+    StoryModel story,
+    int userHash,
+    int storyIndex,
+  ) {
+    if (story.storyMusicPlaybackUrl.isNotEmpty) {
+      return const Duration(seconds: 20);
+    }
+    if (story.isVideo) {
+      final c = _videoControllers[userHash]?[storyIndex];
+      if (c != null &&
+          c.value.isInitialized &&
+          c.value.duration > Duration.zero) {
+        return c.value.duration;
+      }
+      return const Duration(seconds: 10);
+    }
+    return const Duration(seconds: 5);
+  }
+
+  void _startProgressIfStillActive({
+    required int userHash,
+    required int userIndex,
+    required int storyIndex,
+  }) {
+    if (!mounted) return;
+    if (_currentUserIndex != userIndex) return;
+    if (_currentStoryIndex[userHash] != storyIndex) return;
+    if (_storyLoaded[userHash] != true) return;
+    if (_progressTimer != null) return;
+    _animateProgress(userHash, userIndex, storyIndex);
+
+    final stories = _userStoriesMap[_users[userIndex].id] ?? [];
+    if (storyIndex >= 0 && storyIndex < stories.length) {
+      final gen = ++_storyMusicGeneration;
+      unawaited(_scheduleStoryMusic(
+        story: stories[storyIndex],
+        generation: gen,
+        userHash: userHash,
+        storyIndex: storyIndex,
+      ));
+    }
+  }
+
+  Future<void> _scheduleStoryMusic({
+    required StoryModel story,
+    required int generation,
+    required int userHash,
+    required int storyIndex,
+  }) async {
     if (!mounted || generation != _storyMusicGeneration) return;
-    final url = story.musicPreviewUrl?.trim() ?? '';
+    if (_currentUserIndex < 0 || _currentUserIndex >= _users.length) return;
+    final activeUserHash = _users[_currentUserIndex].id.hashCode;
+    if (activeUserHash != userHash) return;
+    if (_currentStoryIndex[userHash] != storyIndex) return;
+
+    final url = story.storyMusicPlaybackUrl;
+    await AttachedMusicPreview.instance.stop();
+
     if (url.isEmpty) {
-      await AttachedMusicPreview.instance.stop();
+      await _disposeStorySegmentAudio();
       return;
     }
-    await AttachedMusicPreview.instance.playFromStart(url);
+
+    await _disposeStorySegmentAudio();
+
+    final player = await StoryAudioPreloader.instance.getPlayer(url);
+    if (player == null) return;
+    _activeStoryMusicUrl = url;
+    try {
+      await player.setVolume(1);
+      await player.setLoopMode(LoopMode.one);
+      await player.play();
+    } catch (_) {
+      await _disposeStorySegmentAudio();
+    }
   }
 
   void _animateProgress(int userHash, int userIndex, int storyIndex) {
     if (!mounted) return;
-    
+
     // Cancel any existing timer
     _progressTimer?.cancel();
-    
-    // Animate progress from 0 to 1 over 8 seconds (slower, more professional)
-    const totalDuration = Duration(seconds: 8);
+
+    if (userIndex < 0 || userIndex >= _users.length) return;
+    final uid = _users[userIndex].id;
+    final stories = _userStoriesMap[uid] ?? [];
+    if (storyIndex < 0 || storyIndex >= stories.length) return;
+    final story = stories[storyIndex];
+
+    final totalDuration =
+        _resolveStoryDisplayDuration(story, userHash, storyIndex);
     const updateInterval = Duration(milliseconds: 50);
-    final totalSteps = totalDuration.inMilliseconds ~/ updateInterval.inMilliseconds;
+    final rawSteps =
+        totalDuration.inMilliseconds ~/ updateInterval.inMilliseconds;
+    final totalSteps = rawSteps < 1 ? 1 : rawSteps;
     
-    int step = 0;
+    final initialProgress = (_storyProgress[userHash] ?? 0.0).clamp(0.0, 1.0);
+    int step = (initialProgress * totalSteps).round();
     _progressTimer = Timer.periodic(updateInterval, (timer) {
       if (!mounted) {
         timer.cancel();
@@ -361,6 +471,15 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
         }
         if (mounted) {
           setState(() => _storyLoaded[userHash] = true);
+          final activeUserIndex =
+              _users.indexWhere((u) => u.id.hashCode == userHash);
+          if (activeUserIndex >= 0) {
+            _startProgressIfStillActive(
+              userHash: userHash,
+              userIndex: activeUserIndex,
+              storyIndex: storyIndex,
+            );
+          }
         }
         return;
       }
@@ -385,6 +504,14 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
         }
       }
       setState(() => _storyLoaded[userHash] = true);
+      final activeUserIndex = _users.indexWhere((u) => u.id.hashCode == userHash);
+      if (activeUserIndex >= 0) {
+        _startProgressIfStillActive(
+          userHash: userHash,
+          userIndex: activeUserIndex,
+          storyIndex: storyIndex,
+        );
+      }
       return;
     }
 
@@ -455,6 +582,14 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     setState(() {
       _storyLoaded[userHash] = true;
     });
+    final activeUserIndex = _users.indexWhere((u) => u.id.hashCode == userHash);
+    if (activeUserIndex >= 0) {
+      _startProgressIfStillActive(
+        userHash: userHash,
+        userIndex: activeUserIndex,
+        storyIndex: storyIndex,
+      );
+    }
   }
 
   void _handleVideoError(int userHash, int storyIndex) {
@@ -512,41 +647,26 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
   void _nextStory(int userIndex) {
     if (userIndex < 0 || userIndex >= _users.length) return;
     if (!mounted) return;
-    
-    // Cancel any progress timer
-    _progressTimer?.cancel();
-    _progressTimer = null;
-    
+
     final user = _users[userIndex];
     final userHash = user.id.hashCode;
     final stories = _userStoriesMap[user.id] ?? [];
     final currentStoryIdx = _currentStoryIndex[userHash] ?? 0;
 
-    // Pause current video
-    _pauseCurrentVideo(userHash, currentStoryIdx);
-
     if (currentStoryIdx < stories.length - 1) {
-      // Next story in same user
-      final nextStoryIdx = currentStoryIdx + 1;
-      final storyController = _storyPageControllers[userHash];
-      if (storyController != null && storyController.hasClients) {
-        storyController.nextPage(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-        _startStoryProgress(userIndex, nextStoryIdx);
-      }
+      unawaited(_transitionToStory(
+        userIndex: userIndex,
+        storyIndex: currentStoryIdx + 1,
+        markPreviousComplete: true,
+      ));
     } else {
-      // Move to next user
       if (userIndex < _users.length - 1) {
-        if (_userPageController.hasClients) {
-          _userPageController.nextPage(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
-        }
+        unawaited(_transitionToStory(
+          userIndex: userIndex + 1,
+          storyIndex: 0,
+          markPreviousComplete: true,
+        ));
       } else {
-        // Last story of last user - close viewer immediately
         _closeViewer();
       }
     }
@@ -559,6 +679,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     _progressTimer?.cancel();
     _progressTimer = null;
     unawaited(AttachedMusicPreview.instance.stop());
+    unawaited(_disposeStorySegmentAudio());
 
     // Pause all videos
     for (var userControllers in _videoControllers.values) {
@@ -572,7 +693,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
         }
       }
     }
-    
+
     // Use post frame callback to ensure navigation happens after current frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && Navigator.canPop(context)) {
@@ -583,39 +704,190 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
   void _previousStory(int userIndex) {
     if (userIndex < 0 || userIndex >= _users.length) return;
-    
+
     final user = _users[userIndex];
     final userHash = user.id.hashCode;
     final currentStoryIdx = _currentStoryIndex[userHash] ?? 0;
 
-    // Pause current video
-    _pauseCurrentVideo(userHash, currentStoryIdx);
-
     if (currentStoryIdx > 0) {
-      // Previous story in same user
-      final prevStoryIdx = currentStoryIdx - 1;
-      final storyController = _storyPageControllers[userHash];
-      if (storyController != null && storyController.hasClients) {
-        storyController.previousPage(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-        _startStoryProgress(userIndex, prevStoryIdx);
-      }
+      unawaited(_transitionToStory(
+        userIndex: userIndex,
+        storyIndex: currentStoryIdx - 1,
+        markPreviousComplete: false,
+      ));
+    } else {
+      if (userIndex > 0) {
+        final previousUserStories = _userStoriesMap[_users[userIndex - 1].id] ?? [];
+        final previousStoryIndex = previousUserStories.isEmpty
+            ? 0
+            : previousUserStories.length - 1;
+        unawaited(_transitionToStory(
+          userIndex: userIndex - 1,
+          storyIndex: previousStoryIndex,
+          markPreviousComplete: false,
+        ));
       } else {
-        // Move to previous user
-        if (userIndex > 0) {
-          if (_userPageController.hasClients) {
-            _userPageController.previousPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          }
-        } else {
-          // First story of first user - close viewer
-          _closeViewer();
-        }
+        _closeViewer();
       }
+    }
+  }
+
+  Future<void> _transitionToStory({
+    required int userIndex,
+    required int storyIndex,
+    required bool markPreviousComplete,
+  }) async {
+    if (!mounted) return;
+    if (userIndex < 0 || userIndex >= _users.length) return;
+    final targetUser = _users[userIndex];
+    final targetStories = _userStoriesMap[targetUser.id] ?? [];
+    if (targetStories.isEmpty) return;
+    if (storyIndex < 0 || storyIndex >= targetStories.length) return;
+
+    final previousUser = _users[_currentUserIndex];
+    final previousUserIndex = _currentUserIndex;
+    final isCrossUser = previousUserIndex != userIndex;
+    final previousUserHash = previousUser.id.hashCode;
+    final previousStoryIndex = _currentStoryIndex[previousUserHash] ?? 0;
+
+    final transitionGen = ++_storyTransitionGeneration;
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    _pauseCurrentVideo(previousUserHash, previousStoryIndex);
+
+    await AttachedMusicPreview.instance.stop();
+    await _disposeStorySegmentAudio();
+    if (!mounted || transitionGen != _storyTransitionGeneration) return;
+
+    if (markPreviousComplete && userIndex == _currentUserIndex) {
+      _storyProgress[previousUserHash] = 1.0;
+    }
+
+    setState(() {
+      _currentUserIndex = userIndex;
+      _currentStoryIndex[targetUser.id.hashCode] = storyIndex;
+      _storyLoaded[targetUser.id.hashCode] = false;
+      _storyProgress[targetUser.id.hashCode] = 0.0;
+    });
+
+    _initializeStoryController(userIndex);
+    final targetUserHash = targetUser.id.hashCode;
+    final storyController = _storyPageControllers[targetUserHash];
+    if (storyController != null && storyController.hasClients) {
+      storyController.animateToPage(
+        storyIndex,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeInOut,
+      );
+    }
+    if (_userPageController.hasClients && isCrossUser) {
+      _userPageController.animateToPage(
+        userIndex,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
+    }
+
+    _warmNextRelativeTo(userIndex, storyIndex);
+    _prewarmNeighborStoryAudio(userIndex, storyIndex);
+    _startStoryProgress(userIndex, storyIndex);
+    if (!mounted || transitionGen != _storyTransitionGeneration) return;
+
+    final targetStory = targetStories[storyIndex];
+    final parentId = targetStory.parentStoryId.isNotEmpty
+        ? targetStory.parentStoryId
+        : targetStory.id.split('_').first;
+    unawaited(ref.read(storiesProvider.notifier).markStoryViewed(parentId));
+  }
+
+  void _pauseStoryForViewsSheet() {
+    if (_pausedForViewsSheet) return;
+    _pausedForViewsSheet = true;
+
+    _progressTimer?.cancel();
+    _progressTimer = null;
+
+    if (_currentUserIndex >= 0 && _currentUserIndex < _users.length) {
+      final userHash = _users[_currentUserIndex].id.hashCode;
+      final storyIndex = _currentStoryIndex[userHash] ?? 0;
+      _pauseCurrentVideo(userHash, storyIndex);
+    }
+
+    unawaited(StoryAudioPreloader.instance.pauseAll());
+  }
+
+  void _resumeStoryAfterViewsSheet() {
+    if (!_pausedForViewsSheet) return;
+    _pausedForViewsSheet = false;
+
+    if (_currentUserIndex < 0 || _currentUserIndex >= _users.length) return;
+    final userHash = _users[_currentUserIndex].id.hashCode;
+    final storyIndex = _currentStoryIndex[userHash] ?? 0;
+    final stories = _userStoriesMap[_users[_currentUserIndex].id] ?? [];
+    if (storyIndex >= stories.length) return;
+
+    final story = stories[storyIndex];
+    if (story.isVideo) {
+      final video = _videoControllers[userHash]?[storyIndex];
+      if (video != null &&
+          video.value.isInitialized &&
+          !video.value.isPlaying) {
+        unawaited(video.play());
+      }
+    }
+
+    if (_activeStoryMusicUrl != null) {
+      unawaited(
+        StoryAudioPreloader.instance.resumePlayer(_activeStoryMusicUrl!),
+      );
+    }
+
+    _startProgressIfStillActive(
+      userHash: userHash,
+      userIndex: _currentUserIndex,
+      storyIndex: storyIndex,
+    );
+  }
+
+  Future<void> _openStoryViewersSheet(StoryModel story) async {
+    _pauseStoryForViewsSheet();
+    await showStoryViewersSheet(context, story);
+    if (mounted) _resumeStoryAfterViewsSheet();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
+    if (_users.isEmpty) return;
+    if (_currentUserIndex < 0 || _currentUserIndex >= _users.length) return;
+    final currentUser = _users[_currentUserIndex];
+    final userHash = currentUser.id.hashCode;
+    final storyIndex = _currentStoryIndex[userHash] ?? 0;
+
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _progressTimer?.cancel();
+      _progressTimer = null;
+      _pauseCurrentVideo(userHash, storyIndex);
+      unawaited(StoryAudioPreloader.instance.pauseAll());
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      final progress = (_storyProgress[userHash] ?? 0.0).clamp(0.0, 1.0);
+      if (progress > 0.0 && progress < 1.0 && _progressTimer == null) {
+        _animateProgress(userHash, _currentUserIndex, storyIndex);
+      }
+      final video = _videoControllers[userHash]?[storyIndex];
+      if (video != null &&
+          video.value.isInitialized &&
+          !video.value.isPlaying) {
+        unawaited(video.play());
+      }
+      if (_activeStoryMusicUrl != null) {
+        unawaited(StoryAudioPreloader.instance.resumePlayer(_activeStoryMusicUrl!));
+      }
+    }
   }
 
   void _pauseCurrentVideo(int userHash, int storyIndex) {
@@ -627,6 +899,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
 
   void _onUserPageChanged(int index) {
     if (index < 0 || index >= _users.length) return;
+    if (index == _currentUserIndex) return;
 
     if (_metricsUserIndex != null && _metricsUserIndex != index) {
       final user = _users[index];
@@ -661,32 +934,19 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
       }
     }
     
-    setState(() {
-      _currentUserIndex = index;
-    });
-    _initializeStoryController(index);
     final user = _users[index];
     final userHash = user.id.hashCode;
     final storyIndex = _currentStoryIndex[userHash] ?? 0;
-    
-    // Reset progress, loading state, and errors
-    setState(() {
-      _storyProgress[userHash] = 0.0;
-      _storyLoaded[userHash] = false;
-      // Clear errors for this user's stories
-      _videoErrors.removeWhere((key, _) => key.startsWith('${userHash}_'));
-    });
-    
-    // Wait for PageView to be built before starting progress
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        _startStoryProgress(index, storyIndex);
-      }
-    });
+    unawaited(_transitionToStory(
+      userIndex: index,
+      storyIndex: storyIndex,
+      markPreviousComplete: false,
+    ));
   }
 
   void _onStoryPageChanged(int userIndex, int storyIndex) {
     if (userIndex < 0 || userIndex >= _users.length) return;
+    if (userIndex != _currentUserIndex) return;
 
     final user = _users[userIndex];
     final userHash = user.id.hashCode;
@@ -700,9 +960,7 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
       }
     }
 
-    // Cancel previous progress timer
-    _progressTimer?.cancel();
-    _progressTimer = null;
+    if (previousStoryIdx == storyIndex && userIndex == _currentUserIndex) return;
     
     // Pause ALL videos for this user (not just previous) - YouTube/Instagram style
     if (_videoControllers.containsKey(userHash)) {
@@ -724,19 +982,11 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     // Also pause previous story explicitly
     _pauseCurrentVideo(userHash, previousStoryIdx);
     
-    // Update current story index
-    _currentStoryIndex[userHash] = storyIndex;
-    
-    // Reset progress, loading state, and errors
-    setState(() {
-      _storyProgress[userHash] = 0.0;
-      _storyLoaded[userHash] = false;
-      // Clear errors for this user's stories
-      _videoErrors.removeWhere((key, _) => key.startsWith('${userHash}_'));
-    });
-    
-    // Start progress for new story
-    _startStoryProgress(userIndex, storyIndex);
+    unawaited(_transitionToStory(
+      userIndex: userIndex,
+      storyIndex: storyIndex,
+      markPreviousComplete: storyIndex > previousStoryIdx,
+    ));
   }
 
   @override
@@ -843,15 +1093,25 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                           ),
                           child: Stack(
                             children: [
-                              if (index == currentStoryIdx)
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 100),
-                                  width: MediaQuery.of(context).size.width *
-                                      (_storyProgress[userHash] ?? 0.0) /
-                                      stories.length,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(2),
+                              if (index < currentStoryIdx)
+                                Positioned.fill(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                )
+                              else if (index == currentStoryIdx)
+                                FractionallySizedBox(
+                                  widthFactor: (_storyProgress[userHash] ?? 0.0)
+                                      .clamp(0.0, 1.0),
+                                  alignment: Alignment.centerLeft,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
                                   ),
                                 ),
                             ],
@@ -866,17 +1126,26 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundImage: user.avatarUrl.isNotEmpty
-                            ? CachedNetworkImageProvider(
-                                user.avatarUrl,
-                                cacheManager: AppMediaCache.feedMedia,
-                              )
-                            : null,
-                        backgroundColor: Colors.grey,
-                        onBackgroundImageError: (exception, stackTrace) {
-                          // Error will show backgroundColor
+                      Builder(
+                        builder: (context) {
+                          final avatarProvider = user.avatarUrl.isNotEmpty
+                              ? CachedNetworkImageProvider(
+                                  user.avatarUrl,
+                                  cacheManager: AppMediaCache.feedMedia,
+                                )
+                              : null;
+                          return CircleAvatar(
+                            radius: 20,
+                            backgroundImage: avatarProvider,
+                            backgroundColor: ThemeHelper.getSurfaceColor(context),
+                            child: avatarProvider == null
+                                ? Icon(
+                                    Icons.person,
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    size: 22,
+                                  )
+                                : null,
+                          );
                         },
                       ),
                       const SizedBox(width: 12),
@@ -929,6 +1198,55 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     );
   }
 
+  Widget _buildStoryViewsChip(StoryModel story) {
+    var latest = story;
+    final latestList =
+        ref.read(storiesProvider).userStoriesMap[story.author.id];
+    if (latestList != null) {
+      for (final s in latestList) {
+        if (s.id == story.id) {
+          latest = s;
+          break;
+        }
+      }
+    }
+    final count =
+        latest.viewCount > 0 ? latest.viewCount : latest.viewers.length;
+
+    return GestureDetector(
+      onTap: () => unawaited(_openStoryViewersSheet(latest)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.visibility_outlined,
+              color: Colors.white,
+              size: 18,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$count',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildStoryContent(StoryModel story, int userHash, int storyIndex) {
     final isCurrentStory = _currentStoryIndex[userHash] == storyIndex;
     final videoController = _videoControllers[userHash]?[storyIndex];
@@ -936,11 +1254,19 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     final errorKey = '${userHash}_$storyIndex';
     final hasVideoError = _videoErrors[errorKey] ?? false;
     final hasTags = story.locations.isNotEmpty || story.taggedUsers.isNotEmpty;
+    final hasCaption = story.caption.trim().isNotEmpty;
     final hasMusicSticker = (story.musicName != null &&
             story.musicName!.trim().isNotEmpty &&
             story.musicTitle != null &&
             story.musicTitle!.trim().isNotEmpty) ||
-        (story.musicPreviewUrl != null && story.musicPreviewUrl!.trim().isNotEmpty);
+        story.storyMusicPlaybackUrl.isNotEmpty;
+    final currentUserId = ref.watch(currentUserProvider)?.id ?? '';
+    final isOwnStory =
+        currentUserId.isNotEmpty && currentUserId == story.author.id;
+    final showViewsChip = isOwnStory && isCurrentStory;
+    final bottomOverlayH = (hasCaption || hasMusicSticker || showViewsChip)
+        ? MediaQuery.sizeOf(context).height * 0.2
+        : 0.0;
 
     return Container(
       width: double.infinity,
@@ -953,27 +1279,100 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
               ? (hasVideoError || videoController == null)
                   ? _buildVideoErrorFallback(story)
                   : _buildVideoStory(videoController, isCurrentStory, isLoaded)
-              : _buildImageStory(story, isLoaded),
-          if (hasMusicSticker)
-            Positioned(
-              bottom: hasTags ? 88 : 24,
-              left: 12,
-              right: 12,
-              child: MusicStickerRow(
-                previewUrl: story.musicPreviewUrl,
-                musicName: story.musicName,
-                musicTitle: story.musicTitle,
-                textColor: ThemeHelper.getTextPrimary(context).withValues(alpha: 0.92),
-                iconColor: ThemeHelper.getTextMuted(context).withValues(alpha: 0.95),
-                playButtonColor: Colors.white,
-              ),
-            ),
+              : _buildImageStory(
+                  story,
+                  isLoaded,
+                  userHash: userHash,
+                  storyIndex: storyIndex,
+                ),
           if (hasTags)
             Positioned(
-              bottom: 24,
+              bottom: bottomOverlayH > 0 ? bottomOverlayH + 8 : 24,
               left: 12,
               right: 12,
               child: _buildStoryChips(story),
+            ),
+          if (hasCaption || hasMusicSticker || showViewsChip)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: bottomOverlayH,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.8),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  12 + MediaQuery.paddingOf(context).bottom,
+                ),
+                alignment: Alignment.bottomLeft,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (hasMusicSticker || showViewsChip)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (hasMusicSticker)
+                            Expanded(
+                              child: MusicStickerRow(
+                                previewUrl:
+                                    story.storyMusicPlaybackUrl.isNotEmpty
+                                        ? story.storyMusicPlaybackUrl
+                                        : null,
+                                musicName: story.musicName,
+                                musicTitle: story.musicTitle,
+                                useMusicNoteLeadingForPreview: true,
+                                textColor: Colors.white,
+                                iconColor:
+                                    Colors.white.withValues(alpha: 0.85),
+                                playButtonColor: Colors.white,
+                              ),
+                            )
+                          else
+                            const Spacer(),
+                          if (showViewsChip) ...[
+                            if (hasMusicSticker) const SizedBox(width: 10),
+                            _buildStoryViewsChip(story),
+                          ],
+                        ],
+                      ),
+                    if ((hasMusicSticker || showViewsChip) && hasCaption)
+                      const SizedBox(height: 8),
+                    if (hasCaption)
+                      Text(
+                        story.caption.trim(),
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.left,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          height: 1.35,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              blurRadius: 4,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
         ],
       ),
@@ -1149,7 +1548,12 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
     );
   }
 
-  Widget _buildImageStory(StoryModel story, bool isLoaded) {
+  Widget _buildImageStory(
+    StoryModel story,
+    bool isLoaded, {
+    required int userHash,
+    required int storyIndex,
+  }) {
     return Stack(
       children: [
         story.mediaUrl.isEmpty
@@ -1180,52 +1584,39 @@ class _StoriesViewerScreenState extends State<StoriesViewerScreen> {
                 builder: (context, constraints) {
                   final w = constraints.maxWidth;
                   final h = constraints.maxHeight;
-                  return CachedNetworkImage(
-                    imageUrl: story.mediaUrl,
-                    fit: BoxFit.contain,
+                  final localPath = ref
+                      .watch(storiesProvider)
+                      .storyLocalMediaPaths[story.mediaUrl];
+                  return SizedBox(
                     width: w,
                     height: h,
-                    cacheManager: AppMediaCache.feedMedia,
-                    fadeInDuration: Duration.zero,
-                    fadeOutDuration: Duration.zero,
-                    imageBuilder: (context, imageProvider) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted) _logFirstFrameOnce();
-                      });
-                      return Center(
-                        child: Image(
-                          image: imageProvider,
-                          fit: BoxFit.contain,
-                          width: w,
-                          height: h,
-                        ),
-                      );
-                    },
-                    placeholder: (context, url) =>
-                        _fullBleedMediaPlaceholder(context),
-                    errorWidget: (context, url, error) => Container(
+                    child: ColoredBox(
                       color: Colors.black,
                       child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.image_not_supported_outlined,
-                              color: Colors.white.withValues(alpha: 0.75),
-                              size: 48,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              widget.offline
-                                  ? 'Unavailable offline'
-                                  : 'Failed to load',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.9),
-                                fontSize: 14,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
+                        child: StoryMediaImage(
+                          imageUrl: story.mediaUrl,
+                          localFilePath: localPath,
+                          fit: BoxFit.contain,
+                          onDisplayed: () {
+                            if (!mounted) return;
+                            if (_currentStoryIndex[userHash] != storyIndex) {
+                              return;
+                            }
+                            if (_storyLoaded[userHash] == true) return;
+                            setState(() {
+                              _storyLoaded[userHash] = true;
+                            });
+                            final activeUserIndex = _users
+                                .indexWhere((u) => u.id.hashCode == userHash);
+                            if (activeUserIndex >= 0) {
+                              _startProgressIfStillActive(
+                                userHash: userHash,
+                                userIndex: activeUserIndex,
+                                storyIndex: storyIndex,
+                              );
+                            }
+                            _logFirstFrameOnce();
+                          },
                         ),
                       ),
                     ),

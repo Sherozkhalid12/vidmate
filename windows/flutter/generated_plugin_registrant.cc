@@ -14,7 +14,6 @@
 #include <flutter_inappwebview_windows/flutter_inappwebview_windows_plugin_c_api.h>
 #include <iris_method_channel/iris_method_channel_plugin_c_api.h>
 #include <permission_handler_windows/permission_handler_windows_plugin.h>
-#include <pro_video_editor/pro_video_editor_plugin_c_api.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
   AgoraRtcEnginePluginRegisterWithRegistrar(
@@ -33,6 +32,4 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("IrisMethodChannelPluginCApi"));
   PermissionHandlerWindowsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("PermissionHandlerWindowsPlugin"));
-  ProVideoEditorPluginCApiRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("ProVideoEditorPluginCApi"));
 }

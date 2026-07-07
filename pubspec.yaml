@@ -23,9 +23,6 @@ dependencies:
   better_player:
     path: third_party/better_player
 
-  # Reel editing
-  pro_video_editor: ^0.2.3
-
   # FFmpeg — kept because it is actively used.
   # NOTE: This package significantly increases build time and can
   # cause Gradle JVM OOM on Windows. Keep gradle.properties
@@ -35,6 +32,7 @@ dependencies:
   # Audio playback
   audioplayers: ^6.1.0
   just_audio: ^0.9.46
+  audio_session: ^0.1.25
 
   # UI / Animations
   animations: ^2.0.11
@@ -42,7 +40,6 @@ dependencies:
   cached_network_image: ^3.3.1
   flutter_cache_manager: ^3.4.1
   shimmer: ^3.0.0
-  video_thumbnail: ^0.5.3
   connectivity_plus: ^6.0.5
   blurhash_dart: ^1.2.1
   flutter_staggered_animations: ^1.1.1
@@ -76,6 +73,7 @@ dependencies:
 
   # Video compression
   video_compress: ^3.1.2
+  video_thumbnail: ^0.5.6
 
   # Permissions
   permission_handler: ^11.1.0
@@ -83,6 +81,7 @@ dependencies:
   # Networking
   http: ^1.2.0
   dio: ^5.4.0
+  webview_flutter: ^4.10.0
 
   # Realtime
   socket_io_client: ^2.0.3+1

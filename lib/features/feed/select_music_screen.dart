@@ -3,71 +3,88 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import '../../core/audio/music_preview_player.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/music_model.dart';
+import '../../core/providers/music_picker_preview_provider_riverpod.dart';
 import '../../core/utils/preview_url_expiry.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/widgets/glass_card.dart';
 import '../../services/music/music_library_cache_service.dart';
 import '../../services/music/music_service.dart';
 
-/// Picker for story/post/reel music: Deezer playlists and track `previewUrl`.
-class SelectMusicScreen extends StatefulWidget {
+/// Picker for story/post/reel music: Jamendo trending, search, and `previewUrl`.
+class SelectMusicScreen extends ConsumerStatefulWidget {
   const SelectMusicScreen({super.key});
 
   @override
-  State<SelectMusicScreen> createState() => _SelectMusicScreenState();
+  ConsumerState<SelectMusicScreen> createState() => _SelectMusicScreenState();
 }
 
-class _SelectMusicScreenState extends State<SelectMusicScreen> {
+class _SelectMusicScreenState extends ConsumerState<SelectMusicScreen> {
   final TextEditingController _searchController = TextEditingController();
   final MusicService _musicService = MusicService();
-  late final MusicPreviewPlayer _preview;
 
   String _searchQuery = '';
+  Timer? _searchDebounce;
   bool _loading = true;
-  bool _loadingPlaylist = false;
+  bool _loadingSearch = false;
   String? _error;
-  List<DeezerPlaylistSummary> _playlists = const [];
-  List<MusicModel> _tracks = const [];
-  String? _activePlaylistId;
-
-  int? _playingIndexInFiltered;
+  List<MusicModel> _trendingTracks = const [];
+  List<MusicModel> _searchResults = const [];
 
   @override
   void initState() {
     super.initState();
-    _preview = MusicPreviewPlayer(
-      onIsPlayingChanged: (playing) {
-        if (!mounted) return;
-        setState(() {
-          if (!playing) _playingIndexInFiltered = null;
-        });
-      },
-    );
     unawaited(_bootstrapScreen());
+  }
+
+  void _prefetchPreviewUrls(Iterable<MusicModel> tracks) {
+    for (final track in tracks.take(10)) {
+      final url = track.audioUrl.trim();
+      if (url.isNotEmpty && !isPreviewUrlExpired(url)) continue;
+      unawaited(_refreshTrackPreviewUrl(track));
+    }
+  }
+
+  Future<void> _refreshTrackPreviewUrl(MusicModel track) async {
+    final fresh = await _musicService.fetchJamendoTrack(track.id);
+    if (!mounted || fresh == null) return;
+    final merged = fresh.copyWith(isLiked: track.isLiked);
+    final url = merged.audioUrl.trim();
+    if (url.isEmpty) return;
+
+    setState(() {
+      final isSearch = _searchQuery.trim().isNotEmpty;
+      if (isSearch) {
+        _searchResults = _searchResults
+            .map((t) => t.id == track.id ? merged : t)
+            .toList();
+      } else {
+        _trendingTracks = _trendingTracks
+            .map((t) => t.id == track.id ? merged : t)
+            .toList();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
-    unawaited(_preview.dispose());
+    unawaited(ref.read(musicPickerPreviewProvider.notifier).stop());
     super.dispose();
   }
 
   Future<void> _bootstrapScreen() async {
     final cached = await MusicLibraryCacheService.instance.readBrowseCache();
     if (!mounted) return;
-    if (cached != null &&
-        (cached.songs.isNotEmpty || cached.playlists.isNotEmpty)) {
+    if (cached != null && cached.songs.isNotEmpty) {
       setState(() {
-        _playlists = cached.playlists;
-        _tracks = cached.songs;
-        _activePlaylistId = cached.activePlaylistId ??
-            (cached.playlists.isNotEmpty ? cached.playlists.first.id : null);
+        _trendingTracks = List<MusicModel>.from(cached.songs);
         _loading = false;
         _error = null;
       });
+      _prefetchPreviewUrls(_trendingTracks);
     } else {
       setState(() {
         _loading = true;
@@ -92,94 +109,103 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
         await MusicLibraryCacheService.instance.syncBrowseFromNetwork();
     if (!mounted) return;
     final snap = await MusicLibraryCacheService.instance.readBrowseCache();
-    if (snap == null ||
-        (snap.songs.isEmpty && snap.playlists.isEmpty)) {
+    if (snap == null || snap.songs.isEmpty) {
       setState(() {
         _loading = false;
         if (!ok) {
           _error = 'Could not load music';
-          _tracks = const [];
-          _playlists = const [];
+          _trendingTracks = const [];
         }
       });
       return;
     }
     setState(() {
       _loading = false;
-      _playlists = snap.playlists;
-      _tracks = snap.songs;
-      _activePlaylistId = snap.activePlaylistId ??
-          (snap.playlists.isNotEmpty ? snap.playlists.first.id : null);
+      _trendingTracks = List<MusicModel>.from(snap.songs);
       _error = ok ? null : 'Could not refresh; showing saved music.';
     });
+    _prefetchPreviewUrls(_trendingTracks);
   }
 
-  Future<void> _onSelectPlaylist(String playlistId) async {
-    if (playlistId == _activePlaylistId && !_loadingPlaylist) return;
-    await _preview.stop();
-    if (!mounted) return;
-    setState(() {
-      _activePlaylistId = playlistId;
-      _loadingPlaylist = true;
-      _playingIndexInFiltered = null;
-    });
-    final result = await _musicService.fetchDeezerPlaylistSongs(
-      playlistId,
-      limit: 40,
-    );
-    if (!mounted) return;
-    setState(() {
-      _loadingPlaylist = false;
+  List<MusicModel> get _visibleTracks {
+    final q = _searchQuery.trim();
+    if (q.isEmpty) return _trendingTracks;
+    return _searchResults;
+  }
+
+  void _onSearchTextChanged(String value) {
+    setState(() => _searchQuery = value);
+    _searchDebounce?.cancel();
+    final q = value.trim();
+    if (q.isEmpty) {
+      setState(() {
+        _loadingSearch = false;
+        _searchResults = const [];
+      });
+      return;
+    }
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted) return;
+      setState(() {
+        _loadingSearch = true;
+        _error = null;
+      });
+      final result = await _musicService.fetchJamendoSearch(query: q, limit: 20);
+      if (!mounted) return;
+      setState(() {
+        _loadingSearch = false;
+        if (result.success) {
+          _searchResults = result.tracks;
+        } else {
+          _error = result.errorMessage;
+          _searchResults = const [];
+        }
+      });
       if (result.success) {
-        _tracks = MusicLibraryCacheService.instance.mergeSongsByPreviewExpiry(
-          stored: _tracks,
-          fresh: result.tracks,
-        );
-      } else {
-        _error = result.errorMessage;
+        _prefetchPreviewUrls(_searchResults);
       }
     });
   }
 
-  List<MusicModel> _filteredTracks(List<MusicModel> source) {
-    if (_searchQuery.isEmpty) return source;
-    final q = _searchQuery.toLowerCase();
-    return source
-        .where(
-          (t) =>
-              t.title.toLowerCase().contains(q) ||
-              t.artist.toLowerCase().contains(q) ||
-              t.album.toLowerCase().contains(q),
-        )
-        .toList();
-  }
-
   Future<MusicModel?> _freshTrackIfPreviewExpired(MusicModel track) async {
-    if (track.audioUrl.trim().isEmpty || !isPreviewUrlExpired(track.audioUrl)) {
+    final url = track.audioUrl.trim();
+    if (url.isNotEmpty && !isPreviewUrlExpired(url)) {
       return track;
     }
-    final pid = _activePlaylistId;
-    if (pid == null || pid.isEmpty) return track;
-    final result = await _musicService.fetchDeezerPlaylistSongs(
-      pid,
-      limit: 40,
-    );
-    if (!mounted || !result.success) return track;
-    final merged = MusicLibraryCacheService.instance.mergeSongsByPreviewExpiry(
-      stored: _tracks,
-      fresh: result.tracks,
-    );
-    final idx = merged.indexWhere((t) => t.id == track.id);
-    if (idx < 0) return track;
-    setState(() => _tracks = merged);
-    return merged[idx];
+    final fresh = await _musicService.fetchJamendoTrack(track.id);
+    if (!mounted || fresh == null) return track;
+    final merged = fresh.copyWith(isLiked: track.isLiked);
+    final isServerSearch = _searchQuery.trim().isNotEmpty;
+    setState(() {
+      if (isServerSearch) {
+        _searchResults = _searchResults
+            .map((t) => t.id == track.id ? merged : t)
+            .toList();
+      } else {
+        _trendingTracks = _trendingTracks
+            .map((t) => t.id == track.id ? merged : t)
+            .toList();
+      }
+    });
+    return merged;
   }
 
-  Future<void> _togglePlay(MusicModel track, int filteredIndex) async {
+  Future<void> _togglePlay(MusicModel track) async {
+    final cachedUrl = track.audioUrl.trim();
+    final preview = ref.read(musicPickerPreviewProvider.notifier);
+
+    if (cachedUrl.isNotEmpty && !isPreviewUrlExpired(cachedUrl)) {
+      unawaited(preview.toggle(cachedUrl));
+      return;
+    }
+
+    preview.markLoading(cachedUrl.isNotEmpty ? cachedUrl : track.id);
+
     final resolved = await _freshTrackIfPreviewExpired(track);
     if (!mounted) return;
     final url = (resolved ?? track).audioUrl.trim();
     if (url.isEmpty) {
+      await preview.stop();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -193,12 +219,12 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
       }
       return;
     }
-    await _preview.toggle(url);
-    if (!mounted) return;
-    setState(() {
-      _playingIndexInFiltered =
-          _preview.isPlaying ? filteredIndex : null;
-    });
+    unawaited(preview.toggle(url));
+  }
+
+  Future<void> _exitScreen() async {
+    await ref.read(musicPickerPreviewProvider.notifier).stop();
+    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _selectTrack(MusicModel track) async {
@@ -206,7 +232,8 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
     if (!mounted) return;
     final effective = resolved ?? track;
     final url = effective.audioUrl.trim();
-    unawaited(_preview.stop());
+    await ref.read(musicPickerPreviewProvider.notifier).stop();
+    if (!mounted) return;
     final musicName = effective.title.trim();
     final musicTitle = effective.artist.trim();
     Navigator.pop(context, {
@@ -214,7 +241,6 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
       'previewUrl': url,
       'musicName': musicName,
       'musicTitle': musicTitle,
-      // Backward compatibility for callers still reading these keys:
       'name': musicName.isNotEmpty && musicTitle.isNotEmpty
           ? '$musicName — $musicTitle'
           : (musicName.isNotEmpty ? musicName : musicTitle),
@@ -224,9 +250,14 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredTracks = _filteredTracks(_tracks);
+    final filteredTracks = _visibleTracks;
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_exitScreen());
+      },
+      child: Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
         decoration: BoxDecoration(
@@ -238,7 +269,7 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
             children: [
               _buildAppBar(),
               _buildSearchBar(),
-              _buildPlaylistStrip(),
+              _buildSectionHeader(),
               if (_error != null && !_loading)
                 Padding(
                   padding:
@@ -279,7 +310,9 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
                         ),
                       );
                     }
-                    if (_loadingPlaylist && filteredTracks.isEmpty) {
+                    if (_loadingSearch &&
+                        _searchQuery.trim().isNotEmpty &&
+                        filteredTracks.isEmpty) {
                       return Center(
                         child: CupertinoActivityIndicator(
                           color: ThemeHelper.getAccentColor(context),
@@ -302,7 +335,7 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
                             );
                           },
                         ),
-                        if (_loadingPlaylist)
+                        if (_loadingSearch && _searchQuery.trim().isNotEmpty)
                           Positioned(
                             top: 0,
                             left: 0,
@@ -323,6 +356,7 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
           ),
         ),
       ),
+      ),
     );
   }
 
@@ -337,7 +371,7 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
               color: ThemeHelper.getTextPrimary(context),
               size: 22,
             ),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => unawaited(_exitScreen()),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -374,14 +408,14 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
         ),
         child: TextField(
           controller: _searchController,
-          onChanged: (v) => setState(() => _searchQuery = v),
+          onChanged: _onSearchTextChanged,
           style: TextStyle(
             color: ThemeHelper.getTextPrimary(context),
             fontSize: 16,
             fontWeight: FontWeight.w500,
           ),
           decoration: InputDecoration(
-            hintText: 'Search songs, artists, albums…',
+            hintText: 'Search songs…',
             hintStyle: TextStyle(color: ThemeHelper.getTextMuted(context)),
             prefixIcon: Icon(
               CupertinoIcons.search,
@@ -391,9 +425,12 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
             suffixIcon: _searchQuery.isNotEmpty
                 ? GestureDetector(
                     onTap: () {
+                      _searchDebounce?.cancel();
                       setState(() {
                         _searchQuery = '';
                         _searchController.clear();
+                        _searchResults = const [];
+                        _loadingSearch = false;
                       });
                     },
                     child: Icon(
@@ -412,86 +449,23 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
     );
   }
 
-  Widget _buildPlaylistStrip() {
-    if (_playlists.isEmpty) {
-      return const SizedBox(height: 8);
-    }
-    return SizedBox(
-      height: 100,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-        itemCount: _playlists.length,
-        itemBuilder: (context, index) {
-          final p = _playlists[index];
-          final selected = p.id == _activePlaylistId;
-          return Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: GestureDetector(
-              onTap: () => unawaited(_onSelectPlaylist(p.id)),
-              child: Container(
-                width: 132,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  color: ThemeHelper.getSurfaceColor(context),
-                  border: Border.all(
-                    color: selected
-                        ? ThemeHelper.getAccentColor(context)
-                        : ThemeHelper.getBorderColor(context),
-                    width: selected ? 2 : 1,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(12),
-                        ),
-                        child: p.picture.isNotEmpty
-                            ? CachedNetworkImage(
-                                imageUrl: p.picture,
-                                fit: BoxFit.cover,
-                                errorWidget: (_, __, ___) => ColoredBox(
-                                  color: ThemeHelper.getSecondaryBackgroundColor(
-                                      context),
-                                  child: Icon(
-                                    Icons.queue_music_rounded,
-                                    color: ThemeHelper.getTextMuted(context),
-                                  ),
-                                ),
-                              )
-                            : ColoredBox(
-                                color: ThemeHelper.getSecondaryBackgroundColor(
-                                    context),
-                                child: Icon(
-                                  Icons.queue_music_rounded,
-                                  color: ThemeHelper.getTextMuted(context),
-                                ),
-                              ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
-                      child: Text(
-                        p.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: ThemeHelper.getTextPrimary(context),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+  Widget _buildSectionHeader() {
+    final q = _searchQuery.trim();
+    final label = q.isEmpty ? 'Popular songs' : 'Search results';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: ThemeHelper.getTextSecondary(context),
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }
@@ -508,7 +482,9 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            _searchQuery.isEmpty ? 'No tracks in this playlist' : 'No results',
+            _searchQuery.trim().isEmpty
+                ? 'No trending songs yet'
+                : 'No results',
             style: TextStyle(
               color: ThemeHelper.getTextPrimary(context),
               fontSize: 18,
@@ -522,8 +498,8 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
   }
 
   Widget _buildMusicTile(MusicModel track, int index) {
-    final isPlaying = _playingIndexInFiltered == index;
-    final hasPreview = track.audioUrl.trim().isNotEmpty;
+    final url = track.audioUrl.trim();
+    final hasPreview = url.isNotEmpty;
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -575,36 +551,14 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: hasPreview
-                        ? () => unawaited(_togglePlay(track, index))
+                        ? () => unawaited(_togglePlay(track))
                         : null,
                     borderRadius: BorderRadius.circular(14),
                     child: Center(
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: hasPreview
-                              ? ThemeHelper.getAccentColor(context)
-                                  .withValues(alpha: 0.92)
-                              : ThemeHelper.getSecondaryBackgroundColor(context),
-                          shape: BoxShape.circle,
-                          border: hasPreview
-                              ? null
-                              : Border.all(
-                                  color: ThemeHelper.getBorderColor(context)
-                                      .withValues(alpha: 0.65),
-                                  width: 1,
-                                ),
-                        ),
-                        child: Icon(
-                          isPlaying
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          color: hasPreview
-                              ? ThemeHelper.getOnAccentColor(context)
-                              : ThemeHelper.getTextMuted(context),
-                          size: 24,
-                        ),
+                      child: _MusicTilePreviewButton(
+                        trackId: track.id,
+                        url: url,
+                        hasPreview: hasPreview,
                       ),
                     ),
                   ),
@@ -649,6 +603,100 @@ class _SelectMusicScreenState extends State<SelectMusicScreen> {
                 ],
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Play/pause control for one row — selective Riverpod watches avoid rebuilding
+/// the whole list on every progress tick.
+class _MusicTilePreviewButton extends ConsumerWidget {
+  final String trackId;
+  final String url;
+  final bool hasPreview;
+
+  const _MusicTilePreviewButton({
+    required this.trackId,
+    required this.url,
+    required this.hasPreview,
+  });
+
+  String get _trackKey => url.isNotEmpty ? url : trackId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isActive = ref.watch(
+      musicPickerPreviewProvider.select(
+        (s) => musicPreviewActiveKey(s, _trackKey),
+      ),
+    );
+    final isPlaying = ref.watch(
+      musicPickerPreviewProvider.select(
+        (s) => musicPreviewActiveKey(s, _trackKey) && s.isPlaying,
+      ),
+    );
+    final isLoading = ref.watch(
+      musicPickerPreviewProvider.select(
+        (s) => musicPreviewActiveKey(s, _trackKey) && s.isLoading,
+      ),
+    );
+    final progress = ref.watch(
+      musicPickerPreviewProvider.select(
+        (s) => musicPreviewActiveKey(s, _trackKey) ? s.progress : 0.0,
+      ),
+    );
+
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (isActive && !isLoading)
+            CircularProgressIndicator(
+              value: progress > 0 ? progress : null,
+              strokeWidth: 2.5,
+              backgroundColor: ThemeHelper.getBorderColor(
+                context,
+              ).withValues(alpha: 0.45),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                ThemeHelper.getOnAccentColor(context),
+              ),
+            ),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: hasPreview
+                  ? ThemeHelper.getAccentColor(context).withValues(alpha: 0.92)
+                  : ThemeHelper.getSecondaryBackgroundColor(context),
+              shape: BoxShape.circle,
+              border: hasPreview
+                  ? null
+                  : Border.all(
+                      color: ThemeHelper.getBorderColor(
+                        context,
+                      ).withValues(alpha: 0.65),
+                      width: 1,
+                    ),
+            ),
+            child: isLoading
+                ? Padding(
+                    padding: const EdgeInsets.all(7),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: ThemeHelper.getOnAccentColor(context),
+                    ),
+                  )
+                : Icon(
+                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    color: hasPreview
+                        ? ThemeHelper.getOnAccentColor(context)
+                        : ThemeHelper.getTextMuted(context),
+                    size: 22,
+                  ),
           ),
         ],
       ),

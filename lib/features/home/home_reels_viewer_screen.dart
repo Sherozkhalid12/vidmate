@@ -1,14 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:better_player/better_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/follow_provider_riverpod.dart';
 import '../../core/providers/posts_provider_riverpod.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
+import '../../core/providers/post_views_provider.dart';
 import '../../core/providers/video_player_provider.dart';
 import '../../core/models/post_model.dart';
-import '../../core/utils/theme_helper.dart';
 import '../profile/profile_screen.dart';
 import '../../core/widgets/safe_better_player.dart';
 
@@ -36,11 +37,9 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
-    // Seed provider with incoming reels so counts are synced everywhere.
-    ref.read(reelsProvider.notifier).seedReels(widget.videos);
-
-    // Start playing initial video
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(reelsProvider.notifier).seedReels(widget.videos);
       _playCurrentVideo();
     });
   }
@@ -56,7 +55,9 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
     for (var video in widget.videos) {
       if (video.videoUrl != null) {
         try {
-          final notifier = ref.read(videoPlayerProvider(video.videoUrl!).notifier);
+          final notifier = ref.read(videoPlayerProvider(
+                  videoPlayerKeyFeedInline(video.videoUrl!, scopeId: video.id))
+              .notifier);
           notifier.pause();
         } catch (e) {
           // Ignore
@@ -69,9 +70,20 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
     if (_currentIndex < 0 || _currentIndex >= widget.videos.length) return;
 
     final currentVideo = widget.videos[_currentIndex];
+    if (currentVideo.id.isNotEmpty) {
+      unawaited(
+        ref.read(postViewCountOverridesProvider.notifier).recordAndUpdate(
+              currentVideo.id,
+              fallback: currentVideo.views,
+            ),
+      );
+    }
     if (currentVideo.videoUrl != null) {
       try {
-        final notifier = ref.read(videoPlayerProvider(currentVideo.videoUrl!).notifier);
+        final notifier = ref.read(videoPlayerProvider(
+                videoPlayerKeyFeedInline(currentVideo.videoUrl!,
+                    scopeId: currentVideo.id))
+            .notifier);
         notifier.play();
       } catch (e) {
         // Ignore errors
@@ -82,7 +94,10 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
     for (int i = 0; i < widget.videos.length; i++) {
       if (i != _currentIndex && widget.videos[i].videoUrl != null) {
         try {
-          final notifier = ref.read(videoPlayerProvider(widget.videos[i].videoUrl!).notifier);
+          final notifier = ref.read(videoPlayerProvider(
+                  videoPlayerKeyFeedInline(widget.videos[i].videoUrl!,
+                      scopeId: widget.videos[i].id))
+              .notifier);
           notifier.pause();
         } catch (e) {
           // Ignore errors
@@ -153,7 +168,8 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
   Widget _buildReelItem(PostModel video, int index) {
     final videoUrl = video.videoUrl;
     final playerState = videoUrl != null
-        ? ref.watch(videoPlayerProvider(videoUrl))
+        ? ref.watch(videoPlayerProvider(
+            videoPlayerKeyFeedInline(videoUrl, scopeId: video.id)))
         : null;
     final isInitialized = playerState?.isInitialized ?? false;
     final isPlaying = playerState?.isPlaying ?? false;
@@ -300,7 +316,10 @@ class _HomeReelsViewerScreenState extends ConsumerState<HomeReelsViewerScreen> {
                       icon: isPlaying ? Icons.pause : Icons.play_arrow,
                       onTap: () {
                         if (videoUrl != null) {
-                          final notifier = ref.read(videoPlayerProvider(videoUrl).notifier);
+                          final notifier = ref.read(videoPlayerProvider(
+                                  videoPlayerKeyFeedInline(videoUrl,
+                                      scopeId: video.id))
+                              .notifier);
                           notifier.togglePlayPause();
                         }
                       },

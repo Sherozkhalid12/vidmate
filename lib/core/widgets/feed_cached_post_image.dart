@@ -213,14 +213,6 @@ class _FeedCachedPostImageState extends State<FeedCachedPostImage> {
           ),
         ),
       ),
-      imageBuilder: (context, provider) => Image(
-        image: provider,
-        fit: widget.fit,
-        width: double.infinity,
-        height: double.infinity,
-        gaplessPlayback: true,
-        filterQuality: FilterQuality.medium,
-      ),
     );
   }
 }

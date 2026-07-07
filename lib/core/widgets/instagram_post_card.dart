@@ -14,13 +14,15 @@ import '../media/feed_image_decode_limits.dart';
 import '../providers/auth_provider_riverpod.dart';
 import '../providers/follow_provider_riverpod.dart';
 import '../providers/posts_provider_riverpod.dart';
+import '../providers/home_feed_playback_provider_riverpod.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import '../providers/saved_posts_provider_riverpod.dart';
 import 'comments_bottom_sheet.dart';
 import 'share_bottom_sheet.dart';
 import '../../services/posts/posts_service.dart';
 import 'feed_cached_post_image.dart';
 import 'feed_image_precache.dart';
-import 'music_sticker_row.dart';
+import '../audio/attached_music_preview.dart';
 
 class InstagramPostCard extends ConsumerStatefulWidget {
   final PostModel post;
@@ -68,7 +70,11 @@ class _CarouselKeepAlivePageState extends State<_CarouselKeepAlivePage>
   }
 }
 
-class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with SingleTickerProviderStateMixin {
+class _InstagramPostCardState extends ConsumerState<InstagramPostCard>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   late AnimationController _likeAnimationController;
   bool _isAnimating = false;
   final PageController _imageCarouselController = PageController();
@@ -161,6 +167,22 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
     return widget.post.comments;
   }
 
+  /// Shown under the author name when the post has music metadata.
+  String? get _musicAttributionLine {
+    final p = widget.post;
+    final n = p.musicName?.trim() ?? '';
+    final t = p.musicTitle?.trim() ?? '';
+    if (n.isNotEmpty && t.isNotEmpty) return '$n · $t';
+    if (n.isNotEmpty) return n;
+    if (t.isNotEmpty) return t;
+    final audio = p.audioName?.trim() ?? '';
+    if (audio.isNotEmpty) return audio;
+    return null;
+  }
+
+  bool get _hasMusicPreviewUrl =>
+      (widget.post.musicPreviewUrl ?? '').trim().isNotEmpty;
+
   String _formatTimeAgo(DateTime dateTime) {
     final now = DateTime.now();
     final difference = now.difference(dateTime);
@@ -209,28 +231,44 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
     super.dispose();
   }
 
+  void _onFeedVisibilityChanged(VisibilityInfo info) {
+    final url = widget.post.musicPreviewUrl?.trim() ?? '';
+    if (url.isEmpty) return;
+    final notifier = ref.read(feedActiveMusicPreviewUrlProvider.notifier);
+    if (info.visibleFraction >= 0.5) {
+      if (notifier.state != url) notifier.state = url;
+    } else if (notifier.state == url && info.visibleFraction < 0.15) {
+      notifier.state = null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: isDark
-          ? Container(
-              color: ThemeHelper.getBackgroundColor(context),
-              child: _buildCardContent(),
-            )
-          : ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
+    return VisibilityDetector(
+      key: ValueKey('feed_post_vis_${widget.post.id}'),
+      onVisibilityChanged: _onFeedVisibilityChanged,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        child: isDark
+            ? Container(
+                color: ThemeHelper.getBackgroundColor(context),
+                child: _buildCardContent(),
+              )
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                    ),
+                    child: _buildCardContent(),
                   ),
-                  child: _buildCardContent(),
                 ),
               ),
-            ),
+      ),
     );
   }
 
@@ -300,7 +338,7 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Username and time
+                // Username, optional music line, and time
                 Expanded(
                   child: GestureDetector(
                     onTap: () {
@@ -311,30 +349,66 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                         ),
                       );
                     },
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          widget.post.author.username,
-                          style: TextStyle(
-                            color: ThemeHelper.getTextPrimary(context),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                widget.post.author.username,
+                                style: TextStyle(
+                                  color: ThemeHelper.getTextPrimary(context),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.verified,
+                              size: 12,
+                              color: ThemeHelper.getAccentColor(context),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '• ${_formatTimeAgo(widget.post.createdAt)}',
+                              style: TextStyle(
+                                color: ThemeHelper.getTextSecondary(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_musicAttributionLine != null) ...[
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.music_note_rounded,
+                                size: 13,
+                                color: ThemeHelper.getAccentColor(context),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  _musicAttributionLine!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: ThemeHelper.getTextSecondary(context),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.verified,
-                          size: 12,
-                          color: ThemeHelper.getAccentColor(context),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '• ${_formatTimeAgo(widget.post.createdAt)}',
-                          style: TextStyle(
-                            color: ThemeHelper.getTextSecondary(context),
-                            fontSize: 12,
-                          ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -430,7 +504,7 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
               }
             },
             child: AspectRatio(
-              aspectRatio: 1.0,
+              aspectRatio: 4 / 5,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -466,6 +540,47 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                               ),
                             )
                           : _buildMediaSlot(_mediaSlots.first),
+                  // Music preview (30s cap via [AttachedMusicPreview]) — top-left on media
+                  if (_hasMusicPreviewUrl)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: ListenableBuilder(
+                        listenable: AttachedMusicPreview.instance,
+                        builder: (context, _) {
+                          final url = widget.post.musicPreviewUrl!.trim();
+                          final playing =
+                              AttachedMusicPreview.instance.isPlayingUrl(url);
+                          return Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => AttachedMusicPreview.instance
+                                  .toggleSticker(url),
+                              customBorder: const CircleBorder(),
+                              child: Ink(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.5),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.35),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Icon(
+                                  playing
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: Colors.white,
+                                  size: 26,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
                   // Carousel indicators (dots)
                   if (_mediaSlots.length > 1)
                     Positioned(
@@ -694,12 +809,6 @@ class _InstagramPostCardState extends ConsumerState<InstagramPostCard> with Sing
                 ],
               ),
             ),
-          ),
-          MusicStickerRow(
-            previewUrl: widget.post.musicPreviewUrl,
-            musicName: widget.post.musicName,
-            musicTitle: widget.post.musicTitle,
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
           ),
 
           const SizedBox(height: 8),

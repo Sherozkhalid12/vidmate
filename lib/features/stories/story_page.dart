@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -9,11 +10,13 @@ import 'stories_viewer_screen.dart';
 import '../../core/utils/theme_helper.dart';
 import '../../core/media/app_media_cache.dart';
 import '../../core/widgets/feed_image_precache.dart';
+import '../../core/widgets/natural_aspect_image.dart';
 import '../../core/perf/stories_perf_metrics.dart';
 import '../../core/providers/stories_provider_riverpod.dart';
 import '../../core/providers/auth_provider_riverpod.dart';
 import '../../core/providers/network_status_provider.dart';
 import '../../services/reels/reel_video_prefetch.dart';
+import '../../services/stories/story_audio_preloader.dart';
 import '../../core/providers/active_livestreams_provider_riverpod.dart';
 import '../../core/providers/livestream_controller_riverpod.dart';
 import '../../core/models/story_model.dart';
@@ -64,9 +67,9 @@ class _StoryPageState extends ConsumerState<StoryPage>
     if (s.users.isEmpty) return;
     final sig = s.users
         .map((u) {
-          final st = s.userStoriesMap[u.id];
-          final sid = (st != null && st.isNotEmpty) ? st.first.id : '';
-          return '${u.id}_$sid';
+          final st = s.userStoriesMap[u.id] ?? [];
+          final ids = st.map((e) => e.id).join(',');
+          return '${u.id}:$ids';
         })
         .join('|');
     if (sig == _lastTrayWarmSig) return;
@@ -84,28 +87,41 @@ class _StoryPageState extends ConsumerState<StoryPage>
             context,
           );
         }
-        final stories = s.userStoriesMap[u.id];
-        if (stories == null || stories.isEmpty) continue;
-        final first = stories.first;
-        if (first.mediaUrl.isEmpty) continue;
-        if (first.isVideo) {
-          unawaited(
-            ReelVideoPrefetchService.instance.prefetchIfAllowed(first.mediaUrl),
-          );
-        } else {
-          precacheFeedImageSafe(
-            CachedNetworkImageProvider(
-              first.mediaUrl,
-              cacheManager: AppMediaCache.feedMedia,
-            ),
-            context,
-          );
+        final stories = s.userStoriesMap[u.id] ?? [];
+        for (final story in stories) {
+          if (story.mediaUrl.isEmpty) continue;
+          if (story.isVideo) {
+            final thumb = story.thumbnailUrl?.trim() ?? '';
+            if (thumb.isNotEmpty) {
+              precacheFeedImageSafe(
+                CachedNetworkImageProvider(
+                  thumb,
+                  cacheManager: AppMediaCache.feedMedia,
+                ),
+                context,
+              );
+            } else {
+              unawaited(
+                ReelVideoPrefetchService.instance
+                    .prefetchIfAllowed(story.mediaUrl),
+              );
+            }
+          } else {
+            precacheFeedImageSafe(
+              CachedNetworkImageProvider(
+                story.mediaUrl,
+                cacheManager: AppMediaCache.feedMedia,
+              ),
+              context,
+            );
+          }
         }
       }
+      unawaited(StoryAudioPreloader.instance.prewarmTray(s.userStoriesMap));
     });
   }
 
-  Widget _avatarImagePlaceholder(BuildContext context) {
+  Widget _avatarImagePlaceholder(BuildContext context, {double iconSize = 28}) {
     final accent = ThemeHelper.getAccentColor(context);
     final surface = ThemeHelper.getSurfaceColor(context);
     return DecoratedBox(
@@ -120,6 +136,7 @@ class _StoryPageState extends ConsumerState<StoryPage>
           ],
         ),
       ),
+      child: Center(child: _personIcon(context, size: iconSize)),
     );
   }
 
@@ -155,61 +172,6 @@ class _StoryPageState extends ConsumerState<StoryPage>
       );
     }
 
-    Widget liveCardSkeleton() {
-      return Container(
-        height: 210,
-        margin: const EdgeInsets.only(top: 8, bottom: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: surface,
-          border: Border.all(color: border.withValues(alpha: 0.18)),
-        ),
-        child: Stack(
-          children: [
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Container(
-                width: 120,
-                height: 26,
-                decoration: BoxDecoration(
-                  color: surface.withValues(alpha: 0.85),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 14,
-              left: 14,
-              right: 14,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 18,
-                    width: 180,
-                    decoration: BoxDecoration(
-                      color: surface.withValues(alpha: 0.9),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    height: 13,
-                    width: 220,
-                    decoration: BoxDecoration(
-                      color: surface.withValues(alpha: 0.75),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     return Shimmer.fromColors(
       baseColor: base,
       highlightColor: hi,
@@ -222,23 +184,6 @@ class _StoryPageState extends ConsumerState<StoryPage>
             child: Center(child: ringBubble(92, 108)),
           ),
           const SizedBox(height: 14),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 96,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: surface,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                liveCardSkeleton(),
-              ],
-            ),
-          ),
           LayoutBuilder(
             builder: (ctx, c) {
               final w = (c.maxWidth - 12) / 2;
@@ -260,11 +205,24 @@ class _StoryPageState extends ConsumerState<StoryPage>
     );
   }
 
-  static const String _kStoriesEmptyTitle = 'No stories from your network yet';
-  static const String _kStoriesEmptySubtitle =
-      'When someone you follow posts a story, their ring will show up here so you can watch it right away.';
+  static const String _kStoriesEmptyTitle = 'No stories from your network';
   static const String _kLiveEmptySubtitle =
       'Live broadcasts from people you follow appear here as soon as they start streaming.';
+
+  Widget _buildStoriesEmptyTextOnly() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Text(
+        _kStoriesEmptyTitle,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: ThemeHelper.getTextSecondary(context),
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 
   /// Theme-aware empty / soft-error card (Stories tab + Live section).
   Widget _buildStoriesEmptyStateCard({
@@ -419,13 +377,27 @@ class _StoryPageState extends ConsumerState<StoryPage>
   ) {
     if (currentUser == null) return '';
     final list = userStoriesMap[currentUser.id];
-    if (list != null && list.isNotEmpty) {
-      final first = list.first;
-      if (first.mediaUrl.isNotEmpty && !first.isVideo) {
-        return first.mediaUrl;
+    return _storyTrayImageUrl(currentUser.avatarUrl, list ?? const []);
+  }
+
+  String _storyTrayImageUrl(String avatarUrl, List<StoryModel> stories) {
+    if (stories.isNotEmpty) {
+      final first = stories.first;
+      if (first.isVideo) {
+        final thumb = first.thumbnailUrl?.trim() ?? '';
+        if (thumb.isNotEmpty) return thumb;
       }
+      if (first.mediaUrl.isNotEmpty) return first.mediaUrl;
     }
-    return currentUser.avatarUrl;
+    return avatarUrl;
+  }
+
+  Widget _personIcon(BuildContext context, {double size = 28}) {
+    return Icon(
+      Icons.person,
+      size: size,
+      color: ThemeHelper.getTextSecondary(context),
+    );
   }
 
   @override
@@ -578,21 +550,6 @@ class _StoryPageState extends ConsumerState<StoryPage>
                                 horizontal: 16, vertical: 8),
                             child: Builder(
                               builder: (ctx) {
-                                final streams = liveAsync.valueOrNull ??
-                                    const <LivestreamModel>[];
-                                final hasFollowingTiles =
-                                    _hasFollowingStoryOrLiveTiles(
-                                  currentUser,
-                                  users,
-                                  userStoriesMap,
-                                  streams,
-                                );
-                                final streamsEmpty = liveAsync.hasValue &&
-                                    (liveAsync.value?.isEmpty ?? true);
-                                final suppressLiveEmptyDup =
-                                    !liveAsync.isLoading &&
-                                        !hasFollowingTiles &&
-                                        (liveAsync.hasError || streamsEmpty);
                                 return Column(
                                   children: [
                                     _buildStoriesHeroPairRow(
@@ -612,12 +569,6 @@ class _StoryPageState extends ConsumerState<StoryPage>
                                           c.maxWidth,
                                         );
                                       },
-                                    ),
-                                    const SizedBox(height: 8),
-                                    _buildLivesList(
-                                      liveAsync,
-                                      suppressEmptyWhenUnified:
-                                          suppressLiveEmptyDup,
                                     ),
                                   ],
                                 );
@@ -883,11 +834,11 @@ class _StoryPageState extends ConsumerState<StoryPage>
           final fullIndex = users.indexWhere((u) => u.id == user.id);
           return _storyBubble(
             name: user.username,
-            imageUrl: user.avatarUrl,
+            imageUrl: _storyTrayImageUrl(user.avatarUrl, stories),
             ring: isLive
                 ? const LinearGradient(colors: [Color(0xFFEF4444), Color(0xFFF97316)])
                 : ring,
-            badge: isLive ? 'LIVE' : null,
+            showLiveBadge: isLive,
             onTap: () {
               if (fullIndex >= 0) {
                 _openStoryViewer(fullIndex, 0, users, userStoriesMap);
@@ -913,11 +864,25 @@ class _StoryPageState extends ConsumerState<StoryPage>
     double innerAvatarSize = 72,
     double labelMaxWidth = 80,
     bool useStoryLiveSplit = false,
+    bool showLiveBadge = false,
   }) {
     final bg = ThemeHelper.getBackgroundColor(context);
     final VoidCallback? avatarTap =
         (showPlus && onAvatarTap != null) ? onAvatarTap : onTap;
     final iconSize = (innerAvatarSize * 0.5).clamp(24.0, 44.0);
+    final state = ref.watch(storiesProvider);
+    var localPath = state.storyLocalThumbnailPaths[imageUrl];
+    if (localPath == null || localPath.isEmpty) {
+      final mediaPath = state.storyLocalMediaPaths[imageUrl];
+      if (mediaPath != null && mediaPath.isNotEmpty) {
+        final lower = mediaPath.toLowerCase();
+        final isVideoFile = lower.endsWith('.mp4') ||
+            lower.endsWith('.mov') ||
+            lower.endsWith('.mkv') ||
+            lower.endsWith('.webm');
+        if (!isVideoFile) localPath = mediaPath;
+      }
+    }
     final avatarCore = Container(
       width: innerAvatarSize,
       height: innerAvatarSize,
@@ -926,20 +891,12 @@ class _StoryPageState extends ConsumerState<StoryPage>
         color: bg,
       ),
       clipBehavior: Clip.antiAlias,
-      child: imageUrl.isNotEmpty
-          ? CachedNetworkImage(
-              imageUrl: imageUrl,
-              fit: BoxFit.cover,
-              cacheManager: AppMediaCache.feedMedia,
-              fadeInDuration: Duration.zero,
-              fadeOutDuration: Duration.zero,
-              placeholder: (_, __) => _avatarImagePlaceholder(context),
-            )
-          : Icon(
-              Icons.person,
-              size: iconSize,
-              color: ThemeHelper.getTextSecondary(context),
-            ),
+      child: _buildTrayAvatarContent(
+        context,
+        imageUrl: imageUrl,
+        localPath: localPath,
+        iconSize: iconSize,
+      ),
     );
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -978,7 +935,31 @@ class _StoryPageState extends ConsumerState<StoryPage>
                       child: avatarCore,
                     ),
             ),
-              if (badge != null && !useStoryLiveSplit)
+              if (showLiveBadge)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.wifi_tethering,
+                      color: Colors.white,
+                      size: 13,
+                    ),
+                  ),
+                )
+              else if (badge != null && !useStoryLiveSplit)
                 Positioned(
                   top: -4,
                   right: -4,
@@ -1032,7 +1013,11 @@ class _StoryPageState extends ConsumerState<StoryPage>
                             shape: BoxShape.circle,
                             color: ThemeHelper.getAccentColor(context),
                           ),
-                          child: const Icon(Icons.add, size: 16, color: Colors.white),
+                          child: Icon(
+                            Icons.add,
+                            size: 16,
+                            color: ThemeHelper.getOnAccentColor(context),
+                          ),
                         ),
                       ),
                     ),
@@ -1061,7 +1046,11 @@ class _StoryPageState extends ConsumerState<StoryPage>
                         shape: BoxShape.circle,
                         color: ThemeHelper.getAccentColor(context),
                       ),
-                      child: const Icon(Icons.add, size: 16, color: Colors.white),
+                      child: Icon(
+                        Icons.add,
+                        size: 16,
+                        color: ThemeHelper.getOnAccentColor(context),
+                      ),
                     ),
                   ),
                 ),
@@ -1215,6 +1204,7 @@ class _StoryPageState extends ConsumerState<StoryPage>
         imageUrl: _yourStoryPreviewUrl(cu, userStoriesMap),
         showPlus: true,
         ring: ring,
+        showLiveBadge: hasLive,
         innerAvatarSize: 84,
         labelMaxWidth: 112,
         useStoryLiveSplit: splitStoryAndLive,
@@ -1245,6 +1235,115 @@ class _StoryPageState extends ConsumerState<StoryPage>
     }
   }
 
+  Future<void> _joinLiveAsViewer(LivestreamModel stream) async {
+    final ok = await ref
+        .read(livestreamControllerProvider.notifier)
+        .joinAsViewer(streamId: stream.streamId);
+    if (!mounted) return;
+    if (ok) {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => LiveStreamWatchScreen(streamId: stream.streamId),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showStoryOrLiveChoiceSheet({
+    required String username,
+    required VoidCallback onOpenStory,
+    required VoidCallback onViewLive,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        final bgColor = ThemeHelper.getBackgroundColor(ctx);
+        final borderColor = ThemeHelper.getBorderColor(ctx);
+        final textPrimary = ThemeHelper.getTextPrimary(ctx);
+        final textSecondary = ThemeHelper.getTextSecondary(ctx);
+        final accent = ThemeHelper.getAccentColor(ctx);
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Container(
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: borderColor.withAlpha(isDark ? 120 : 80),
+                width: 1,
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          username.isNotEmpty ? username : 'Choose',
+                          style: TextStyle(
+                            color: textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.close_rounded, color: textSecondary),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(Icons.auto_stories_outlined, color: accent),
+                    title: Text(
+                      'Open Story',
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      onOpenStory();
+                    },
+                  ),
+                  Divider(color: ThemeHelper.getBorderColor(ctx)),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.wifi_tethering,
+                      color: Color(0xFFEF4444),
+                    ),
+                    title: Text(
+                      'View Live',
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      onViewLive();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildStoriesTwoColumnGrid(
     UserModel? currentUser,
     List<UserModel> users,
@@ -1255,24 +1354,57 @@ class _StoryPageState extends ConsumerState<StoryPage>
     final streams = liveAsync.value ?? const <LivestreamModel>[];
     final myId = currentUser?.id ?? '';
 
-    bool userHasStories(UserModel u) =>
-        userStoriesMap[u.id]?.isNotEmpty ?? false;
-    bool isUserLive(UserModel u) =>
-        streams.any((s) => _livestreamHostId(s) == u.id);
+    final streamByHost = <String, LivestreamModel>{};
+    for (final s in streams) {
+      final hostId = _livestreamHostId(s);
+      if (hostId.isEmpty) continue;
+      streamByHost.putIfAbsent(hostId, () => s);
+    }
 
-    final others = myId.isNotEmpty
-        ? users
-            .where(
-              (u) =>
-                  u.id != myId &&
-                  (userHasStories(u) || isUserLive(u)),
-            )
-            .toList()
-        : users
-            .where((u) => userHasStories(u) || isUserLive(u))
-            .toList();
+    final entries = <_StoryGridEntry>[];
+    final seenUserIds = <String>{};
 
-    if (others.isEmpty) {
+    for (var i = 0; i < users.length; i++) {
+      final u = users[i];
+      if (myId.isNotEmpty && u.id == myId) continue;
+      final hasStory = userStoriesMap[u.id]?.isNotEmpty ?? false;
+      final live = streamByHost[u.id];
+      if (!hasStory && live == null) continue;
+      entries.add(
+        _StoryGridEntry(
+          userId: u.id,
+          username: u.username,
+          avatarUrl: u.avatarUrl,
+          hasStory: hasStory,
+          liveStream: live,
+          fullUserIndex: i,
+        ),
+      );
+      seenUserIds.add(u.id);
+    }
+
+    // Include live-only hosts that are not present in stories users list.
+    for (final e in streamByHost.entries) {
+      final hostId = e.key;
+      if (seenUserIds.contains(hostId)) continue;
+      if (myId.isNotEmpty && hostId == myId) continue;
+      final s = e.value;
+      final host = s.host;
+      entries.add(
+        _StoryGridEntry(
+          userId: hostId,
+          username: (host?.username.isNotEmpty ?? false)
+              ? host!.username
+              : (s.channelName.isNotEmpty ? s.channelName : 'Live'),
+          avatarUrl: host?.profilePicture ?? '',
+          hasStory: false,
+          liveStream: s,
+          fullUserIndex: -1,
+        ),
+      );
+    }
+
+    if (entries.isEmpty) {
       if (liveAsync.isLoading) {
         return const SizedBox(height: 10);
       }
@@ -1286,11 +1418,7 @@ class _StoryPageState extends ConsumerState<StoryPage>
         );
       }
       if (liveAsync.hasValue && streams.isEmpty) {
-        return _buildStoriesEmptyStateCard(
-          icon: Icons.auto_stories_outlined,
-          title: _kStoriesEmptyTitle,
-          subtitle: _kStoriesEmptySubtitle,
-        );
+        return _buildStoriesEmptyTextOnly();
       }
       if (liveAsync.hasValue && streams.isNotEmpty) {
         return const SizedBox.shrink();
@@ -1303,55 +1431,61 @@ class _StoryPageState extends ConsumerState<StoryPage>
     return Wrap(
       spacing: 12,
       runSpacing: 14,
-      alignment: WrapAlignment.start,
+      alignment: WrapAlignment.end,
       children: [
-        for (final user in others)
+        for (final entry in entries)
           SizedBox(
             width: tileW,
             child: Center(
               child: Builder(
                 builder: (context) {
-                  final hasStories = userHasStories(user);
-                  final hasLive = isUserLive(user);
-                  final split = hasStories && hasLive;
-                  final ring = split
+                  final hasStories = entry.hasStory;
+                  final liveStream = entry.liveStream;
+                  final hasLive = liveStream != null;
+                  final ring = hasStories
                       ? _storyStatusRing()
                       : (hasLive ? _liveStatusRing() : _storyStatusRing());
+                  final stories =
+                      userStoriesMap[entry.userId] ?? const <StoryModel>[];
+                  final avatarUrl = _storyTrayImageUrl(
+                    entry.avatarUrl.isNotEmpty
+                        ? entry.avatarUrl
+                        : (liveStream?.host?.profilePicture ?? ''),
+                    stories,
+                  );
                   return _storyBubble(
-                    name: user.username,
-                    imageUrl: user.avatarUrl,
+                    name: entry.username,
+                    imageUrl: avatarUrl,
                     ring: ring,
-                    useStoryLiveSplit: split,
-                    badge: (hasLive && !split) ? 'LIVE' : null,
+                    useStoryLiveSplit: hasStories && hasLive,
+                    showLiveBadge: hasLive,
                     onTap: () async {
-                      final fullIndex =
-                          users.indexWhere((x) => x.id == user.id);
-                      if (hasStories && fullIndex >= 0) {
-                        _openStoryViewer(
-                          fullIndex,
-                          0,
-                          users,
-                          userStoriesMap,
+                      final fullIndex = entry.fullUserIndex;
+                      final openStory = () {
+                        if (fullIndex < 0) return;
+                        _openStoryViewer(fullIndex, 0, users, userStoriesMap);
+                      };
+                      final openLive = () {
+                        if (liveStream == null) return;
+                        unawaited(_joinLiveAsViewer(liveStream));
+                      };
+
+                      if (hasStories && hasLive && fullIndex >= 0 && liveStream != null) {
+                        await _showStoryOrLiveChoiceSheet(
+                          username: entry.username,
+                          onOpenStory: openStory,
+                          onViewLive: openLive,
                         );
                         return;
                       }
-                      if (hasLive && !hasStories) {
-                        final stream = _liveStreamForUser(user, streams);
-                        if (stream == null) return;
-                        final ok = await ref
-                            .read(livestreamControllerProvider.notifier)
-                            .joinAsViewer(streamId: stream.streamId);
-                        if (!context.mounted) return;
-                        if (ok) {
-                          await Navigator.push<void>(
-                            context,
-                            MaterialPageRoute<void>(
-                              builder: (_) => LiveStreamWatchScreen(
-                                streamId: stream.streamId,
-                              ),
-                            ),
-                          );
-                        }
+
+                      if (hasStories && fullIndex >= 0) {
+                        openStory();
+                        return;
+                      }
+
+                      if (hasLive && liveStream != null) {
+                        openLive();
                       }
                     },
                   );
@@ -1605,10 +1739,7 @@ class _StoryPageState extends ConsumerState<StoryPage>
   Future<void> _showCurrentUserAddSheet() async {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: ThemeHelper.getBackgroundColor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (ctx) {
         final isDark = Theme.of(ctx).brightness == Brightness.dark;
@@ -1729,13 +1860,12 @@ class _StoryPageState extends ConsumerState<StoryPage>
                 shape: BoxShape.circle,
                 color: ThemeHelper.getBackgroundColor(context),
               ),
-              child: CircleAvatar(
-                backgroundImage: firstStory.mediaUrl.isNotEmpty
-                    ? CachedNetworkImageProvider(firstStory.mediaUrl)
-                    : (user.avatarUrl.isNotEmpty
-                        ? CachedNetworkImageProvider(user.avatarUrl)
-                        : null),
-                backgroundColor: ThemeHelper.getSurfaceColor(context),
+              child: _buildStoryCircleFill(
+                mediaUrl: firstStory.mediaUrl,
+                avatarUrl: user.avatarUrl,
+                isVideo: firstStory.isVideo,
+                thumbnailUrl: firstStory.thumbnailUrl,
+                iconSize: 36,
               ),
             ),
           ),
@@ -1756,6 +1886,87 @@ class _StoryPageState extends ConsumerState<StoryPage>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTrayAvatarContent(
+    BuildContext context, {
+    required String imageUrl,
+    required String? localPath,
+    required double iconSize,
+  }) {
+    if (localPath != null && localPath.isNotEmpty) {
+      return Image.file(
+        File(localPath),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Center(
+          child: _personIcon(context, size: iconSize),
+        ),
+      );
+    }
+    if (imageUrl.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: imageUrl,
+        fit: BoxFit.cover,
+        cacheManager: AppMediaCache.feedMedia,
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        placeholder: (_, __) =>
+            _avatarImagePlaceholder(context, iconSize: iconSize),
+        errorWidget: (_, __, ___) => Center(
+          child: _personIcon(context, size: iconSize),
+        ),
+      );
+    }
+    return Center(child: _personIcon(context, size: iconSize));
+  }
+
+  Widget _buildStoryCircleFill({
+    required String mediaUrl,
+    required String avatarUrl,
+    required bool isVideo,
+    String? thumbnailUrl,
+    double iconSize = 30,
+  }) {
+    final remoteThumb = thumbnailUrl?.trim() ?? '';
+    final imageUrl = isVideo
+        ? (remoteThumb.isNotEmpty
+            ? remoteThumb
+            : (mediaUrl.isNotEmpty ? mediaUrl : avatarUrl))
+        : (mediaUrl.isNotEmpty ? mediaUrl : avatarUrl);
+    final localPath = isVideo
+        ? ref.watch(storiesProvider).storyLocalThumbnailPaths[mediaUrl]
+        : (mediaUrl.isNotEmpty
+            ? ref.watch(storiesProvider).storyLocalMediaPaths[mediaUrl]
+            : null);
+    if (isVideo && localPath == null && remoteThumb.isEmpty) {
+      return CircleAvatar(
+        backgroundColor: Colors.black,
+        child: Icon(
+          Icons.play_circle_filled,
+          size: iconSize,
+          color: Colors.white,
+        ),
+      );
+    }
+    if (localPath != null && localPath.isNotEmpty) {
+      return CircleAvatar(
+        backgroundColor: ThemeHelper.getSurfaceColor(context),
+        backgroundImage: FileImage(File(localPath)),
+        onBackgroundImageError: (_, __) {},
+        child: null,
+      );
+    }
+    return CircleAvatar(
+      backgroundColor: ThemeHelper.getSurfaceColor(context),
+      backgroundImage: imageUrl.isNotEmpty
+          ? CachedNetworkImageProvider(
+              imageUrl,
+              cacheManager: AppMediaCache.feedMedia,
+            )
+          : null,
+      onBackgroundImageError: (_, __) {},
+      child: imageUrl.isEmpty ? _personIcon(context, size: iconSize) : null,
     );
   }
 
@@ -1822,18 +2033,14 @@ class _StoryPageState extends ConsumerState<StoryPage>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CircleAvatar(
-                    backgroundImage: hasStories && currentUserStories.first.mediaUrl.isNotEmpty
-                        ? CachedNetworkImageProvider(currentUserStories.first.mediaUrl)
-                        : (user.avatarUrl.isNotEmpty
-                            ? CachedNetworkImageProvider(user.avatarUrl)
-                            : null),
-                    backgroundColor: ThemeHelper.getSurfaceColor(context),
-                    onBackgroundImageError: (hasStories && currentUserStories.first.mediaUrl.isNotEmpty) || user.avatarUrl.isNotEmpty
-                        ? (exception, stackTrace) {}
-                        : null,
+                  _buildStoryCircleFill(
+                    mediaUrl: hasStories ? currentUserStories.first.mediaUrl : '',
+                    avatarUrl: user.avatarUrl,
+                    isVideo: hasStories && currentUserStories.first.isVideo,
+                    thumbnailUrl:
+                        hasStories ? currentUserStories.first.thumbnailUrl : null,
+                    iconSize: 36,
                   ),
-                  // Plus icon overlay
                   Positioned(
                     bottom: 0,
                     right: 0,
@@ -2017,32 +2224,13 @@ class _StoryPageState extends ConsumerState<StoryPage>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Story media background using CircleAvatar
-                  firstStory.isVideo
-                      ? CircleAvatar(
-                          backgroundColor: Colors.black,
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              Icons.play_circle_filled,
-                              size: 30,
-                              color: Colors.white,
-                            ),
-                          ),
-                        )
-                      : CircleAvatar(
-                          backgroundImage: firstStory.mediaUrl.isNotEmpty
-                              ? CachedNetworkImageProvider(firstStory.mediaUrl)
-                              : null,
-                          backgroundColor: ThemeHelper.getSurfaceColor(context),
-                          onBackgroundImageError: firstStory.mediaUrl.isNotEmpty
-                              ? (exception, stackTrace) {}
-                              : null,
-                        ),
+                  _buildStoryCircleFill(
+                    mediaUrl: firstStory.mediaUrl,
+                    avatarUrl: user.avatarUrl,
+                    isVideo: firstStory.isVideo,
+                    thumbnailUrl: firstStory.thumbnailUrl,
+                    iconSize: 30,
+                  ),
                   // Story count badge (if multiple stories)
                   if (stories.length > 1)
                     Positioned(
@@ -2222,6 +2410,24 @@ class _StoryLiveSplitRingPainter extends CustomPainter {
       oldDelegate.ringWidth != ringWidth ||
       oldDelegate.storyGradient != storyGradient ||
       oldDelegate.liveGradient != liveGradient;
+}
+
+class _StoryGridEntry {
+  const _StoryGridEntry({
+    required this.userId,
+    required this.username,
+    required this.avatarUrl,
+    required this.hasStory,
+    required this.liveStream,
+    required this.fullUserIndex,
+  });
+
+  final String userId;
+  final String username;
+  final String avatarUrl;
+  final bool hasStory;
+  final LivestreamModel? liveStream;
+  final int fullUserIndex;
 }
 
 class _LiveTile extends StatelessWidget {

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/api/dio_client.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/models/story_response_model.dart';
+import '../../core/models/story_viewer_model.dart';
 
 const int kMaxStoryFiles = 100;
 
@@ -28,6 +29,64 @@ class CreateStoryResult {
 
   factory CreateStoryResult.success(StoryModelApi data) =>
       CreateStoryResult(success: true, data: data);
+}
+
+class MarkStoryViewResult {
+  final bool success;
+  final int viewCount;
+  final bool hasViewed;
+  final List<StoryViewerModel> viewers;
+  final String? errorMessage;
+
+  MarkStoryViewResult({
+    required this.success,
+    this.viewCount = 0,
+    this.hasViewed = false,
+    this.viewers = const [],
+    this.errorMessage,
+  });
+
+  factory MarkStoryViewResult.failure(String message) =>
+      MarkStoryViewResult(success: false, errorMessage: message);
+
+  factory MarkStoryViewResult.success({
+    required int viewCount,
+    required bool hasViewed,
+    List<StoryViewerModel> viewers = const [],
+  }) =>
+      MarkStoryViewResult(
+        success: true,
+        viewCount: viewCount,
+        hasViewed: hasViewed,
+        viewers: viewers,
+      );
+}
+
+class GetStoryViewersResult {
+  final bool success;
+  final int viewCount;
+  final List<StoryViewerModel> viewers;
+  final String? errorMessage;
+
+  const GetStoryViewersResult({
+    required this.success,
+    this.viewCount = 0,
+    this.viewers = const [],
+    this.errorMessage,
+  });
+
+  factory GetStoryViewersResult.failure(String message) =>
+      GetStoryViewersResult(success: false, errorMessage: message);
+
+  factory GetStoryViewersResult.success({
+    required int viewCount,
+    List<StoryViewerModel> viewers = const [],
+  }) =>
+      GetStoryViewersResult(
+        success: true,
+        viewCount: viewCount,
+        viewers: viewers,
+      );
 }
 
 class GetStoriesResult {
@@ -54,7 +113,7 @@ class CreateStoryParams {
   final List<String> locations;
   final List<String> taggedUsers;
   final List<String> feelings;
-  /// Optional music preview URL (`music` field in multipart body).
+  /// Optional Jamendo track id (`music` field in multipart body).
   final String? music;
 
   CreateStoryParams({
@@ -120,7 +179,7 @@ class StoriesService {
         if (file.path.isEmpty || !await file.exists()) continue;
         final ext = _mediaExtension(file.path);
         formData.files.add(MapEntry(
-          'storyFiles',
+          'segments',
           await MultipartFile.fromFile(
             file.path,
             filename: 'story_$fileIndex$ext',
@@ -233,6 +292,109 @@ class StoriesService {
         e is Exception ? e.toString() : 'Something went wrong',
       );
     }
+  }
+
+  Future<MarkStoryViewResult> markStoryViewed(String storyId) async {
+    if (storyId.isEmpty) {
+      return MarkStoryViewResult.failure('Invalid story');
+    }
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return MarkStoryViewResult.failure('Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.post(ApiConstants.storyMarkView(storyId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null || data['success'] != true) {
+        final err = data?['message'] as String? ??
+            data?['error'] as String? ??
+            'Failed to mark story viewed';
+        return MarkStoryViewResult.failure(err.toString());
+      }
+      final storyJson = data['story'] as Map<String, dynamic>? ?? data;
+      return MarkStoryViewResult.success(
+        viewCount: _int(storyJson['viewCount']),
+        hasViewed: _bool(storyJson['hasViewed']),
+        viewers: _viewersList(storyJson['viewers']),
+      );
+    } on DioException catch (e) {
+      if (e.response != null) {
+        final d = e.response?.data;
+        final msg = d is Map ? (d['message'] ?? d['error'] ?? 'Request failed') : 'Request failed';
+        return MarkStoryViewResult.failure(msg.toString());
+      }
+      return MarkStoryViewResult.failure(_networkErrorMessage(e.message));
+    } catch (e) {
+      return MarkStoryViewResult.failure(
+        e is Exception ? e.toString() : 'Something went wrong',
+      );
+    }
+  }
+
+  Future<GetStoryViewersResult> getStoryViewers(String storyId) async {
+    if (storyId.isEmpty) {
+      return GetStoryViewersResult.failure('Invalid story');
+    }
+    final token = await _getToken();
+    if (token == null || token.isEmpty) {
+      return GetStoryViewersResult.failure('Not authenticated');
+    }
+    try {
+      DioClient.setAuthToken(token);
+      final response = await _dio.get(ApiConstants.storyViewers(storyId));
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null || data['success'] != true) {
+        final err = data?['message'] as String? ??
+            data?['error'] as String? ??
+            'Failed to load viewers';
+        return GetStoryViewersResult.failure(err.toString());
+      }
+      final storyJson = data['story'] as Map<String, dynamic>? ?? data;
+      return GetStoryViewersResult.success(
+        viewCount: _int(storyJson['viewCount'] ?? data['viewCount']),
+        viewers: _viewersList(storyJson['viewers'] ?? data['viewers']),
+      );
+    } on DioException catch (e) {
+      if (e.response != null) {
+        final d = e.response?.data;
+        final msg = d is Map
+            ? (d['message'] ?? d['error'] ?? 'Request failed')
+            : 'Request failed';
+        return GetStoryViewersResult.failure(msg.toString());
+      }
+      return GetStoryViewersResult.failure(_networkErrorMessage(e.message));
+    } catch (e) {
+      return GetStoryViewersResult.failure(
+        e is Exception ? e.toString() : 'Something went wrong',
+      );
+    }
+  }
+
+  static int _int(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    return int.tryParse(v.toString()) ?? 0;
+  }
+
+  static bool _bool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    final s = v.toString().toLowerCase();
+    return s == 'true' || s == '1';
+  }
+
+  static List<StoryViewerModel> _viewersList(dynamic value) {
+    if (value is! List) return const [];
+    final out = <StoryViewerModel>[];
+    for (final e in value) {
+      if (e is Map<String, dynamic>) {
+        out.add(StoryViewerModel.fromJson(e));
+      } else if (e is Map) {
+        out.add(StoryViewerModel.fromJson(Map<String, dynamic>.from(e)));
+      }
+    }
+    return out;
   }
 
   Future<GetStoriesResult> getStoriesByUserId(String userId) async {

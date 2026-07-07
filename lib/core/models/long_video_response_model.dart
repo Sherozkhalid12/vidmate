@@ -1,8 +1,15 @@
+import 'post_model.dart';
+
 /// Long video from API (max 20 min).
 class LongVideoModelApi {
   final String id;
   final String userId;
+  /// Backend content type, e.g. `longVideo`.
+  final String? type;
   final String videoUrl;
+  final String? videoMasterUrl;
+  final Map<String, String> videoResolutions;
+  final List<String> availableResolutions;
   final String? thumbnailUrl;
   final String caption;
   final DateTime createdAt;
@@ -10,18 +17,27 @@ class LongVideoModelApi {
   final List<String> likes;
   /// Comment count from backend ('Comments' or 'comments').
   final int commentsCount;
+  final int views;
 
   LongVideoModelApi({
     required this.id,
     required this.userId,
+    this.type,
     required this.videoUrl,
+    this.videoMasterUrl,
+    Map<String, String>? videoResolutions,
+    List<String>? availableResolutions,
     this.thumbnailUrl,
     this.caption = '',
     required this.createdAt,
     List<String>? likes,
     int? commentsCount,
-  })  : likes = likes ?? const [],
-        commentsCount = commentsCount ?? 0;
+    int? views,
+  })  : videoResolutions = videoResolutions ?? const <String, String>{},
+        availableResolutions = availableResolutions ?? const <String>[],
+        likes = likes ?? const [],
+        commentsCount = commentsCount ?? 0,
+        views = views ?? 0;
 
   static String _string(dynamic value) {
     if (value == null) return '';
@@ -52,6 +68,13 @@ class LongVideoModelApi {
     return int.tryParse(value.toString()) ?? 0;
   }
 
+  static Map<String, String> _stringMap(dynamic value) {
+    if (value == null || value is! Map) return const <String, String>{};
+    return Map<String, String>.from(
+      value.map((k, v) => MapEntry(k.toString(), v.toString())),
+    );
+  }
+
   factory LongVideoModelApi.fromJson(Map<String, dynamic> json) {
     final video = _string(json['video'] ?? json['videoUrl'] ?? json['url']);
     final likesRaw = json['likes'];
@@ -63,7 +86,13 @@ class LongVideoModelApi {
     return LongVideoModelApi(
       id: _string(json['_id'] ?? json['id']),
       userId: _string(json['userId'] ?? json['user']),
+      type: _string(json['type']).isEmpty ? null : _string(json['type']),
       videoUrl: video,
+      videoMasterUrl: _string(json['videoMasterUrl']).isEmpty
+          ? null
+          : _string(json['videoMasterUrl']),
+      videoResolutions: _stringMap(json['videoResolutions']),
+      availableResolutions: _stringList(json['availableResolutions']),
       thumbnailUrl: _string(json['thumbnailUrl'] ?? json['thumbnail'] ?? '').isEmpty
           ? null
           : _string(json['thumbnailUrl'] ?? json['thumbnail']),
@@ -71,12 +100,14 @@ class LongVideoModelApi {
       createdAt: _dateTime(json['createdAt']),
       likes: likesList,
       commentsCount: commentsCount,
+      views: PostModel.parseViewsField(json),
     );
   }
 
   Map<String, dynamic> toJson() => {
         '_id': id,
         'userId': userId,
+        if (type != null && type!.isNotEmpty) 'type': type,
         'video': videoUrl,
         if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
         'caption': caption,

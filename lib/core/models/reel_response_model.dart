@@ -1,3 +1,5 @@
+import 'post_model.dart';
+
 /// Reel from API.
 class ReelModelApi {
   final String id;
@@ -15,6 +17,15 @@ class ReelModelApi {
   final List<String> likes;
   /// Comment count from backend ('Comments' or 'comments').
   final int commentsCount;
+  final int views;
+  /// External music URL or legacy `music` field.
+  final String? musicUrl;
+  final String? musicTitle;
+  final String? musicArtist;
+  final String? musicName;
+  final bool? isOriginalSound;
+  final String? musicSource;
+  final int? soundtrackDurationMs;
 
   ReelModelApi({
     required this.id,
@@ -29,8 +40,17 @@ class ReelModelApi {
     required this.createdAt,
     List<String>? likes,
     int? commentsCount,
+    int? views,
+    this.musicUrl,
+    this.musicTitle,
+    this.musicArtist,
+    this.musicName,
+    this.isOriginalSound,
+    this.musicSource,
+    this.soundtrackDurationMs,
   })  : likes = likes ?? const [],
-        commentsCount = commentsCount ?? 0;
+        commentsCount = commentsCount ?? 0,
+        views = views ?? 0;
 
   static String _string(dynamic value) {
     if (value == null) return '';
@@ -61,6 +81,28 @@ class ReelModelApi {
     return int.tryParse(value.toString()) ?? 0;
   }
 
+  static Map<String, dynamic>? _nestedMap(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
+  }
+
+  /// Display line for reel audio chip (library track or original sound title).
+  String? displayAudioName({String? fallbackUsername}) {
+    final title = (musicTitle ?? musicName ?? '').trim();
+    final artist = (musicArtist ?? '').trim();
+    if (isOriginalSound != true && (title.isNotEmpty || artist.isNotEmpty)) {
+      if (title.isNotEmpty && artist.isNotEmpty) return '$title · $artist';
+      return title.isNotEmpty ? title : artist;
+    }
+    if (title.isNotEmpty) return title;
+    if (isOriginalSound == true &&
+        fallbackUsername != null &&
+        fallbackUsername.trim().isNotEmpty) {
+      return 'Original sound - ${fallbackUsername.trim()}';
+    }
+    return null;
+  }
+
   factory ReelModelApi.fromJson(Map<String, dynamic> json) {
     final video = _string(json['video'] ?? json['videoUrl'] ?? json['url']);
     final likesRaw = json['likes'];
@@ -69,6 +111,37 @@ class ReelModelApi {
     final commentsCount = commentsVal is int
         ? commentsVal
         : (commentsVal is List ? commentsVal.length : _int(commentsVal));
+    final soundtrack = _nestedMap(json['soundtrack']);
+    final musicUrl = _string(
+      json['musicUrl'] ??
+          json['music'] ??
+          soundtrack?['url'] ??
+          soundtrack?['musicUrl'] ??
+          '',
+    ).trim();
+    final musicTitle = _string(
+      json['musicTitle'] ??
+          json['soundtrackTitle'] ??
+          soundtrack?['title'] ??
+          json['musicName'] ??
+          '',
+    ).trim();
+    final musicArtist = _string(
+      json['musicArtist'] ??
+          json['soundtrackArtist'] ??
+          soundtrack?['artistName'] ??
+          soundtrack?['artist'] ??
+          '',
+    ).trim();
+    final musicName = _string(json['musicName'] ?? '').trim();
+    final isOriginal = json['isOriginalSound'] == true ||
+        soundtrack?['isOriginal'] == true;
+    final musicSource = _string(
+      json['musicSource'] ?? soundtrack?['source'] ?? '',
+    ).trim();
+    final durationMs = _int(
+      json['soundtrackDurationMs'] ?? soundtrack?['durationMs'],
+    );
     return ReelModelApi(
       id: _string(json['_id'] ?? json['id']),
       userId: _string(json['userId'] ?? json['user']),
@@ -87,6 +160,14 @@ class ReelModelApi {
       createdAt: _dateTime(json['createdAt']),
       likes: likesList,
       commentsCount: commentsCount,
+      views: PostModel.parseViewsField(json),
+      musicUrl: musicUrl.isEmpty ? null : musicUrl,
+      musicTitle: musicTitle.isEmpty ? null : musicTitle,
+      musicArtist: musicArtist.isEmpty ? null : musicArtist,
+      musicName: musicName.isEmpty ? null : musicName,
+      isOriginalSound: isOriginal ? true : (json['isOriginalSound'] == false ? false : null),
+      musicSource: musicSource.isEmpty ? null : musicSource,
+      soundtrackDurationMs: durationMs > 0 ? durationMs : null,
     );
   }
 

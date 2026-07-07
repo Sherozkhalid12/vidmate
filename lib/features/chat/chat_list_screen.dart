@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -12,8 +13,9 @@ import '../../core/models/user_model.dart';
 import '../../core/providers/chat_provider_riverpod.dart';
 import '../../core/providers/socket_provider_riverpod.dart';
 import 'chat_screen.dart';
+import 'group/create_group_flow_screen.dart';
 import 'group_chat_screen.dart';
-import '../../services/chat/chat_service.dart';
+import 'utils/chat_time_formatter.dart';
 
 /// Chat list screen: loads conversations from API via Riverpod.
 class ChatListScreen extends ConsumerStatefulWidget {
@@ -79,17 +81,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   }
 
   String _formatTime(DateTime time) {
-    final now = DateTime.now();
-    final difference = now.difference(time);
-    if (difference.inDays == 0) {
-      return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    } else if (difference.inDays == 1) {
-      return 'Yesterday';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays}d ago';
-    } else {
-      return '${time.day}/${time.month}';
-    }
+    return ChatTimeFormatter.listTimestamp(time);
   }
 
   (Color, Color) _shimmerColors(BuildContext context) {
@@ -192,7 +184,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
               actionsIconTheme: IconThemeData(color: ThemeHelper.getTextPrimary(context)),
               actions: [
                 IconButton(
-                  icon: const Icon(Icons.search),
+                  icon: const Icon(CupertinoIcons.search),
                   onPressed: () {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -497,177 +489,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   }
 
   Future<void> _openCreateGroupSheet() async {
-    final service = ChatService();
-    final res = await service.getShareableUsers();
-    if (!mounted) return;
-    if (!res.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(res.errorMessage ?? 'Failed to load users')),
-      );
-      return;
-    }
-    final users = res.data ?? const <Map<String, dynamic>>[];
-    final selected = <String>{};
-    final nameCtrl = TextEditingController();
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: ThemeHelper.getSurfaceColor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setModal) {
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: 16,
-                  right: 16,
-                  top: 12,
-                  bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: ThemeHelper.getTextMuted(ctx).withAlpha(60),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'New group',
-                      style: TextStyle(
-                        color: ThemeHelper.getTextPrimary(ctx),
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: nameCtrl,
-                      decoration: InputDecoration(
-                        hintText: 'Group name',
-                        filled: true,
-                        fillColor: ThemeHelper.getBackgroundColor(ctx).withAlpha(90),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: ThemeHelper.getBorderColor(ctx).withAlpha(70),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 320,
-                      child: ListView.builder(
-                        itemCount: users.length,
-                        itemBuilder: (ctx, i) {
-                          final u = users[i];
-                          final id = (u['id'] ?? u['_id'] ?? '').toString();
-                          final uname = (u['username'] ?? u['name'] ?? u['displayName'] ?? 'User').toString();
-                          final avatar = (u['profilePicture'] ?? u['avatarUrl'] ?? u['image'] ?? '').toString();
-                          final isOn = selected.contains(id);
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: ThemeHelper.getSurfaceColor(ctx),
-                              backgroundImage: avatar.isNotEmpty ? CachedNetworkImageProvider(avatar) : null,
-                              child: avatar.isEmpty ? const Icon(Icons.person) : null,
-                            ),
-                            title: Text(
-                              uname,
-                              style: TextStyle(color: ThemeHelper.getTextPrimary(ctx)),
-                            ),
-                            trailing: Checkbox(
-                              value: isOn,
-                              onChanged: id.isEmpty
-                                  ? null
-                                  : (v) => setModal(() {
-                                        if (v == true) {
-                                          selected.add(id);
-                                        } else {
-                                          selected.remove(id);
-                                        }
-                                      }),
-                            ),
-                            onTap: id.isEmpty
-                                ? null
-                                : () => setModal(() {
-                                      if (selected.contains(id)) {
-                                        selected.remove(id);
-                                      } else {
-                                        selected.add(id);
-                                      }
-                                    }),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 46,
-                      child: ElevatedButton(
-                        onPressed: selected.isEmpty || nameCtrl.text.trim().isEmpty
-                            ? null
-                            : () => Navigator.pop(ctx),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: ThemeHelper.getAccentColor(ctx),
-                          foregroundColor: ThemeHelper.getOnAccentColor(ctx),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: const Text('Create', style: TextStyle(fontWeight: FontWeight.w800)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    final groupName = nameCtrl.text.trim();
-    if (groupName.isEmpty || selected.isEmpty) return;
-
-    final create = await service.createGroup(name: groupName, participantIds: selected.toList());
-    if (!mounted) return;
-    if (!create.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(create.errorMessage ?? 'Failed to create group')),
-      );
-      return;
-    }
-    final data = create.data ?? const <String, dynamic>{};
-    final group = data['group'] is Map<String, dynamic>
-        ? data['group'] as Map<String, dynamic>
-        : (data['group'] is Map ? Map<String, dynamic>.from(data['group'] as Map) : <String, dynamic>{});
-    final groupId = (group['_id'] ?? group['id'] ?? data['groupId'] ?? '').toString();
-    final name = (group['name'] ?? groupName).toString();
-    if (groupId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Group created, but missing group id')),
-      );
-      return;
-    }
-
-    // Refresh list so it appears immediately
-    ref.read(conversationsProvider.notifier).load();
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GroupChatScreen(groupId: groupId, groupName: name),
-      ),
-    );
+    showCreateGroupMemberSheet(context);
   }
 }

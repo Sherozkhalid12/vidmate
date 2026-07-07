@@ -32,6 +32,7 @@ class _ChooseCoverPhotoScreenState extends State<ChooseCoverPhotoScreen>
   bool _isExtracting = false;
 
   int _lastDispatchedMs = -1;
+  int _lastDragFetchAtMs = 0;
 
   final Map<int, File> _filmstripCache = {};
   static const int _filmCells = 10;
@@ -112,7 +113,9 @@ class _ChooseCoverPhotoScreenState extends State<ChooseCoverPhotoScreen>
     final id = ++_frameRequestId;
 
     if (!mounted) return;
-    setState(() => _previewLoading = true);
+    if (!_isDragging) {
+      setState(() => _previewLoading = true);
+    }
 
     try {
       final file = await VideoFrameExtractor.extractJpegFrame(
@@ -133,15 +136,42 @@ class _ChooseCoverPhotoScreenState extends State<ChooseCoverPhotoScreen>
     }
   }
 
+  File? _nearestCachedFrame(int ms) {
+    if (_filmstripCache.isEmpty) return null;
+    int? bestKey;
+    int bestDistance = 1 << 30;
+    for (final key in _filmstripCache.keys) {
+      final d = (key - ms).abs();
+      if (d < bestDistance) {
+        bestDistance = d;
+        bestKey = key;
+      }
+    }
+    if (bestKey == null) return null;
+    return _filmstripCache[bestKey];
+  }
+
   void _seekToMs(int ms) {
     final clamped = ms.clamp(0, _durationMs);
 
-    if (mounted) setState(() => _positionMs = clamped);
+    if (mounted) {
+      setState(() {
+        _positionMs = clamped;
+        if (_isDragging) {
+          final cached = _nearestCachedFrame(clamped);
+          if (cached != null) {
+            _previewFrame = cached;
+            _previewLoading = false;
+          }
+        }
+      });
+    }
 
-    final minDelta = (_durationMs * 0.01).clamp(200, 500).toInt();
-    if ((clamped - _lastDispatchedMs).abs() >= minDelta ||
-        _lastDispatchedMs < 0) {
-      _lastDispatchedMs = clamped;
+    _lastDispatchedMs = clamped;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final shouldFetchNow = !_isDragging || (now - _lastDragFetchAtMs >= 90);
+    if (shouldFetchNow) {
+      _lastDragFetchAtMs = now;
       _fetchPreview(clamped);
     }
   }

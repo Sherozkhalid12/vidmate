@@ -1,6 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/features/feed/create_content_screen.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/theme_extensions.dart';
@@ -15,11 +16,13 @@ import '../../core/providers/fetched_users_provider_riverpod.dart';
 import '../../core/providers/reels_provider_riverpod.dart';
 import '../../features/long_videos/providers/long_videos_provider.dart';
 import '../../core/utils/theme_helper.dart';
+import '../../core/utils/media_viewer_navigation.dart';
 import '../settings/settings_screen.dart';
 import '../chat/chat_screen.dart';
 import 'edit/edit_profile_screen.dart';
 import 'profile_post_viewer_screen.dart';
-import '../live/live_stream_studio_screen.dart';
+import 'profile_link_webview_screen.dart';
+import '../../core/utils/profile_link_utils.dart';
 
 /// Instagram-style profile screen. If [user] is null, shows current user's profile (from API).
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -43,7 +46,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 0);
     _prefetchOtherUserIfNeeded();
   }
 
@@ -370,17 +373,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                         size: 20,
                       ),
                     ),
-                    SizedBox(width: 12,),
-                    if (isCurrentUser)
-                      InkWell(
-                        onTap: () {
-                          _showCreateContentSheet();
-                        },
-                        child: Icon(
-                          CupertinoIcons.plus,
-                          size: 25,
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -620,31 +612,61 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                             ],
                     ),
                     const SizedBox(height: 12),
-                    // Bio and link
-                    if (user.bio != null) ...[
+                    // Bio text (URL stripped — shown separately as a link row)
+                    if (profileBioText(user.bio) != null) ...[
                       Text(
-                        user.bio!,
+                        profileBioText(user.bio)!,
                         style: TextStyle(
                           color: context.textPrimary,
                           fontSize: 14,
                         ),
                       ),
                     ],
-                    // Link/Website if available
-                    if (user.bio != null) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const Text('🔗 '),
-                          Text(
-                            'Linktr.ee/${user.username}',
-                            style: TextStyle(
-                              color: Colors.blue,
-                              fontSize: 14,
-                              decoration: TextDecoration.underline,
+                    // Clickable link when the user added one in their bio
+                    if (profileLinkUrl(user.bio, user.username) != null) ...[
+                      SizedBox(height: profileBioText(user.bio) != null ? 8 : 0),
+                      GestureDetector(
+                        onTap: () {
+                          final url = profileLinkUrl(user.bio, user.username);
+                          if (url == null) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ProfileLinkWebViewScreen(
+                                url: url,
+                                title: profileLinkDisplayText(
+                                  user.bio,
+                                  user.username,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          );
+                        },
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.link_rounded,
+                              size: 16,
+                              color: ThemeHelper.getAccentColor(context),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                profileLinkDisplayText(
+                                  user.bio,
+                                  user.username,
+                                )!,
+                                style: TextStyle(
+                                  color: ThemeHelper.getAccentColor(context),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ],
@@ -675,7 +697,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     fontSize: 14,
                   ),
                   tabs: const [
-                    Tab(text: 'Post.'),
                     Tab(text: 'Reels.'),
                     Tab(text: 'Long Videos'),
                   ],
@@ -690,7 +711,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                   : TabBarView(
                       controller: _tabController,
                       children: [
-                        _buildPostsGrid(posts.where((p) => p.postType == 'post').toList()),
                         _buildReelsGrid(reelPosts),
                         _buildLongVideosGrid(longVideoPosts),
                       ],
@@ -729,198 +749,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           ),
         ],
       ),
-    );
-  }
-
-  /// Hovering bottom sheet for creating new content (Post, Story, Reel, Long Video, Live).
-  /// Opaque background for both light and dark modes; improved card design.
-  void _showCreateContentSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        final bgColor = ThemeHelper.getBackgroundColor(context);
-        final surfaceColor = ThemeHelper.getSurfaceColor(context);
-        final borderColor = ThemeHelper.getBorderColor(context);
-        final textPrimary = ThemeHelper.getTextPrimary(context);
-        final textSecondary = ThemeHelper.getTextSecondary(context);
-        final accent = ThemeHelper.getAccentColor(context);
-
-        final options = [
-          (
-            type: ContentType.post,
-            label: 'Post',
-            icon: Icons.grid_on_outlined,
-          ),
-          (
-            type: ContentType.story,
-            label: 'Story',
-            icon: Icons.auto_stories_outlined,
-          ),
-          (
-            type: ContentType.reel,
-            label: 'Reel',
-            icon: Icons.video_library_outlined,
-          ),
-          (
-            type: ContentType.longVideo,
-            label: 'Long video',
-            icon: Icons.movie_outlined,
-          ),
-          (
-            type: ContentType.live,
-            label: 'Live',
-            icon: Icons.live_tv_rounded,
-          ),
-        ];
-
-        return Container(
-          margin: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: borderColor.withOpacity(0.6), width: 1),
-            color: bgColor,
-            boxShadow: [
-              BoxShadow(
-                color: textPrimary.withOpacity(isDark ? 0.25 : 0.12),
-                blurRadius: 24,
-                offset: const Offset(0, 16),
-              ),
-            ],
-          ),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Create',
-                        style: TextStyle(
-                          color: textPrimary,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        splashRadius: 20,
-                        icon: Icon(
-                          Icons.close_rounded,
-                          color: textSecondary,
-                        ),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Choose what you want to share.',
-                    style: TextStyle(
-                      color: textSecondary,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 0.9,
-                    ),
-                    itemCount: options.length,
-                    itemBuilder: (context, index) {
-                      final opt = options[index];
-                      final cardBg = surfaceColor;
-                      final cardBorder = borderColor.withOpacity(isDark ? 0.7 : 0.5);
-                      return Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            Navigator.pop(context);
-                            if (opt.type == ContentType.live) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const LiveStreamStudioScreen(),
-                                ),
-                              );
-                              return;
-                            }
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => CreateContentScreen(
-                                  initialType: opt.type,
-                                ),
-                              ),
-                            );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              color: cardBg,
-                              border: Border.all(color: cardBorder, width: 1),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: textPrimary.withOpacity(isDark ? 0.08 : 0.06),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Container(
-                                  width: 44,
-                                  height: 44,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: accent.withOpacity(isDark ? 0.2 : 0.14),
-                                  ),
-                                  child: Icon(
-                                    opt.icon,
-                                    size: 22,
-                                    color: accent,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  opt.label,
-                                  style: TextStyle(
-                                    color: textPrimary,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 
@@ -1201,13 +1029,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
               child: FadeInAnimation(
                 child: GestureDetector(
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProfilePostViewerScreen(
-                          posts: posts,
-                          initialIndex: index,
-                        ),
+                    unawaited(
+                      openReelViewer(
+                        context,
+                        ref,
+                        prependedReel: posts[index],
                       ),
                     );
                   },
@@ -1290,14 +1116,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
               child: FadeInAnimation(
                 child: GestureDetector(
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProfilePostViewerScreen(
-                          posts: posts,
-                          initialIndex: index,
-                        ),
-                      ),
+                    unawaited(
+                      openLongVideoViewer(context, ref, posts[index]),
                     );
                   },
                   child: Container(
